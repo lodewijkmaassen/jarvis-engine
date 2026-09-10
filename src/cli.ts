@@ -198,7 +198,12 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
   // hij van de huidige, dan verschuift iemand de vrijstelling; dat hoort de
   // poort te zien.
   const basisConfigTekst = await git(wortel, ["show", `${basis}:jarvis.config.yml`]);
-  const basisStartpunt = leesStartpuntUitConfig(basisConfigTekst) ?? config.rol_controle_vanaf;
+  // Geen leesbare basisconfiguratie telt als "daar stond geen vrijstelling".
+  // Dat is bewust de strenge kant: op de branch die `rol_controle_vanaf` voor
+  // het eerst invoert is er niets om mee te vergelijken, en juist dan wordt de
+  // vrijstelling in het leven geroepen. Terugvallen op de huidige waarde zou de
+  // controle precies op dat moment laten zwijgen.
+  const basisStartpunt = leesStartpuntUitConfig(basisConfigTekst) ?? "";
 
   const commits = [];
   for (const hash of hashes) {
