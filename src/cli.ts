@@ -10,6 +10,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { bouwContextPakket, rendereerPakket } from "./context";
+import { leesArgumenten } from "./args";
 import { laadConfig, leesStartpuntUitConfig, vindWortel, type JarvisConfig, type TaakKlasse } from "./config";
 import { ackBronIsVertrouwd, formatteerLint, lint, parseerAcks } from "./lint";
 import { analyseerPlan, parseerPlanTabel, rendereerPlan } from "./plan";
@@ -26,50 +27,6 @@ import {
 import { laadKennis, type KennisLading } from "./store";
 
 const uitvoeren = promisify(execFile);
-
-type Argumenten = {
-  readonly opdracht: string;
-  readonly vlaggen: ReadonlyMap<string, string>;
-  readonly losse: readonly string[];
-  /** Vlaggen die meer dan een keer zijn meegegeven. */
-  readonly dubbel: readonly string[];
-};
-
-/**
- * Leest de argumenten. Een vlag die twee keer voorkomt is een FOUT.
- *
- * Niet de eerste laten winnen en niet de laatste: allebei geeft een verschil
- * tussen wat een lezer denkt dat er staat en wat er gebeurt. De workflow
- * schreef `--ack-relatie "$REVIEW_RELATIE"`, en wie daar een tweede
- * `--ack-relatie OWNER` achter zette kreeg een controle die het eerste
- * voorkomen las en een CLI die het tweede gebruikte. Elke review werd daarmee
- * een OWNER-review.
- *
- * Dat geldt voor alle vlaggen, niet alleen voor de gevoelige. Een lijst
- * bijhouden van welke vlaggen "gevoelig" zijn is een lijst die iemand vergeet
- * bij te werken, en er is geen enkele vlag waarvoor twee keer meegeven zinnig
- * is.
- */
-export function leesArgumenten(argv: readonly string[]): Argumenten {
-  const [opdracht = "help", ...rest] = argv;
-  const vlaggen = new Map<string, string>();
-  const losse: string[] = [];
-  const dubbel: string[] = [];
-  for (let i = 0; i < rest.length; i += 1) {
-    const arg = rest[i];
-    if (!arg.startsWith("--")) {
-      losse.push(arg);
-      continue;
-    }
-    const naam = arg.slice(2);
-    const volgende = rest[i + 1];
-    const waarde = volgende === undefined || volgende.startsWith("--") ? "true" : volgende;
-    if (waarde !== "true") i += 1;
-    if (vlaggen.has(naam) && !dubbel.includes(naam)) dubbel.push(naam);
-    vlaggen.set(naam, waarde);
-  }
-  return { opdracht, vlaggen, losse, dubbel };
-}
 
 /** Git-aanroep die nooit gooit: een lege repo of ontbrekende ref is geen crash. */
 async function git(wortel: string, args: readonly string[]): Promise<string> {
@@ -94,6 +51,22 @@ async function gewijzigdeBestanden(wortel: string, basis: string): Promise<reado
   return [...new Set([...uitDiff, ...uitStatus])].sort();
 }
 
+/**
+ * Afbreken met een exitcode, zonder process.exit buiten het entrypoint.
+ *
+ * `process.exit` in een hulpfunctie maakt die hulpfunctie onbruikbaar in een
+ * test: de test stopt dan zelf. Alleen `hoofd()` beeindigt het proces.
+ */
+export class AfbrekenFout extends Error {
+  constructor(
+    readonly code: number,
+    boodschap: string,
+  ) {
+    super(boodschap);
+    this.name = "AfbrekenFout";
+  }
+}
+
 async function laadAlles(): Promise<{
   readonly wortel: string;
   readonly config: JarvisConfig;
@@ -101,21 +74,80 @@ async function laadAlles(): Promise<{
 }> {
   const wortel = await vindWortel(process.cwd());
   if (!wortel) {
-    console.error("jarvis: geen jarvis.config.yml gevonden vanaf de huidige map.");
-    process.exit(2);
+    throw new AfbrekenFout(2, "jarvis: geen jarvis.config.yml gevonden vanaf de huidige map.");
   }
   const configResultaat = await laadConfig(wortel);
   if (!configResultaat.ok) {
-    for (const fout of configResultaat.fouten) console.error(`jarvis: ${fout}`);
-    process.exit(2);
+    throw new AfbrekenFout(2, configResultaat.fouten.map((f) => `jarvis: ${f}`).join("\n"));
   }
   const config = configResultaat.config;
   if (!config.enabled) {
-    console.error("jarvis: uitgeschakeld via `enabled: false` in jarvis.config.yml. Geen enkele opdracht draait.");
-    process.exit(3);
+    throw new AfbrekenFout(
+      3,
+      "jarvis: uitgeschakeld via `enabled: false` in jarvis.config.yml. Geen enkele opdracht draait.",
+    );
   }
   const lading = await laadKennis(wortel, config.knowledge_map);
   return { wortel, config, lading };
+}
+
+async function leesBestandOfLeeg(wortel: string, pad: string | undefined, wat: string): Promise<string> {
+  if (!pad) return "";
+  try {
+    return await readFile(path.resolve(wortel, pad), "utf8");
+  } catch {
+    console.error(`jarvis: kon ${wat} ${pad} niet lezen.`);
+    return "";
+  }
+}
+
+/** `jarvis lint` — de poort met de waarden uit vlaggen. Voor lokaal gebruik. */
+async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  const tekstUitVlag = vlaggen.get("tekst") ?? "";
+  const tekstUitBestand = await leesBestandOfLeeg(wortel, vlaggen.get("tekst-bestand"), "tekstbestand");
+  return voerPoortUit({
+    basis: vlaggen.get("basis") ?? "origin/main",
+    tekst: `${tekstUitVlag}
+${tekstUitBestand}`,
+    ackTekst: await leesBestandOfLeeg(wortel, vlaggen.get("ack-bestand"), "ackbestand"),
+    ackActor: vlaggen.get("ack-actor") ?? "",
+    ackRelatie: vlaggen.get("ack-relatie") ?? "",
+  });
+}
+
+/**
+ * `jarvis poort` — de enige aanroep die CI doet.
+ *
+ * Alles komt uit de omgeving, er zijn geen argumenten, en er valt niets aan te
+ * sturen. Daarvoor stond in de workflow een shellscript met zes variabelen en
+ * een reeks vlaggen, en dat oppervlak bleek niet te bewaken: een onafhankelijke
+ * QA schreef `--ack-relatie "${REVIEW_RELATIE:-OWNER}"` en `REVIEW_BODY="$PR_BODY"`
+ * langs elke controle heen. Een lijst verboden schrijfwijzen verliest van een
+ * taal; een vaste aanroep zonder argumenten heeft geen schrijfwijzen.
+ *
+ * De workflow is hiermee een adapter: hij zet zes GitHub-waarden in de omgeving
+ * en roept dit aan. Wat de exitcode wordt, bepaalt deze functie.
+ */
+async function opdrachtPoort(): Promise<number> {
+  const lees = (naam: string) => process.env[naam] ?? "";
+  const codes = [
+    await opdrachtIndex(false),
+    await opdrachtState(new Map([["controleer", "true"]])),
+    await opdrachtSanitize(new Map()),
+    await voerPoortUit({
+      basis: `origin/${lees("PR_BASIS") || "main"}`,
+      tekst: `${lees("PR_TITEL")}
+
+${lees("PR_BODY")}`,
+      ackTekst: lees("REVIEW_BODY"),
+      ackActor: lees("REVIEW_ACTOR"),
+      ackRelatie: lees("REVIEW_RELATIE"),
+    }),
+  ];
+  // Alle vier draaien, niet stoppen bij de eerste: een run die na de eerste
+  // fout stopt verbergt de rest, en dan kost elke reparatie een nieuwe run.
+  return codes.find((c) => c !== 0) ?? 0;
 }
 
 /** knowledge/INDEX.json — zodat een agent kan selecteren zonder de CLI te draaien. */
@@ -159,20 +191,25 @@ async function opdrachtIndex(schrijf: boolean): Promise<number> {
   return 0;
 }
 
-async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+type PoortInvoer = {
+  readonly basis: string;
+  readonly tekst: string;
+  readonly ackTekst: string;
+  readonly ackActor: string;
+  readonly ackRelatie: string;
+};
+
+/**
+ * De deterministische poort, met de waarden al opgelost.
+ *
+ * Zowel `jarvis lint` (waarden uit vlaggen) als `jarvis poort` (waarden uit de
+ * omgeving) komen hier uit. De bron verschilt; wat ermee gebeurt niet.
+ */
+async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   const { wortel, config, lading } = await laadAlles();
-  const basis = vlaggen.get("basis") ?? "origin/main";
+  const { basis, tekst, ackTekst, ackActor, ackRelatie } = invoer;
   const bestanden = await gewijzigdeBestanden(wortel, basis);
 
-  let tekst = vlaggen.get("tekst") ?? "";
-  const tekstBestand = vlaggen.get("tekst-bestand");
-  if (tekstBestand) {
-    try {
-      tekst = `${tekst}\n${await readFile(path.resolve(wortel, tekstBestand), "utf8")}`;
-    } catch {
-      console.error(`jarvis lint: kon ${tekstBestand} niet lezen.`);
-    }
-  }
 
   // Acks komen UITSLUITEND uit een aparte bron, nooit uit `tekst`.
   //
@@ -180,17 +217,6 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
   // Een ack die daaruit gelezen wordt, is een agent die zichzelf toestemming
   // geeft. Het ack-kanaal is daarom structureel gescheiden: een review op de
   // pull request, met de auteur en diens relatie tot de repository erbij.
-  const ackBestand = vlaggen.get("ack-bestand");
-  let ackTekst = "";
-  if (ackBestand) {
-    try {
-      ackTekst = await readFile(path.resolve(wortel, ackBestand), "utf8");
-    } catch {
-      console.error(`jarvis lint: kon ${ackBestand} niet lezen.`);
-    }
-  }
-  const ackActor = vlaggen.get("ack-actor") ?? "";
-  const ackRelatie = vlaggen.get("ack-relatie") ?? "";
   const acks = parseerAcks(ackTekst);
   const ackBronVertrouwd = ackBronIsVertrouwd(ackActor, ackRelatie);
   const ackBron = ackActor
@@ -607,6 +633,9 @@ function help(): number {
       "Gebruik: npx tsx jarvis/src/cli.ts <opdracht> [opties]",
       "",
       "  index    [--schrijf]              Bouwt knowledge/INDEX.json; zonder --schrijf alleen controle",
+      "  poort    De volledige poort, zoals CI hem draait. Geen argumenten:",
+      "           alles komt uit de omgeving (PR_BASIS, PR_TITEL, PR_BODY,",
+      "           REVIEW_BODY, REVIEW_ACTOR, REVIEW_RELATIE).",
       "  lint     [--basis <ref>] [--tekst <s>] [--tekst-bestand <pad>]",
       "           [--ack-bestand <pad>] [--ack-actor <naam>] [--ack-relatie <relatie>]",
       "           Acks komen alleen uit --ack-bestand, en alleen wanneer de actor",
@@ -625,16 +654,36 @@ function help(): number {
   return 0;
 }
 
+/**
+ * Het enige punt waar dit programma het proces beeindigt.
+ *
+ * Alles eronder geeft een code terug of gooit een AfbrekenFout. Zo blijft elke
+ * stap los aanroepbaar in een test.
+ */
 async function hoofd(): Promise<void> {
-  const { opdracht, vlaggen, losse, dubbel } = leesArgumenten(process.argv.slice(2));
+  try {
+    process.exit(await voerUit(process.argv.slice(2)));
+  } catch (fout) {
+    if (fout instanceof AfbrekenFout) {
+      console.error(fout.message);
+      process.exit(fout.code);
+    }
+    throw fout;
+  }
+}
+
+export async function voerUit(argv: readonly string[]): Promise<number> {
+  const { opdracht, vlaggen, losse, dubbel } = leesArgumenten(argv);
   if (dubbel.length > 0) {
     // Voor elke opdracht, niet alleen voor lint. Een dubbele vlag is altijd een
     // vergissing of een poging; in geen van beide gevallen hoort de CLI te raden
     // welke van de twee bedoeld was.
-    for (const naam of dubbel) {
-      console.error(`jarvis: de vlag --${naam} is meer dan een keer meegegeven. Geef hem precies een keer.`);
-    }
-    process.exit(2);
+    throw new AfbrekenFout(
+      2,
+      dubbel
+        .map((naam) => `jarvis: de vlag --${naam} is meer dan een keer meegegeven. Geef hem precies een keer.`)
+        .join("\n"),
+    );
   }
   let code = 0;
   switch (opdracht) {
@@ -643,6 +692,9 @@ async function hoofd(): Promise<void> {
       break;
     case "lint":
       code = await opdrachtLint(vlaggen);
+      break;
+    case "poort":
+      code = await opdrachtPoort();
       break;
     case "context":
       code = await opdrachtContext(vlaggen);
@@ -668,7 +720,7 @@ async function hoofd(): Promise<void> {
       console.error(`jarvis: onbekende opdracht "${opdracht}".`);
       code = help() === 0 ? 2 : 2;
   }
-  process.exit(code);
+  return code;
 }
 
 void hoofd();
