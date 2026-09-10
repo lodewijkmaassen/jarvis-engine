@@ -185,14 +185,18 @@ const FENCE = /^\s*(```|~~~)/;
  *   - inspringing telt niet; een ack is een eigen regel, geen lijstitem
  *   - HTML telt niet; een ack binnen `<!-- ... -->` of `<details>` is voor de
  *     reviewer onzichtbaar, en een regel die niemand ziet is geen besluit
+ *   - een review met `<?…?>`, `<![CDATA[…]]>`, `<!DOCTYPE…>` of `<%…%>` erin
+ *     levert helemaal geen acks; zie bevatVreemdeHtmlConstructie
  */
 export function parseerAcks(tekst: string): readonly string[] {
+  const regels = tekst.split(/\r?\n/);
+  if (bevatVreemdeHtmlConstructie(regels)) return [];
+
   const gevonden: string[] = [];
   let blok: string | null = null;
-  let inCommentaar = false;
-  let htmlDiepte = 0;
+  let toestand: HtmlToestand = { open: [], inCommentaar: false };
 
-  for (const ruw of tekst.split(/\r?\n/)) {
+  for (const ruw of regels) {
     const fence = FENCE.exec(ruw);
     if (blok !== null) {
       if (fence !== null && fence[1] === blok) blok = null;
@@ -205,20 +209,57 @@ export function parseerAcks(tekst: string): readonly string[] {
 
     // De zichtbaarheid wordt bepaald VÓÓR deze regel wordt verwerkt. Een regel
     // die zelf een comment of een element opent, telt dus al niet mee.
-    const zichtbaar = !inCommentaar && htmlDiepte === 0 && !BEVAT_HTML.test(ruw);
+    const zichtbaar = toestand.open.length === 0 && !toestand.inCommentaar && !BEVAT_HTML.test(ruw);
 
     if (zichtbaar && !ruw.trimStart().startsWith(">")) {
       const match = ACK_REGEL.exec(ruw.replace(/[ \t]+$/, ""));
       if (match) gevonden.push(match[1]);
     }
 
-    ({ inCommentaar, htmlDiepte } = volgHtml(ruw, inCommentaar, htmlDiepte));
+    toestand = volgHtml(ruw, toestand);
   }
   return gevonden;
 }
 
 /** Elk teken dat op HTML wijst maakt een regel onbetrouwbaar als ack. */
 const BEVAT_HTML = /[<>]/;
+
+/**
+ * Constructies die in een menselijke review niets te zoeken hebben.
+ *
+ * `<?…?>`, `<![CDATA[…]]>`, `<!DOCTYPE…>` en `<%…%>` worden door GitHub
+ * weggesanitiseerd, dus wat ertussen staat ziet de reviewer niet. Ze exact
+ * volgen zou kunnen, maar de eerlijker regel is simpeler: een review waarin een
+ * van deze vier voorkomt, is geen betrouwbare ackbron. Er is geen legitieme
+ * reden om er een in te zetten, en de kosten van te streng zijn hier laag —
+ * dan zet iemand de ack opnieuw zonder die constructie.
+ *
+ * Codeblokken tellen niet mee: daar mag alles in staan.
+ */
+function bevatVreemdeHtmlConstructie(regels: readonly string[]): boolean {
+  let blok: string | null = null;
+  for (const regel of regels) {
+    const fence = FENCE.exec(regel);
+    if (blok !== null) {
+      if (fence !== null && fence[1] === blok) blok = null;
+      continue;
+    }
+    if (fence !== null) {
+      blok = fence[1];
+      continue;
+    }
+    if (/<\?|<!\[CDATA\[|<%/.test(regel)) return true;
+    // Wel `<!DOCTYPE`, niet `<!--`: een comment is een eigen, gevolgde vorm.
+    if (/<!(?!--)/.test(regel)) return true;
+  }
+  return false;
+}
+
+type HtmlToestand = {
+  /** Namen van de elementen die nu open staan, buitenste eerst. */
+  readonly open: readonly string[];
+  readonly inCommentaar: boolean;
+};
 
 /** Tags zonder sluitvorm; die openen geen blok. */
 const LOSSE_TAGS = new Set([
@@ -246,23 +287,26 @@ const LOSSE_TAGS = new Set([
  * manier, en de volgende manier is altijd nog niet bedacht. Een ack hoort in
  * gewone tekst te staan; staat er HTML omheen, dan telt hij niet.
  *
+ * De open elementen staan als STACK bij, niet als teller. Met een teller sloot
+ * elke sluittag het bovenste blok, ook een die nergens bij hoorde: één losse
+ * `</p>` binnen een `<details>` zette de teller op nul en maakte alles erna
+ * weer "zichtbaar" terwijl het in GitHub dichtgeklapt bleef. Een sluittag sluit
+ * nu alleen het element dat er werkelijk bovenop ligt; alles anders wordt
+ * genegeerd.
+ *
  * Een niet-gesloten element maakt alles erna onzichtbaar. Dat is de goede kant
  * om op te falen: het gevolg is een ack die niet meetelt, niet een ack die
  * ongezien meetelt.
  */
-function volgHtml(
-  regel: string,
-  inCommentaar: boolean,
-  htmlDiepte: number,
-): { inCommentaar: boolean; htmlDiepte: number } {
-  let commentaar = inCommentaar;
-  let diepte = htmlDiepte;
+function volgHtml(regel: string, begin: HtmlToestand): HtmlToestand {
+  const open = [...begin.open];
+  let commentaar = begin.inCommentaar;
   let i = 0;
 
   while (i < regel.length) {
     if (commentaar) {
       const eind = regel.indexOf("-->", i);
-      if (eind < 0) return { inCommentaar: true, htmlDiepte: diepte };
+      if (eind < 0) return { open, inCommentaar: true };
       commentaar = false;
       i = eind + 3;
       continue;
@@ -274,17 +318,49 @@ function volgHtml(
       i = start + 4;
       continue;
     }
-    const sluit = regel.indexOf(">", start);
+
+    const sluit = vindTagEinde(regel, start);
     const inhoud = sluit < 0 ? regel.slice(start + 1) : regel.slice(start + 1, sluit);
-    const naam = /^\/?\s*([a-zA-Z][a-zA-Z0-9-]*)/.exec(inhoud)?.[1]?.toLowerCase();
-    if (naam !== undefined && !LOSSE_TAGS.has(naam) && !inhoud.trimEnd().endsWith("/")) {
-      if (inhoud.trimStart().startsWith("/")) diepte = Math.max(0, diepte - 1);
-      else diepte += 1;
+    const isSluittag = inhoud.trimStart().startsWith("/");
+    const naam = /^\/?\s*([a-zA-Z][a-zA-Z0-9:-]*)/.exec(inhoud.trim())?.[1]?.toLowerCase();
+
+    if (naam !== undefined) {
+      if (isSluittag) {
+        // Alleen sluiten wat er werkelijk bovenop ligt. Een mismatched sluittag
+        // is geen reden om de zichtbaarheid te herstellen.
+        if (open.length > 0 && open[open.length - 1] === naam) open.pop();
+      } else if (!LOSSE_TAGS.has(naam) && !inhoud.trimEnd().endsWith("/")) {
+        open.push(naam);
+      }
     }
+
     if (sluit < 0) break;
     i = sluit + 1;
   }
-  return { inCommentaar: commentaar, htmlDiepte: diepte };
+  return { open, inCommentaar: commentaar };
+}
+
+/**
+ * Zoekt het sluitteken van een tag, met aanhalingstekens erbij.
+ *
+ * Zonder dat eindigt `<div title="a > b">` bij het eerste groter-dan-teken en
+ * wordt de rest van de tag als tekst gelezen.
+ */
+function vindTagEinde(regel: string, start: number): number {
+  let aanhaling: string | null = null;
+  for (let i = start + 1; i < regel.length; i += 1) {
+    const teken = regel[i];
+    if (aanhaling !== null) {
+      if (teken === aanhaling) aanhaling = null;
+      continue;
+    }
+    if (teken === '"' || teken === "'") {
+      aanhaling = teken;
+      continue;
+    }
+    if (teken === ">") return i;
+  }
+  return -1;
 }
 
 /**
