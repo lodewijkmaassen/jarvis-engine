@@ -272,16 +272,22 @@ export async function poortUitkomst(stappen: readonly PoortStap[]): Promise<numb
 /**
  * De volledige poort.
  *
- * `wortelOverschrijving` bestaat alleen voor tests: zonder die haak was deze
- * functie niet rechtstreeks te toetsen, en een onafhankelijke QA liet zien dat
- * `if (true) return 0;` bovenaan de hele suite groen liet. De controle was wel
- * getest, dat de poort haar aanriep niet.
+ * `bouwStappen` bestaat alleen voor tests, en met een reden. Een eerdere poging
+ * gaf deze functie een wortelparameter mee; die bereikte alleen de workflowstap,
+ * terwijl index, state, sanitize en lint via `process.cwd()` tegen de echte
+ * repository bleven draaien. De test die daarop leunde was groen om de verkeerde
+ * reden: hij slaagde ook met de workflowcontrole hardgezet op nul, omdat de
+ * lintstap in deze repository sowieso faalt.
+ *
+ * Met een injecteerbare stappenbouwer is wél te toetsen wat deze functie doet:
+ * de stappen draaien en hun uitkomst teruggeven. Dat de echte lijst met de
+ * workflowcontrole begint, wordt apart op `poortStappen` getoetst.
  */
-export async function opdrachtPoort(wortelOverschrijving?: string): Promise<number> {
+export async function opdrachtPoort(bouwStappen: typeof poortStappen = poortStappen): Promise<number> {
   const lees = (naam: string) => process.env[naam] ?? "";
-  const wortel = wortelOverschrijving ?? (await vindWortel(process.cwd())) ?? process.cwd();
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
   return poortUitkomst(
-    poortStappen(wortel, {
+    bouwStappen(wortel, {
       basis: `origin/${lees("PR_BASIS") || "main"}`,
       tekst: `${lees("PR_TITEL")}
 
