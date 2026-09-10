@@ -328,6 +328,71 @@ async function opdrachtState(vlaggen: ReadonlyMap<string, string>): Promise<numb
   return 0;
 }
 
+async function opdrachtAudit(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const { wortel, config, lading } = await laadAlles();
+  const { bouwAuditRapport, rendereerAudit, leesTrailers, DOSSIER_BESTANDEN } = await import("./audit");
+
+  const taakId = losse[0];
+  if (!taakId) {
+    console.error("jarvis audit: geef een taak-id, bijvoorbeeld T-20260910-iets.");
+    return 2;
+  }
+
+  const dossierMap = path.join(wortel, config.taken_map, taakId);
+  const dossier = new Map<string, string>();
+  for (const { bestand } of DOSSIER_BESTANDEN) {
+    try {
+      dossier.set(bestand, await readFile(path.join(dossierMap, bestand), "utf8"));
+    } catch {
+      // Ontbrekend bestand is een bevinding in het rapport, geen fout hier.
+    }
+  }
+  let manifestJson: string | null = null;
+  try {
+    manifestJson = await readFile(path.join(dossierMap, "context-pack.json"), "utf8");
+  } catch {
+    manifestJson = null;
+  }
+
+  // Commits worden gevonden op de trailer, niet op de branchnaam: een taak kan
+  // over meerdere branches lopen en een branch kan meerdere taken bevatten.
+  const VELD = String.fromCharCode(31);
+  const RECORD = String.fromCharCode(30);
+  const ruweLog = await git(wortel, [
+    "log",
+    "--all",
+    `--grep=Jarvis-Task:\\s*${taakId}`,
+    "--extended-regexp",
+    `--format=%h${VELD}%an${VELD}%ad${VELD}%s${VELD}%B${RECORD}`,
+    "--date=short",
+  ]);
+  const commits = ruweLog
+    .split(RECORD)
+    .map((blok) => blok.trim())
+    .filter((blok) => blok.length > 0)
+    .map((blok) => {
+      const [hash = "", auteur = "", datum = "", onderwerp = "", bericht = ""] = blok.split(VELD);
+      const { taak, rol } = leesTrailers(bericht);
+      return { hash, auteur, datum, onderwerp, taak, rol };
+    });
+
+  const basis = vlaggen.get("basis") ?? "origin/main";
+  const diffStat = commits.length > 0 ? await git(wortel, ["diff", "--stat", `${basis}...HEAD`]) : null;
+
+  const rapport = await bouwAuditRapport({
+    taakId,
+    dossier,
+    manifestJson,
+    commits,
+    diffStat: diffStat && diffStat.length > 0 ? diffStat : null,
+    records: lading.records,
+    readSource: createFileReader(wortel),
+  });
+
+  console.log(rendereerAudit(rapport));
+  return rapport.bevindingen.some((b) => b.severity === "fout") ? 1 : 0;
+}
+
 /** Klapt `sanitize_paden` (mappen of bestanden) uit tot concrete tekstbestanden. */
 async function verzamelTekstbestanden(wortel: string, ingang: string): Promise<readonly string[]> {
   const { stat, readdir } = await import("node:fs/promises");
@@ -451,6 +516,7 @@ function help(): number {
       "  sanitize [--schrijf]              Redigeert PII/secrets uit persistente Jarvis-data en herscant",
       "  state    [--controleer]           Genereert of controleert het feitenblok in CURRENT_STATE",
       "  plan     <bestand.md>             Kritiek pad en execution waves uit een plantabel",
+      "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
       "",
       "Exitcodes: 0 ok · 1 bevindingen · 2 gebruiksfout · 3 uitgeschakeld",
     ].join("\n"),
@@ -473,6 +539,9 @@ async function hoofd(): Promise<void> {
       break;
     case "state":
       code = await opdrachtState(vlaggen);
+      break;
+    case "audit":
+      code = await opdrachtAudit(losse, vlaggen);
       break;
     case "sanitize":
       code = await opdrachtSanitize(vlaggen);

@@ -253,7 +253,7 @@ export function analyseerPlan(taken: readonly PlanTaak[]): PlanAnalyse {
   }
   const waves: Wave[] = [...perDiepte.entries()]
     .sort((a, b) => a[0] - b[0])
-    .map(([d, lijst], i) => {
+    .map(([, lijst], i) => {
       const gesorteerd = [...lijst].sort((a, b) => (a.id < b.id ? -1 : 1));
       return {
         nummer: i + 1,
