@@ -61,10 +61,6 @@ export const configSchema = z.strictObject({
   // Waar de tests van dit project staan. Zit in de configuratie en niet in de
   // engine, omdat de rolcontrole erop steunt en niet elk project "tests" heet.
   test_pad: z.string().trim().default("tests"),
-  // De actieve governance-workflow en de goedgekeurde bron ervan. De poort
-  // eist dat die twee byte voor byte gelijk zijn.
-  workflow_pad: z.string().trim().default(".github/workflows/jarvis-lint.yml"),
-  workflow_canoniek_pad: z.string().trim().default("jarvis/canonical/jarvis-lint.yml"),
   branch_voorvoegsel: z.string().trim().min(1).default("jarvis/"),
 });
 

@@ -12,7 +12,7 @@
 //
 // Gebruik: npx tsx jarvis/src/cli.ts <opdracht> [opties]
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { bouwContextPakket, rendereerPakket } from "./context";
@@ -31,7 +31,13 @@ import {
   type StateFeiten,
 } from "./state";
 import { laadKennis, type KennisLading } from "./store";
-import { vergelijkWorkflow } from "./workflow";
+import {
+  ACTIEVE_WORKFLOW,
+  CANONIEKE_WORKFLOW,
+  WORKFLOW_MAP,
+  controleerGovernance,
+  type BestandsFeiten,
+} from "./workflow";
 
 const uitvoeren = promisify(execFile);
 
@@ -99,31 +105,76 @@ async function laadAlles(): Promise<{
 }
 
 /**
- * De actieve workflow moet gelijk zijn aan de goedgekeurde bron.
+ * Verzamelt de feiten over een governancebestand, met de hardening erbij.
  *
- * Deze controle draait in de poort zelf, niet alleen in de testsuite: een test
- * bewijst dat de repository klopt op het moment dat iemand hem draait, de poort
- * bewijst het op het moment dat er iets gemergd wordt.
+ * `lstat` op ELK paddeel, niet alleen op het bestand: een link halverwege het
+ * pad verzet het doelwit net zo goed als een link op het bestand zelf.
  */
-async function controleerWorkflow(wortel: string, config: JarvisConfig): Promise<number> {
-  const lees = async (pad: string): Promise<Uint8Array | null> => {
+async function feitenOver(wortelEchtPad: string, relatiefPad: string): Promise<BestandsFeiten> {
+  const delen = relatiefPad.split("/");
+  let viaSymlink = false;
+  for (let i = 0; i < delen.length; i += 1) {
+    const deel = path.join(wortelEchtPad, ...delen.slice(0, i + 1));
     try {
-      return await readFile(path.resolve(wortel, pad));
+      if ((await lstat(deel)).isSymbolicLink()) viaSymlink = true;
     } catch {
-      return null;
+      // Bestaat niet; dat merkt de lezer hieronder.
     }
-  };
-  const uitkomst = vergelijkWorkflow(await lees(config.workflow_pad), await lees(config.workflow_canoniek_pad));
-  if (uitkomst.gelijk) {
-    console.log(`jarvis workflow: ${config.workflow_pad} is gelijk aan de goedgekeurde bron.`);
+  }
+  let echtPad: string | null = null;
+  try {
+    echtPad = await realpath(path.join(wortelEchtPad, relatiefPad));
+  } catch {
+    echtPad = null;
+  }
+  let bytes: Uint8Array | null = null;
+  try {
+    bytes = await readFile(path.join(wortelEchtPad, relatiefPad));
+  } catch {
+    bytes = null;
+  }
+  return { bytes, viaSymlink, echtPad };
+}
+
+/**
+ * De governancecontrole, met echte schijftoegang.
+ *
+ * Draait als eerste stap van de poort. De paden komen uit `workflow.ts` en zijn
+ * niet instelbaar: een controle die haar scope uit configuratie haalt,
+ * controleert wat die configuratie zegt in plaats van wat er is.
+ */
+async function controleerWorkflow(wortel: string): Promise<number> {
+  let wortelEchtPad = wortel;
+  try {
+    wortelEchtPad = await realpath(wortel);
+  } catch {
+    wortelEchtPad = wortel;
+  }
+  let workflowMapInhoud: readonly string[] | null = null;
+  try {
+    workflowMapInhoud = (await readdir(path.join(wortelEchtPad, WORKFLOW_MAP))).sort();
+  } catch {
+    workflowMapInhoud = null;
+  }
+
+  const redenen = controleerGovernance({
+    wortelEchtPad,
+    actief: await feitenOver(wortelEchtPad, ACTIEVE_WORKFLOW),
+    canoniek: await feitenOver(wortelEchtPad, CANONIEKE_WORKFLOW),
+    workflowMapInhoud,
+  });
+
+  if (redenen.length === 0) {
+    console.log(
+      `jarvis workflow: ${ACTIEVE_WORKFLOW} is byte-identiek aan ${CANONIEKE_WORKFLOW} op deze commit, ` +
+        `en ${WORKFLOW_MAP} bevat geen onbekende workflows.`,
+    );
     return 0;
   }
+  for (const reden of redenen) console.error(`jarvis workflow: ${reden}`);
   console.error(
-    `jarvis workflow: ${config.workflow_pad} ${uitkomst.reden}.
-` +
-      `De goedgekeurde bron is ${config.workflow_canoniek_pad}. Elke afwijking is een fout: wat er draait ` +
-      `hoort exact te zijn wat er is goedgekeurd. Wil je de poort wijzigen, wijzig dan de bron en laat die ` +
-      `door een mens beoordelen.`,
+    `jarvis workflow: de canonieke bron is ${CANONIEKE_WORKFLOW}. Wil je de poort wijzigen, wijzig dan die ` +
+      `bron en laat de wijziging door een mens beoordelen; CODEOWNERS eist dat.`,
   );
   return 1;
 }
@@ -166,15 +217,52 @@ ${tekstUitBestand}`,
  * De workflow is hiermee een adapter: hij zet zes GitHub-waarden in de omgeving
  * en roept dit aan. Wat de exitcode wordt, bepaalt deze functie.
  */
+export type PoortStap = {
+  readonly naam: string;
+  readonly draai: () => Promise<number>;
+};
+
+/**
+ * De stappen van de poort, in vaste volgorde, als lijst in plaats van als reeks
+ * aanroepen.
+ *
+ * Dat is geen stijlkeuze. De workflowcontrole was ingebouwd als één regel in een
+ * reeks `await`-aanroepen, en een onafhankelijke QA toonde aan dat het schrappen
+ * van die regel de hele suite groen liet: de controle zelf was goed getest, dat
+ * hij werd aangeroepen niet. Als lijst is de samenstelling zelf te toetsen.
+ */
+export function poortStappen(wortel: string, waarden: PoortInvoer): readonly PoortStap[] {
+  return [
+    // Eerst, en met opzet: als de poort zelf gewijzigd is, zegt de rest niets.
+    { naam: "workflow", draai: () => controleerWorkflow(wortel) },
+    { naam: "index", draai: () => opdrachtIndex(false) },
+    { naam: "state", draai: () => opdrachtState(new Map([["controleer", "true"]])) },
+    { naam: "sanitize", draai: () => opdrachtSanitize(new Map()) },
+    { naam: "lint", draai: () => voerPoortUit(waarden) },
+  ];
+}
+
+/**
+ * Draait alle stappen en geeft de eerste fout terug.
+ *
+ * Alle stappen draaien, ook na een fout: een run die bij de eerste stopt
+ * verbergt de rest, en dan kost elke reparatie een nieuwe run. Een fout wint
+ * altijd van een succes.
+ */
+export async function poortUitkomst(stappen: readonly PoortStap[]): Promise<number> {
+  let eersteFout = 0;
+  for (const stap of stappen) {
+    const code = await stap.draai();
+    if (code !== 0 && eersteFout === 0) eersteFout = code;
+  }
+  return eersteFout;
+}
+
 async function opdrachtPoort(): Promise<number> {
   const lees = (naam: string) => process.env[naam] ?? "";
-  const { wortel, config } = await laadAlles();
-  const codes = [
-    await controleerWorkflow(wortel, config),
-    await opdrachtIndex(false),
-    await opdrachtState(new Map([["controleer", "true"]])),
-    await opdrachtSanitize(new Map()),
-    await voerPoortUit({
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  return poortUitkomst(
+    poortStappen(wortel, {
       basis: `origin/${lees("PR_BASIS") || "main"}`,
       tekst: `${lees("PR_TITEL")}
 
@@ -183,10 +271,7 @@ ${lees("PR_BODY")}`,
       ackActor: lees("REVIEW_ACTOR"),
       ackRelatie: lees("REVIEW_RELATIE"),
     }),
-  ];
-  // Alle vier draaien, niet stoppen bij de eerste: een run die na de eerste
-  // fout stopt verbergt de rest, en dan kost elke reparatie een nieuwe run.
-  return codes.find((c) => c !== 0) ?? 0;
+  );
 }
 
 /** knowledge/INDEX.json — zodat een agent kan selecteren zonder de CLI te draaien. */

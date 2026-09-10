@@ -1,36 +1,94 @@
-// De canonieke governance-workflow.
+// De governancebestanden van Jarvis.
 //
-// De actieve workflow moet BYTE VOOR BYTE gelijk zijn aan een canoniek bestand
-// in de repository. Meer is het niet, en dat is het punt.
+// WAT DEZE CONTROLE IS, EN WAT NIET
 //
-// Hiervoor stond hier een controle die het workflowbestand las en beoordeelde:
-// een eigen YAML-lezer, een lijst verboden shellvormen, regexen op de vlaggen.
-// Zes QA-rondes lang vond een onafhankelijke beoordelaar er telkens een gat in,
-// en elke keer een laag naar buiten. De laatste twee waren de duidelijkste:
+// Dit is defense-in-depth, geen trust anchor. De workflow, de configuratie en
+// de code die haar valideert leven alle drie in dezelfde repository en kunnen
+// dus samen gewijzigd worden. Een controle die in die repository woont, kan
+// daarom nooit bewijzen dat de repository te vertrouwen is.
 //
-//   - Mijn lezer knipte commentaar af op JavaScript's `\s`, dat U+00A0 en vijf
-//     andere tekens omvat; YAML kent alleen spatie en tab. Een regel met een
-//     harde spatie voor het hekje voldeed daardoor letterlijk aan de
-//     gelijkheidstoets en draaide in bash iets anders.
-//   - De controle keek naar de stap die Jarvis aanroept. Elke ANDERE stap was
-//     vrij, dus een stap ervoor kon met één `sed` de engine aanpassen waarna de
-//     poort netjes groen werd.
+// De echte beveiligingsgrens ligt buiten deze code:
+//   - branch protection op de hoofdbranch;
+//   - verplichte menselijke review;
+//   - CODEOWNERS op elk governancekritiek pad;
+//   - geen bypass voor de bot of de agent;
+//   - productiecredentials buiten agentbranches.
 //
-// Beide hadden dezelfde oorzaak: om te oordelen of het bestand veilig is,
-// interpreteerde ik het. Daarmee is mijn interpretatie het aanvalsoppervlak, en
-// een interpretatie van een taal is nooit af.
+// Wat deze controle wél oplevert: een wijziging aan de poort valt op vóórdat
+// een mens ernaar kijkt, en kan niet stilzwijgend meeliften. Dat is nuttig, en
+// het is minder dan bewijs.
 //
-// Bytes vergelijken interpreteert niets. Er is geen witruimtesemantiek, geen
-// stapfilter, geen lijst verboden constructies. Elke wijziging - een spatie, een
-// comment, een extra stap, een tweede job - is een verschil, en dus een fout.
+// WAT DE BYTE-VERGELIJKING PRECIES ZEGT
 //
-// De canonieke workflow zelf valt onder de gewone menselijke review: hij staat
-// in de repository en CODEOWNERS dekt hem af. Deze controle bewijst alleen dat
-// wat er draait gelijk is aan wat er is goedgekeurd.
+// "De repositoryversie van de actieve governanceworkflow is byte-identiek aan
+// de canonieke bron, op de geteste commit." Niet meer.
+//
+// Het zegt NIET dat de workflow die GitHub heeft uitgevoerd dat bestand was:
+// bij `pull_request` laadt GitHub de definitie van de merge-ref en bij
+// `pull_request_review` die van de standaardbranch, terwijl de checkout de
+// head-sha uitcheckt. Die semantiek valt buiten wat hier te controleren is.
+//
+// WAAROM DE PADEN HIER STAAN EN NIET IN DE CONFIGURATIE
+//
+// Ze stonden in `jarvis.config.yml`. Een onafhankelijke QA zette beide paden op
+// hetzelfde bestand, committeerde dat netjes, en haalde een groene poort boven
+// een workflow met `run: echo pwned` - inclusief de melding dat alles gelijk
+// was. Een controle die haar eigen scope uit configuratiedata haalt, controleert
+// wat die data zegt, niet wat er is.
 
-export type WorkflowVergelijking =
-  | { readonly gelijk: true }
-  | { readonly gelijk: false; readonly reden: string };
+import path from "node:path";
+
+/** Het bestand dat GitHub draait. Niet instelbaar. */
+export const ACTIEVE_WORKFLOW = ".github/workflows/jarvis-lint.yml";
+
+/** De goedgekeurde bron ervan. Niet instelbaar. */
+export const CANONIEKE_WORKFLOW = "jarvis/canonical/jarvis-lint.yml";
+
+/** De governanceconfiguratie zelf. Niet instelbaar. */
+export const GOVERNANCE_CONFIG = "jarvis.config.yml";
+
+/** De map waarin workflows staan. */
+export const WORKFLOW_MAP = ".github/workflows";
+
+/**
+ * De workflows die in deze repository horen te staan.
+ *
+ * Een tweede workflowbestand is een tweede ingang. QA voegde er een toe met
+ * dezelfde naam en job als de poort, op dezelfde events, met schrijfrechten:
+ * de poort bleef groen omdat er maar naar één pad werd gekeken.
+ *
+ * Dit is bewust een korte, harde lijst en geen patroon. Wie een workflow
+ * toevoegt, wijzigt deze lijst, en dat is een wijziging in `jarvis/src/` die
+ * onder CODEOWNERS valt.
+ */
+export const TOEGESTANE_WORKFLOWS: readonly string[] = [
+  // De governance-poort zelf.
+  "jarvis-lint.yml",
+  // Bestaande workflows van voor Jarvis. Ze staan hier omdat ze er zijn, niet
+  // omdat ze beoordeeld zijn: alleen `jarvis-lint.yml` heeft een canonieke
+  // bron. Wat deze lijst wel doet is een NIEUWE workflow tegenhouden.
+  "ci.yml",
+  "db-backup.yml",
+  "jobs-cron.yml",
+];
+
+export type BestandsFeiten = {
+  /** Ruwe inhoud, of null wanneer het bestand niet te lezen is. */
+  readonly bytes: Uint8Array | null;
+  /** Is het pad zelf, of een map erboven, een symbolische link? */
+  readonly viaSymlink: boolean;
+  /** Het pad na het volgen van links, of null. */
+  readonly echtPad: string | null;
+};
+
+export type GovernanceInvoer = {
+  /** Absoluut pad van de repositorywortel, al opgelost. */
+  readonly wortelEchtPad: string;
+  readonly actief: BestandsFeiten;
+  readonly canoniek: BestandsFeiten;
+  /** Bestandsnamen in de workflowmap, of null wanneer die niet te lezen is. */
+  readonly workflowMapInhoud: readonly string[] | null;
+};
 
 /** Regelnummer en kolom van een byte-offset, om een verschil aanwijsbaar te maken. */
 function plaatsVan(bytes: Uint8Array, offset: number): string {
@@ -51,16 +109,20 @@ function alsHex(byte: number | undefined): string {
   return byte === undefined ? "einde van het bestand" : `0x${byte.toString(16).padStart(2, "0")}`;
 }
 
+export type WorkflowVergelijking =
+  | { readonly gelijk: true }
+  | { readonly gelijk: false; readonly reden: string };
+
 /**
  * Zijn de twee bestanden byte voor byte gelijk?
  *
  * Geen enkele normalisatie: geen trim, geen regeleindes gelijktrekken, geen
  * unicode-normalisatie. Elke vorm van "eigenlijk hetzelfde" is een oordeel, en
- * juist die oordelen bleken het gat.
+ * juist die oordelen bleken telkens het gat.
  */
 export function vergelijkWorkflow(actief: Uint8Array | null, canoniek: Uint8Array | null): WorkflowVergelijking {
-  if (canoniek === null) return { gelijk: false, reden: "het canonieke workflowbestand ontbreekt" };
-  if (actief === null) return { gelijk: false, reden: "het actieve workflowbestand ontbreekt" };
+  if (canoniek === null) return { gelijk: false, reden: "de canonieke bron ontbreekt of is niet te lezen" };
+  if (actief === null) return { gelijk: false, reden: "het actieve bestand ontbreekt of is niet te lezen" };
 
   const kortste = Math.min(actief.length, canoniek.length);
   for (let i = 0; i < kortste; i += 1) {
@@ -69,18 +131,78 @@ export function vergelijkWorkflow(actief: Uint8Array | null, canoniek: Uint8Arra
         gelijk: false,
         reden:
           `wijkt af op ${plaatsVan(canoniek, i)}: het actieve bestand heeft ${alsHex(actief[i])}, ` +
-          `het canonieke ${alsHex(canoniek[i])}`,
+          `de canonieke bron ${alsHex(canoniek[i])}`,
       };
     }
   }
   if (actief.length !== canoniek.length) {
-    const langer = actief.length > canoniek.length ? "actieve" : "canonieke";
+    const langer = actief.length > canoniek.length ? "actieve bestand" : "canonieke bron";
     return {
       gelijk: false,
       reden:
-        `is even lang tot ${plaatsVan(canoniek, kortste)}, maar het ${langer} bestand gaat daarna verder ` +
+        `is gelijk tot ${plaatsVan(canoniek, kortste)}, maar het ${langer} gaat daarna verder ` +
         `(${actief.length} tegen ${canoniek.length} bytes)`,
     };
   }
   return { gelijk: true };
+}
+
+/** Ligt dit opgeloste pad binnen de repository? */
+function binnenRepo(wortelEchtPad: string, echtPad: string): boolean {
+  const relatief = path.relative(wortelEchtPad, echtPad);
+  return relatief.length > 0 && !relatief.startsWith("..") && !path.isAbsolute(relatief);
+}
+
+/**
+ * Alle governancecontroles over de al verzamelde feiten.
+ *
+ * Puur: de I/O gebeurt bij de aanroeper, zodat elk geval hier met een verzonnen
+ * situatie te toetsen is - een symlink, een ontbrekend bestand, een tweede
+ * workflow - zonder die situatie op schijf te hoeven maken.
+ *
+ * Geeft de redenen terug waarom het niet in orde is. Leeg betekent in orde.
+ */
+export function controleerGovernance(invoer: GovernanceInvoer): readonly string[] {
+  const redenen: string[] = [];
+  const { wortelEchtPad, actief, canoniek } = invoer;
+
+  // Symlinks eerst: een link maakt elk oordeel over "welk bestand is dit"
+  // onbetrouwbaar. QA liet `jarvis/canonical` naar `.github/workflows` wijzen,
+  // waarna het bestand met zichzelf werd vergeleken en alles klopte.
+  if (actief.viaSymlink) redenen.push(`${ACTIEVE_WORKFLOW} is een symbolische link of ligt achter een link`);
+  if (canoniek.viaSymlink) redenen.push(`${CANONIEKE_WORKFLOW} is een symbolische link of ligt achter een link`);
+
+  for (const [naam, feiten] of [
+    [ACTIEVE_WORKFLOW, actief],
+    [CANONIEKE_WORKFLOW, canoniek],
+  ] as const) {
+    if (feiten.echtPad !== null && !binnenRepo(wortelEchtPad, feiten.echtPad)) {
+      redenen.push(`${naam} wijst na het volgen van links buiten de repository`);
+    }
+  }
+
+  // Twee paden die hetzelfde bestand zijn, vergelijken niets.
+  if (actief.echtPad !== null && canoniek.echtPad === actief.echtPad) {
+    redenen.push(`${ACTIEVE_WORKFLOW} en ${CANONIEKE_WORKFLOW} zijn hetzelfde bestand`);
+  }
+
+  if (redenen.length === 0) {
+    const uitkomst = vergelijkWorkflow(actief.bytes, canoniek.bytes);
+    if (!uitkomst.gelijk) redenen.push(`${ACTIEVE_WORKFLOW} ${uitkomst.reden}`);
+  }
+
+  if (invoer.workflowMapInhoud === null) {
+    redenen.push(`${WORKFLOW_MAP} is niet te lezen`);
+  } else {
+    const onbekend = invoer.workflowMapInhoud.filter((naam) => !TOEGESTANE_WORKFLOWS.includes(naam)).sort();
+    if (onbekend.length > 0) {
+      redenen.push(
+        `${WORKFLOW_MAP} bevat ${onbekend.length} workflow(s) die hier niet horen: ${onbekend.join(", ")}. ` +
+          `Een tweede workflow is een tweede ingang; voeg hem toe aan TOEGESTANE_WORKFLOWS als hij er hoort ` +
+          `te zijn, en laat die wijziging beoordelen.`,
+      );
+    }
+  }
+
+  return redenen;
 }
