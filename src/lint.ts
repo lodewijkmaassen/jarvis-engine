@@ -25,6 +25,8 @@ export const LINT_CODES = [
   "status_impact_ontbreekt",
   "workflow_gewijzigd",
   "dec_quotum",
+  "rol_ontbreekt",
+  "rol_overschrijding",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -50,6 +52,37 @@ export type LintInvoer = {
   readonly statusImpactVerklaard?: boolean;
   /** Aantal nieuwe DEC-records in deze wijziging. */
   readonly nieuweDecs?: number;
+  /** Commits op deze branch, met hun rol-trailer en gewijzigde bestanden. */
+  readonly commits?: readonly CommitOverzicht[];
+};
+
+export type CommitOverzicht = {
+  readonly hash: string;
+  readonly onderwerp: string;
+  readonly rol: string | null;
+  readonly taak: string | null;
+  readonly bestanden: readonly string[];
+  /** Commit dateert van vóór het ingevoerde startpunt van de rolcontrole. */
+  readonly voorStartpunt?: boolean;
+};
+
+/**
+ * Wat een rol mag aanraken.
+ *
+ * Dit is het bevoegdheidsmodel, machinecontroleerbaar in plaats van als proza
+ * in een rolcontract. Aanleiding: een onafhankelijke QA vond een commit met
+ * rol-trailer `qa` die vijf engine-modules wijzigde — precies wat het
+ * QA-contract verbiedt. Een regel die alleen in een document staat, bindt de
+ * agent die hem las niet aantoonbaar.
+ *
+ * Alleen beperkende rollen staan hier. Een rol die niet in deze kaart staat
+ * kent geen padbeperking; die wordt door andere poorten begrensd.
+ */
+export const ROL_SCHRIJFRECHTEN: Readonly<Record<string, readonly string[]>> = {
+  qa: ["tests/", "tasks/"],
+  "knowledge-manager": ["knowledge/", "tasks/", "docs/"],
+  architect: ["tasks/", "docs/"],
+  orchestrator: ["tasks/"],
 };
 
 export type LintResultaat = {
@@ -232,6 +265,39 @@ export function lint(invoer: LintInvoer): LintResultaat {
         workflows.join(", "),
         `wijziging in workflows raakt de beveiligingsgrens rond productiesecrets; ` +
           `vereist review door de code-eigenaar`,
+      ),
+    );
+  }
+
+  // Bevoegdheidscontrole per commit. Een rol die buiten zijn mandaat schrijft
+  // is geen stijlkwestie: het is het verschil tussen "QA keurde onafhankelijk"
+  // en "QA repareerde wat hij zelf beoordeelde".
+  for (const commit of invoer.commits ?? []) {
+    if (commit.voorStartpunt) continue;
+    if (commit.rol === null) {
+      bevindingen.push(
+        bevinding(
+          "rol_ontbreekt",
+          "waarschuwing",
+          commit.hash,
+          `commit "${commit.onderwerp}" heeft geen Jarvis-Role-trailer; niet herleidbaar wie wat deed`,
+        ),
+      );
+      continue;
+    }
+    const toegestaan = ROL_SCHRIJFRECHTEN[commit.rol];
+    if (!toegestaan) continue;
+    const buiten = commit.bestanden
+      .map(normaliseerPad)
+      .filter((p) => !toegestaan.some((voorvoegsel) => p.startsWith(voorvoegsel)));
+    if (buiten.length === 0) continue;
+    bevindingen.push(
+      bevinding(
+        "rol_overschrijding",
+        "fout",
+        commit.hash,
+        `rol "${commit.rol}" mag alleen schrijven in ${toegestaan.join(", ")}, maar deze commit raakt ` +
+          `${buiten.slice(0, 4).join(", ")}${buiten.length > 4 ? ` en ${buiten.length - 4} meer` : ""}`,
       ),
     );
   }

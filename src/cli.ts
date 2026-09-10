@@ -173,12 +173,47 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
     ...config.status_paden,
   ]);
 
+  // Commits met hun rol-trailer en gewijzigde bestanden, zodat de poort kan
+  // toetsen of elke rol binnen zijn mandaat schreef.
+  const hashes = (await git(wortel, ["rev-list", `${basis}..HEAD`]))
+    .split("\n")
+    .map((h) => h.trim())
+    .filter((h) => h.length > 0)
+    .slice(0, 50);
+  // Commits van vóór het startpunt vallen buiten de rolcontrole. Zie
+  // `rol_controle_vanaf` in jarvis.config.yml voor waarom dat startpunt bestaat.
+  const voorStartpunt = config.rol_controle_vanaf
+    ? new Set(
+        (await git(wortel, ["rev-list", `${basis}..${config.rol_controle_vanaf}`]))
+          .split("\n")
+          .map((h) => h.trim())
+          .filter((h) => h.length > 0),
+      )
+    : new Set<string>();
+  const commits = [];
+  for (const hash of hashes) {
+    const bericht = await git(wortel, ["show", "-s", "--format=%B", hash]);
+    const onderwerp = await git(wortel, ["show", "-s", "--format=%s", hash]);
+    const gewijzigd = await git(wortel, ["show", "--name-only", "--format=", hash]);
+    const rol = /^Jarvis-Role:\s*(\S+)\s*$/im.exec(bericht)?.[1] ?? null;
+    const taak = /^Jarvis-Task:\s*(\S+)\s*$/im.exec(bericht)?.[1] ?? null;
+    commits.push({
+      hash: hash.slice(0, 7),
+      onderwerp,
+      rol,
+      taak,
+      bestanden: gewijzigd.split("\n").map((r) => r.trim()).filter((r) => r.length > 0),
+      voorStartpunt: voorStartpunt.has(hash),
+    });
+  }
+
   const resultaat = lint({
     config,
     lading,
     gewijzigdeBestanden: bestanden,
     tekstCorpus: tekst,
     acks,
+    commits,
     statusCommitsSinds: Number.parseInt(statusCommits || "0", 10) || 0,
     statusImpactVerklaard: statusImpact,
     nieuweDecs,

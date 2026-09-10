@@ -43,6 +43,11 @@ export const configSchema = z.strictObject({
   // Waar de migraties staan. Leeg = dit project kent ze niet; het feitenblok
   // laat het veld dan weg in plaats van een pad te veronderstellen.
   migratie_pad: z.string().trim().default(""),
+  // Vanaf welke commit de rolcontrole bindt. Leeg = alle commits.
+  // Bedoeld voor het invoeren van de regel op een bestaande historie: die
+  // herschrijven zou een force-push vragen, en dat is geen keuze die een
+  // agent zelfstandig hoort te maken.
+  rol_controle_vanaf: z.string().trim().default(""),
   branch_voorvoegsel: z.string().trim().min(1).default("jarvis/"),
 });
 

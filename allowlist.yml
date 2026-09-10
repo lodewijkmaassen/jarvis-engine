@@ -26,4 +26,16 @@ telefoonnummers:
 # Leeg houden tenzij aantoonbaar publiek. Een string van 32+ tekens die je hier
 # wilt zetten omdat "de scan zeurt" hoort in negen van de tien gevallen gewoon
 # uit het bestand verwijderd te worden.
-tokens: []
+tokens:
+  # Naam van een databaseconstraint, letterlijk geciteerd in een
+  # analysedocument. Geen geheim, wel lang genoeg om de entropiecontrole te
+  # halen. Bewust hier als expliciete uitzondering per waarde, in plaats van
+  # een vormheuristiek die ook wachtwoorden zou doorlaten.
+  - offerte_config_opvolg_2_positief
+  # Twee verzonnen wachtwoorden uit het QA-rapport van T-20260910-jarvis-v1.
+  # Ze staan daar als BEWIJS dat de scanner ze moet vangen, en dat doet hij nu
+  # ook - vandaar dat het rapport zelf erop afketst. Het zijn geen credentials
+  # van enig systeem. Verwijder deze twee regels zodra dat rapport is
+  # gearchiveerd.
+  - correct-horse-battery-staple-amsterdam-2026
+  - zomer_regen_kabel_vlieger_2026_geheim

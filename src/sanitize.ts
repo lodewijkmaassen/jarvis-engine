@@ -122,9 +122,14 @@ export function shannonEntropie(waarde: string): number {
 
 /**
  * Lengtes van de hashes die Jarvis zelf produceert en moet kunnen opslaan:
- * MD5 (32), Git-blob-SHA-1 (40), SHA-256 (64).
+ * Git-blob-SHA-1 (40) en SHA-256 (64).
+ *
+ * 32 stond hier ook (MD5) en dat was een beveiligingsgat: het auth-token van
+ * een van de telefonieleveranciers in deze keten is PRECIES 32 hexadecimale
+ * tekens en werd daardoor stilzwijgend vrijgesteld. De engine produceert zelf
+ * geen enkele hash van 32 tekens, dus die lengte hoort hier niet.
  */
-const HASH_LENGTES = new Set([32, 40, 64]);
+const HASH_LENGTES = new Set([40, 64]);
 
 /**
  * Is dit een cryptografische hash in plaats van een sleutel?
@@ -146,39 +151,31 @@ export function isHash(token: string): boolean {
 }
 
 /**
- * Is dit een leesbare identifier in plaats van een sleutel?
+ * BEWUST VERWIJDERD: een vormheuristiek die "leesbare identifiers" vrijstelde.
  *
- * Aanleiding: een naam van een databaseconstraint uit een analysedocument —
- * ruim dertig tekens, met een cijfer erin, en daardoor door de
- * entropiecontrole heen. Zulke namen komen overal in documentatie voor en
- * elke treffer erop is ruis.
+ * Hij bestond om ruis te onderdrukken op lange namen uit documentatie, maar
+ * een woordgebaseerd wachtwoord heeft exact dezelfde vorm — drie of meer door
+ * scheidingstekens gekoppelde woorden — en glipte er dus ook langs. Een
+ * privacypoort zwakker maken om ruis te dempen is de verkeerde ruil.
  *
- * Het onderscheid is de vorm, niet de lengte: een identifier bestaat uit drie
- * of meer door `_` of `-` gescheiden woorddelen die elk een klinker bevatten.
- * Gegenereerde sleutels zien er nooit zo uit — die hebben hooguit een
- * voorvoegsel en dan een blok willekeur.
+ * Vals-positieven horen thuis in `allowlist.yml` onder `tokens`: dat is een
+ * expliciete, gereviewde uitzondering per waarde in plaats van een categorie
+ * die stilzwijgend meer doorlaat dan bedoeld.
  */
-export function isLeesbareIdentifier(token: string): boolean {
-  const delen = token.split(/[_-]/).filter((d) => d.length > 0);
-  if (delen.length < 3) return false;
-  return delen.every((deel) => /^[a-z0-9]+$/i.test(deel) && (/[aeiouy]/i.test(deel) || /^\d+$/.test(deel)));
-}
 
 /**
- * Vijf eisen tegelijk, bewust conservatief tegen vals-positieven:
+ * Vier eisen tegelijk, bewust conservatief tegen vals-positieven:
  *   1. lengte >= ENTROPIE_MINIMUM_LENGTE uit het alfabet [A-Za-z0-9_-];
  *   2. minstens één cijfer én één letter — gegenereerde sleutels en hashes
  *      hebben die mix vrijwel altijd, lange Nederlandse identifiers niet;
  *   3. geen herkenbare cryptografische hash (zie isHash);
- *   4. geen leesbare identifier (zie isLeesbareIdentifier);
- *   5. entropie >= ENTROPIE_DREMPEL_BITS.
+ *   4. entropie >= ENTROPIE_DREMPEL_BITS.
  */
 export function isVerdachteEntropie(token: string): boolean {
   if (token.length < ENTROPIE_MINIMUM_LENGTE) return false;
   if (!/[0-9]/.test(token)) return false;
   if (!/[A-Za-z]/.test(token)) return false;
   if (isHash(token)) return false;
-  if (isLeesbareIdentifier(token)) return false;
   return shannonEntropie(token) >= ENTROPIE_DREMPEL_BITS;
 }
 
@@ -593,11 +590,21 @@ function zoekTreffers(
   const treffers: Treffer[] = [];
 
   for (let regelIndex = 0; regelIndex < regels.length; regelIndex += 1) {
-    if (overslaan[regelIndex]) continue;
     const regel = regels[regelIndex];
+    // Een voorbeeldmarkering onderdrukt UITSLUITEND contactgegevens. Secrets en
+    // identificatienummers blijven altijd scannen: een sleutel is nooit een
+    // legitiem voorbeeld, en wie er een in een voorbeeldblok zet heeft juist
+    // dan een poort nodig.
+    const alleenContactgegevensOverslaan = overslaan[regelIndex];
     const bezet: [number, number][] = [];
 
     for (const def of PATROON_DEFS) {
+      if (
+        alleenContactgegevensOverslaan &&
+        (def.naam === "email" || def.naam === "telefoon_e164" || def.naam === "telefoon_nl")
+      ) {
+        continue;
+      }
       const zoeker = new RegExp(def.patroon.source, "g");
       let match = zoeker.exec(regel);
       while (match !== null) {
