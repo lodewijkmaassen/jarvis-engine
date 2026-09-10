@@ -72,6 +72,28 @@ export const TOEGESTANE_WORKFLOWS: readonly string[] = [
   "jobs-cron.yml",
 ];
 
+/**
+ * De testbestanden die de governancegrens dekken.
+ *
+ * Een onafhankelijke QA verwijderde `tests/jarvis/workflow.test.ts` en de suite
+ * bleef groen op vierenzeventig bestanden; een `exclude` in de testconfiguratie
+ * deed hetzelfde. De dekking die een gat moet melden, was zelf zonder review weg
+ * te nemen.
+ *
+ * De poort controleert daarom dat deze bestanden bestaan en inhoud hebben. Dat
+ * is bewust het minimum: het vangt weghalen en leegmaken, niet elke manier om
+ * een test krachteloos te maken. Voor dat laatste is CODEOWNERS op `tests/` en
+ * op de testconfiguratie de maatregel; deze guard zorgt dat de eenvoudigste
+ * route niet stilzwijgend groen wordt.
+ */
+export const VERPLICHTE_GOVERNANCE_TESTS: readonly string[] = [
+  "tests/jarvis/workflow.test.ts",
+  "tests/jarvis/args.test.ts",
+  "tests/jarvis/lint.test.ts",
+  "tests/jarvis/sanitize.test.ts",
+  "tests/jarvis/startpunt.test.ts",
+];
+
 export type BestandsFeiten = {
   /** Ruwe inhoud, of null wanneer het bestand niet te lezen is. */
   readonly bytes: Uint8Array | null;
@@ -88,6 +110,8 @@ export type GovernanceInvoer = {
   readonly canoniek: BestandsFeiten;
   /** Bestandsnamen in de workflowmap, of null wanneer die niet te lezen is. */
   readonly workflowMapInhoud: readonly string[] | null;
+  /** Per verplicht governance-testbestand: het aantal bytes, of null als het ontbreekt. */
+  readonly testGroottes: ReadonlyMap<string, number | null>;
 };
 
 /** Regelnummer en kolom van een byte-offset, om een verschil aanwijsbaar te maken. */
@@ -201,6 +225,15 @@ export function controleerGovernance(invoer: GovernanceInvoer): readonly string[
           `Een tweede workflow is een tweede ingang; voeg hem toe aan TOEGESTANE_WORKFLOWS als hij er hoort ` +
           `te zijn, en laat die wijziging beoordelen.`,
       );
+    }
+  }
+
+  for (const testpad of VERPLICHTE_GOVERNANCE_TESTS) {
+    const grootte = invoer.testGroottes.get(testpad) ?? null;
+    if (grootte === null) {
+      redenen.push(`${testpad} ontbreekt; dat is een verplichte governance-test`);
+    } else if (grootte === 0) {
+      redenen.push(`${testpad} is leeg; dat is een verplichte governance-test`);
     }
   }
 

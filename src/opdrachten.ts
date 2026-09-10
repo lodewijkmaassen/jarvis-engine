@@ -12,7 +12,7 @@
 //
 // Gebruik: npx tsx jarvis/src/cli.ts <opdracht> [opties]
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { bouwContextPakket, rendereerPakket } from "./context";
@@ -34,6 +34,7 @@ import { laadKennis, type KennisLading } from "./store";
 import {
   ACTIEVE_WORKFLOW,
   CANONIEKE_WORKFLOW,
+  VERPLICHTE_GOVERNANCE_TESTS,
   WORKFLOW_MAP,
   controleerGovernance,
   type BestandsFeiten,
@@ -143,7 +144,7 @@ async function feitenOver(wortelEchtPad: string, relatiefPad: string): Promise<B
  * niet instelbaar: een controle die haar scope uit configuratie haalt,
  * controleert wat die configuratie zegt in plaats van wat er is.
  */
-async function controleerWorkflow(wortel: string): Promise<number> {
+export async function controleerWorkflow(wortel: string): Promise<number> {
   let wortelEchtPad = wortel;
   try {
     wortelEchtPad = await realpath(wortel);
@@ -157,11 +158,21 @@ async function controleerWorkflow(wortel: string): Promise<number> {
     workflowMapInhoud = null;
   }
 
+  const testGroottes = new Map<string, number | null>();
+  for (const testpad of VERPLICHTE_GOVERNANCE_TESTS) {
+    try {
+      testGroottes.set(testpad, (await stat(path.join(wortelEchtPad, testpad))).size);
+    } catch {
+      testGroottes.set(testpad, null);
+    }
+  }
+
   const redenen = controleerGovernance({
     wortelEchtPad,
     actief: await feitenOver(wortelEchtPad, ACTIEVE_WORKFLOW),
     canoniek: await feitenOver(wortelEchtPad, CANONIEKE_WORKFLOW),
     workflowMapInhoud,
+    testGroottes,
   });
 
   if (redenen.length === 0) {
@@ -258,9 +269,17 @@ export async function poortUitkomst(stappen: readonly PoortStap[]): Promise<numb
   return eersteFout;
 }
 
-async function opdrachtPoort(): Promise<number> {
+/**
+ * De volledige poort.
+ *
+ * `wortelOverschrijving` bestaat alleen voor tests: zonder die haak was deze
+ * functie niet rechtstreeks te toetsen, en een onafhankelijke QA liet zien dat
+ * `if (true) return 0;` bovenaan de hele suite groen liet. De controle was wel
+ * getest, dat de poort haar aanriep niet.
+ */
+export async function opdrachtPoort(wortelOverschrijving?: string): Promise<number> {
   const lees = (naam: string) => process.env[naam] ?? "";
-  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  const wortel = wortelOverschrijving ?? (await vindWortel(process.cwd())) ?? process.cwd();
   return poortUitkomst(
     poortStappen(wortel, {
       basis: `origin/${lees("PR_BASIS") || "main"}`,
