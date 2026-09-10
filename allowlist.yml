@@ -23,6 +23,10 @@ emails:
 telefoonnummers:
   - "+31612686292"
 
+# Vorm: `<waarde> in <padvoorvoegsel>`. Het padgedeelte is niet optioneel in
+# de praktijk: zonder " in " geldt de uitzondering repo-breed en is de scanner
+# overal blind voor die string. Schrijf dus het smalste pad dat werkt.
+#
 # Leeg houden tenzij aantoonbaar publiek. Een string van 32+ tekens die je hier
 # wilt zetten omdat "de scan zeurt" hoort in negen van de tien gevallen gewoon
 # uit het bestand verwijderd te worden.
@@ -31,11 +35,12 @@ tokens:
   # analysedocument. Geen geheim, wel lang genoeg om de entropiecontrole te
   # halen. Bewust hier als expliciete uitzondering per waarde, in plaats van
   # een vormheuristiek die ook wachtwoorden zou doorlaten.
-  - offerte_config_opvolg_2_positief
+  - offerte_config_opvolg_2_positief in docs/
+  - offerte_config_opvolg_2_positief in tasks/T-20260910-jarvis-v1/
   # Twee verzonnen wachtwoorden uit het QA-rapport van T-20260910-jarvis-v1.
   # Ze staan daar als BEWIJS dat de scanner ze moet vangen, en dat doet hij nu
   # ook - vandaar dat het rapport zelf erop afketst. Het zijn geen credentials
   # van enig systeem. Verwijder deze twee regels zodra dat rapport is
   # gearchiveerd.
-  - correct-horse-battery-staple-amsterdam-2026
-  - zomer_regen_kabel_vlieger_2026_geheim
+  - correct-horse-battery-staple-amsterdam-2026 in tasks/T-20260910-jarvis-v1/qa-rapport.md
+  - zomer_regen_kabel_vlieger_2026_geheim in tasks/T-20260910-jarvis-v1/qa-rapport.md

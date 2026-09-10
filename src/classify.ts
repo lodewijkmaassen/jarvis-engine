@@ -52,9 +52,29 @@ export function globNaarRegex(glob: string): RegExp {
   return new RegExp(`^${patroon}$`);
 }
 
-/** Padvergelijking is altijd met forward slashes, ook op Windows. */
+/**
+ * Padvergelijking is altijd met forward slashes, ook op Windows.
+ *
+ * `.` en `..` worden weggewerkt. Dat is niet cosmetisch: zonder die stap is
+ * `tests/../jarvis/src/lint.ts` voor een voorvoegselcontrole een pad dat met
+ * `tests/` begint, terwijl het een enginebestand aanwijst. Een rolgrens die
+ * daarop vertrouwt, is met één `..` te omzeilen.
+ *
+ * Een `..` die boven de wortel uitkomt blijft staan; zo'n pad hoort nergens
+ * bij en moet dus ook nergens bij passen.
+ */
 export function normaliseerPad(pad: string): string {
-  return pad.replace(/\\/g, "/").replace(/^\.\//, "");
+  const delen = pad.replace(/\\/g, "/").split("/");
+  const uit: string[] = [];
+  for (const deel of delen) {
+    if (deel === "" || deel === ".") continue;
+    if (deel === ".." && uit.length > 0 && uit[uit.length - 1] !== "..") {
+      uit.pop();
+      continue;
+    }
+    uit.push(deel);
+  }
+  return uit.join("/");
 }
 
 export function matchtGlob(pad: string, globs: readonly string[]): boolean {

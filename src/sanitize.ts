@@ -48,10 +48,13 @@ export const PATROON_NAMEN = [
   "resend_api_key",
   "twilio_account_sid",
   "twilio_api_key_sid",
+  "verbindingsreeks",
   "email",
   "telefoon_e164",
   "telefoon_nl",
+  "prive_sleutel",
   "hoge_entropie",
+  "base64_geheim",
   // Geen tekstpatroon maar een leesfout. Een poort die stilzwijgend over een
   // onleesbaar bestand heen stapt, is geen poort.
   "bestand_onleesbaar",
@@ -164,6 +167,28 @@ export function isHash(token: string): boolean {
  */
 
 /**
+ * Drempel voor base64-kandidaten die een schuine streep bevatten.
+ *
+ * Een pad als `Files/PostgreSQL/17/bin/pg` past exact in het base64-alfabet en
+ * haalt de gewone drempel, terwijl een echte base64-sleutel duidelijk hoger
+ * uitkomt. Meten aan entropie scheidt die twee zonder woordenlijst: paden
+ * herhalen letters, sleutels niet.
+ */
+export const BASE64_PAD_DREMPEL_BITS = 4.2;
+
+/**
+ * Base64-kandidaat, met een strengere eis zodra er een schuine streep in zit.
+ *
+ * Zonder die extra eis vlagt het patroon elk padfragment van vierentwintig
+ * tekens, en een poort die bij elk bestandspad afgaat wordt genegeerd.
+ */
+export function isVerdachtBase64(token: string): boolean {
+  if (!isVerdachteEntropie(token, 24)) return false;
+  if (!token.includes("/")) return true;
+  return shannonEntropie(token) >= BASE64_PAD_DREMPEL_BITS;
+}
+
+/**
  * Vier eisen tegelijk, bewust conservatief tegen vals-positieven:
  *   1. lengte >= ENTROPIE_MINIMUM_LENGTE uit het alfabet [A-Za-z0-9_-];
  *   2. minstens één cijfer én één letter — gegenereerde sleutels en hashes
@@ -171,8 +196,12 @@ export function isHash(token: string): boolean {
  *   3. geen herkenbare cryptografische hash (zie isHash);
  *   4. entropie >= ENTROPIE_DREMPEL_BITS.
  */
-export function isVerdachteEntropie(token: string): boolean {
-  if (token.length < ENTROPIE_MINIMUM_LENGTE) return false;
+export function isVerdachteEntropie(token: string, minimumLengte = ENTROPIE_MINIMUM_LENGTE): boolean {
+  if (token.length < minimumLengte) return false;
+  // Een lange reeks cijfers is geen leesbare tekst en geen hash, maar zijn
+  // entropie blijft per definitie onder de drempel (log2(10) is 3,32). Zonder
+  // deze regel glipt een token van tweeendertig cijfers er altijd doorheen.
+  if (/^[0-9]+$/.test(token)) return token.length >= ENTROPIE_MINIMUM_LENGTE;
   if (!/[0-9]/.test(token)) return false;
   if (!/[A-Za-z]/.test(token)) return false;
   if (isHash(token)) return false;
@@ -424,6 +453,22 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     vervangbaar: true,
   },
   {
+    // Een wachtwoord in een verbindingsreeks. Dit patroon ontbrak, en het
+    // wachtwoord lichtte alleen bij toeval op doordat het e-mailpatroon over
+    // `gebruiker:wachtwoord@host` viel. Dat patroon wordt door de
+    // voorbeeldmarkering uitgezet, dus een DATABASE_URL in een voorbeeldblok
+    // gaf geen enkele bevinding. Staat bewust VOOR "email", zodat de treffer
+    // hier terechtkomt en niet bij het patroon dat uitgezet kan worden.
+    naam: "verbindingsreeks",
+    categorie: "secret",
+    patroon: /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:/@]+:[^\s:/@]+@[^\s/]+/,
+    linkerGrens: /[A-Za-z0-9+.-]/,
+    // Niet /\S/: het teken na een verbindingsreeks is doorgaans "/" (het
+    // padgedeelte), en een grens die daarop aanslaat verwerpt elke treffer.
+    rechterGrens: /[A-Za-z0-9.-]/,
+    vervangbaar: true,
+  },
+  {
     naam: "email",
     categorie: "pii",
     patroon: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/,
@@ -449,11 +494,35 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     vervangbaar: true,
   },
   {
+    // De header alleen is genoeg. Regelgebaseerd scannen ziet de body van een
+    // PEM-blok als losse regels die elk onder de drempel kunnen blijven; bij
+    // een 2048-bits sleutel bleven zo zeven van de achtentwintig regels
+    // ongezien. De header staat er altijd, precies één keer.
+    naam: "prive_sleutel",
+    categorie: "secret",
+    patroon: /-----BEGIN(?:\s+[A-Z0-9]+)*\s+PRIVATE KEY-----/,
+    linkerGrens: /[A-Za-z0-9-]/,
+    rechterGrens: /[A-Za-z0-9-]/,
+    vervangbaar: false,
+  },
+  {
     naam: "hoge_entropie",
     categorie: "secret",
     patroon: /[A-Za-z0-9_-]{32,}/,
     linkerGrens: TOKEN_GRENS,
     rechterGrens: TOKEN_GRENS,
+    vervangbaar: false,
+  },
+  {
+    // Base64 met "+" en "/" viel buiten het alfabet van hoge_entropie. Een
+    // AWS-secret werd daardoor in stukken onder de drempel geknipt en leverde
+    // niets op. De grenzen bevatten bewust GEEN "=": anders leest
+    // `SLEUTEL=<base64>` als midden-in-een-token en wordt de treffer verworpen.
+    naam: "base64_geheim",
+    categorie: "secret",
+    patroon: /[A-Za-z0-9+/]{24,}={0,2}/,
+    linkerGrens: /[A-Za-z0-9+/]/,
+    rechterGrens: /[A-Za-z0-9+/]/,
     vervangbaar: false,
   },
 ];
@@ -474,7 +543,8 @@ function severityVan(categorie: Categorie): Severity {
  */
 function herkenLeveranciersSecret(waarde: string): PatroonNaam | null {
   for (const def of PATROON_DEFS) {
-    if (def.categorie !== "secret" || def.naam === "hoge_entropie") continue;
+    if (def.categorie !== "secret") continue;
+    if (def.naam === "hoge_entropie" || def.naam === "base64_geheim") continue;
     if (new RegExp(def.patroon.source).test(waarde)) return def.naam;
   }
   return null;
@@ -543,14 +613,36 @@ type Treffer = {
 type AllowlistIndex = {
   readonly emails: ReadonlySet<string>;
   readonly telefoons: ReadonlySet<string>;
-  readonly tokens: ReadonlySet<string>;
+  /** Waarde -> padvoorvoegsels waarbinnen de uitzondering geldt ("" = overal). */
+  readonly tokens: ReadonlyMap<string, readonly string[]>;
 };
 
+/**
+ * Splitst een tokenregel in de waarde en het pad waarbinnen hij geldt.
+ *
+ * Vorm: `<waarde> in <padvoorvoegsel>`. Zonder " in " geldt de uitzondering
+ * repo-breed, en dat is bijna nooit de bedoeling: een uitzondering die overal
+ * geldt maakt de scanner overal blind voor die string. Een token bevat zelf
+ * nooit spaties, dus de scheiding is ondubbelzinnig.
+ */
+export function ontleedTokenRegel(regel: string): { readonly waarde: string; readonly pad: string | null } {
+  const knip = regel.lastIndexOf(" in ");
+  if (knip < 0) return { waarde: regel.trim(), pad: null };
+  return { waarde: regel.slice(0, knip).trim(), pad: regel.slice(knip + 4).trim() };
+}
+
 function indexeer(allowlist: Allowlist): AllowlistIndex {
+  const tokens = new Map<string, string[]>();
+  for (const regel of allowlist.tokens) {
+    const { waarde, pad } = ontleedTokenRegel(regel);
+    const bestaand = tokens.get(waarde) ?? [];
+    bestaand.push(pad ?? "");
+    tokens.set(waarde, bestaand);
+  }
   return {
     emails: new Set(allowlist.emails.map((e) => e.trim().toLowerCase())),
     telefoons: new Set(allowlist.telefoonnummers.map((t) => normaliseerTelefoon(t))),
-    tokens: new Set(allowlist.tokens.map((t) => t.trim())),
+    tokens,
   };
 }
 
@@ -560,15 +652,30 @@ function indexeer(allowlist: Allowlist): AllowlistIndex {
  * samengesteld Allowlist-object (of een toekomstige tweede loader) de poort
  * evenmin kan omzeilen.
  */
-function isToegestaan(naam: PatroonNaam, waarde: string, index: AllowlistIndex): boolean {
+function tokenToegestaan(waarde: string, bestand: string, index: AllowlistIndex): boolean {
+  const paden = index.tokens.get(waarde.trim());
+  if (!paden) return false;
+  const doel = bestand.replace(/\\/g, "/");
+  return paden.some((pad) => pad === "" || doel.startsWith(pad));
+}
+
+function isToegestaan(
+  naam: PatroonNaam,
+  waarde: string,
+  index: AllowlistIndex,
+  bestand: string,
+): boolean {
   switch (naam) {
     case "email":
       return index.emails.has(waarde.toLowerCase());
     case "telefoon_e164":
     case "telefoon_nl":
       return index.telefoons.has(normaliseerTelefoon(waarde));
+    case "verbindingsreeks":
+    case "prive_sleutel":
+    case "base64_geheim":
     case "hoge_entropie":
-      return index.tokens.has(waarde);
+      return tokenToegestaan(waarde, bestand, index);
     default:
       return false;
   }
@@ -586,6 +693,7 @@ function zoekTreffers(
   regels: readonly string[],
   overslaan: readonly boolean[],
   index: AllowlistIndex,
+  bestand: string,
 ): readonly Treffer[] {
   const treffers: Treffer[] = [];
 
@@ -618,13 +726,20 @@ function zoekTreffers(
         }
         const linksOk = start === 0 || !def.linkerGrens.test(regel[start - 1]);
         const rechtsOk = eind >= regel.length || !def.rechterGrens.test(regel[eind]);
-        const entropieOk = def.naam !== "hoge_entropie" || isVerdachteEntropie(waarde);
+        // base64_geheim heeft een eigen, lagere drempel: vierentwintig tekens
+        // base64 is zestien bytes, en zestien bytes is een sleutel.
+        const entropieOk =
+          def.naam === "hoge_entropie"
+            ? isVerdachteEntropie(waarde)
+            : def.naam === "base64_geheim"
+              ? isVerdachtBase64(waarde)
+              : true;
 
         if (linksOk && rechtsOk && entropieOk && !overlapt(bezet, start, eind)) {
           // Ook een toegestane treffer bezet zijn bereik, zodat een generieker
           // patroon dezelfde tekst niet alsnog markeert.
           bezet.push([start, eind]);
-          if (!isToegestaan(def.naam, waarde, index)) {
+          if (!isToegestaan(def.naam, waarde, index, bestand)) {
             treffers.push({
               regelIndex,
               start,
@@ -684,7 +799,7 @@ export function scanTekst(
   bestand: string = "",
 ): readonly Bevinding[] {
   const regels = splitsRegels(tekst);
-  const treffers = zoekTreffers(regels, bepaalOverslaan(regels), indexeer(allowlist));
+  const treffers = zoekTreffers(regels, bepaalOverslaan(regels), indexeer(allowlist), bestand);
   return treffers.map((t) => naarBevinding(t, bestand));
 }
 
@@ -705,7 +820,7 @@ export function sanitizeTekst(
   bestand: string = "",
 ): { tekst: string; vervangingen: readonly Bevinding[] } {
   const regels = splitsRegels(tekst);
-  const treffers = zoekTreffers(regels, bepaalOverslaan(regels), indexeer(allowlist));
+  const treffers = zoekTreffers(regels, bepaalOverslaan(regels), indexeer(allowlist), bestand);
 
   const nummers = new Map<string, number>();
   const tellerPerPatroon = new Map<PatroonNaam, number>();

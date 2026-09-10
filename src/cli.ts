@@ -158,7 +158,7 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
     }
   }
 
-  const acks = [...tekst.matchAll(/Constraint-ack:\s*(CON-\d{4})/gi)].map((m) => m[1]);
+  const acks = [...tekst.matchAll(/Constraint-ack:\s*(CON-\d{4}|ROL-STARTPUNT)/gi)].map((m) => m[1]);
   const statusImpact = /Current-State-Impact:\s*(none|geen)/i.test(tekst);
   // Mapnamen komen uit de configuratie en de indeling eronder is vrij; tel dus
   // op de bestandsnaam, niet op een vast pad.
@@ -175,11 +175,15 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
 
   // Commits met hun rol-trailer en gewijzigde bestanden, zodat de poort kan
   // toetsen of elke rol binnen zijn mandaat schreef.
-  const hashes = (await git(wortel, ["rev-list", `${basis}..HEAD`]))
+  const alleHashes = (await git(wortel, ["rev-list", `${basis}..HEAD`]))
     .split("\n")
     .map((h) => h.trim())
-    .filter((h) => h.length > 0)
-    .slice(0, 50);
+    .filter((h) => h.length > 0);
+  // Een leeslimiet is nodig (elke commit kost drie git-aanroepen), maar wat
+  // erbuiten valt wordt geteld en gemeld. Stil afkappen ziet eruit als een
+  // volledige toets.
+  const COMMIT_LEESLIMIET = 50;
+  const hashes = alleHashes.slice(0, COMMIT_LEESLIMIET);
   // Commits van vóór het startpunt vallen buiten de rolcontrole. Zie
   // `rol_controle_vanaf` in jarvis.config.yml voor waarom dat startpunt bestaat.
   const voorStartpunt = config.rol_controle_vanaf
@@ -190,6 +194,12 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
           .filter((h) => h.length > 0),
       )
     : new Set<string>();
+  // De waarde van het startpunt zoals hij op de basisbranch staat. Verschilt
+  // hij van de huidige, dan verschuift iemand de vrijstelling; dat hoort de
+  // poort te zien.
+  const basisConfigTekst = await git(wortel, ["show", `${basis}:jarvis.config.yml`]);
+  const basisStartpunt = /^rol_controle_vanaf:[ \t]*"?([^"\r\n]*)"?[ \t]*$/m.exec(basisConfigTekst)?.[1]?.trim() ?? "";
+
   const commits = [];
   for (const hash of hashes) {
     const bericht = await git(wortel, ["show", "-s", "--format=%B", hash]);
@@ -217,6 +227,8 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
     statusCommitsSinds: Number.parseInt(statusCommits || "0", 10) || 0,
     statusImpactVerklaard: statusImpact,
     nieuweDecs,
+    rolControleVanafBasis: basisStartpunt,
+    commitsAfgekapt: alleHashes.length - hashes.length,
   });
 
   console.log(formatteerLint(resultaat));
@@ -428,7 +440,11 @@ async function opdrachtAudit(losse: readonly string[], vlaggen: ReadonlyMap<stri
   });
 
   console.log(rendereerAudit(rapport));
-  return rapport.bevindingen.some((b) => b.severity === "fout") ? 1 : 0;
+  // Ook "Reconstructie volledig: nee" is een rode uitkomst. Dat afdrukken en
+  // dan exitcode 0 teruggeven maakt de opdracht onbruikbaar in CI: het rapport
+  // zegt dan dat de taak niet te reconstrueren is terwijl de stap groen kleurt.
+  const rood = rapport.bevindingen.some((b) => b.severity === "fout") || !rapport.volledig;
+  return rood ? 1 : 0;
 }
 
 /** Klapt `sanitize_paden` (mappen of bestanden) uit tot concrete tekstbestanden. */

@@ -27,6 +27,9 @@ export const LINT_CODES = [
   "dec_quotum",
   "rol_ontbreekt",
   "rol_overschrijding",
+  "rol_onbekend",
+  "startpunt_verschoven",
+  "commits_afgekapt",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -54,6 +57,10 @@ export type LintInvoer = {
   readonly nieuweDecs?: number;
   /** Commits op deze branch, met hun rol-trailer en gewijzigde bestanden. */
   readonly commits?: readonly CommitOverzicht[];
+  /** Waarde van `rol_controle_vanaf` op de basisbranch, om verschuiving te zien. */
+  readonly rolControleVanafBasis?: string;
+  /** Aantal commits dat buiten de rolcontrole viel doordat de lijst is afgekapt. */
+  readonly commitsAfgekapt?: number;
 };
 
 export type CommitOverzicht = {
@@ -75,15 +82,37 @@ export type CommitOverzicht = {
  * QA-contract verbiedt. Een regel die alleen in een document staat, bindt de
  * agent die hem las niet aantoonbaar.
  *
- * Alleen beperkende rollen staan hier. Een rol die niet in deze kaart staat
- * kent geen padbeperking; die wordt door andere poorten begrensd.
+ * De lijst is gesloten. Een rol die er niet in staat kent geen mandaat en zou
+ * dus alles mogen; daarom is een onbekende rolnaam een fout en geen signaal.
+ * `developer` staat er wel in maar krijgt geen padbeperking: die rol wordt door
+ * de andere poorten begrensd, niet door een mappenlijst.
  */
-export const ROL_SCHRIJFRECHTEN: Readonly<Record<string, readonly string[]>> = {
-  qa: ["tests/", "tasks/"],
-  "knowledge-manager": ["knowledge/", "tasks/", "docs/"],
-  architect: ["tasks/", "docs/"],
-  orchestrator: ["tasks/"],
-};
+export const BEKENDE_ROLLEN = ["qa", "knowledge-manager", "architect", "orchestrator", "developer"] as const;
+
+/**
+ * Bouwt de rechtenkaart uit de configuratie.
+ *
+ * De mapnamen mogen hier NIET hardgecodeerd staan: `knowledge_map` en
+ * `taken_map` zijn per project instelbaar, en een engine die `knowledge/`
+ * aanneemt valt om zodra hij in een ander project draait. Dat is precies de
+ * regressie die een portabiliteitscontrole ving nadat deze kaart als literal
+ * werd toegevoegd.
+ *
+ * De kaart heeft geen prototype. Met een gewoon objectliteral levert
+ * `kaart["constructor"]` een functie op in plaats van `undefined`, en dan
+ * verandert een rol met die naam de controle in een TypeError.
+ */
+export function rolSchrijfrechten(config: JarvisConfig): ReadonlyMap<string, readonly string[]> {
+  const kennis = `${config.knowledge_map.replace(/\/+$/, "")}/`;
+  const taken = `${config.taken_map.replace(/\/+$/, "")}/`;
+  const docs = `${config.current_state.split("/")[0]}/`;
+  return new Map<string, readonly string[]>([
+    ["qa", ["tests/", taken]],
+    ["knowledge-manager", [kennis, taken, docs]],
+    ["architect", [taken, docs]],
+    ["orchestrator", [taken]],
+  ]);
+}
 
 export type LintResultaat = {
   readonly ok: boolean;
@@ -188,6 +217,7 @@ export function toetsRandvoorwaarden(
   // kopieerwerk; die moet opvallen, anders wordt "ack" een ritueel.
   const geldig = new Set(constraints.map((c) => c.id.toUpperCase()));
   for (const ack of ackSet) {
+    if (ack === "ROL-STARTPUNT") continue;
     if (!geldig.has(ack)) {
       bevindingen.push(
         bevinding("ack_onbekend", "waarschuwing", ack, `ack verwijst naar onbekende of vervallen randvoorwaarde`),
@@ -269,9 +299,47 @@ export function lint(invoer: LintInvoer): LintResultaat {
     );
   }
 
+  // Het startpunt van de rolcontrole mag alleen naar ACHTEREN. Verschuift het
+  // vooruit, dan wordt elke commit ertussen met terugwerkende kracht
+  // vrijgesteld — en dan is de vrijstelling geen historische uitzondering meer
+  // maar een knop waarmee een agent zijn eigen overtreding wegpoetst. De
+  // configuratie zelf kent die richting niet, dus wordt hier ELKE wijziging van
+  // de waarde geblokkeerd; een mens die hem bewust verzet, zet de ack.
+  const startpuntGewijzigd =
+    invoer.rolControleVanafBasis !== undefined &&
+    invoer.rolControleVanafBasis !== config.rol_controle_vanaf;
+  if (startpuntGewijzigd && !invoer.acks.some((a) => a.trim().toUpperCase() === "ROL-STARTPUNT")) {
+    bevindingen.push(
+      bevinding(
+        "startpunt_verschoven",
+        "fout",
+        "rol_controle_vanaf",
+        `het startpunt van de rolcontrole wijzigt van "${invoer.rolControleVanafBasis || "(leeg)"}" naar ` +
+          `"${config.rol_controle_vanaf || "(leeg)"}". Elke commit tussen die twee punten wordt daarmee ` +
+          `vrijgesteld van de rolcontrole. Een agent mag dit niet zelf doen; laat een mens ` +
+          `"Constraint-ack: ROL-STARTPUNT" zetten met de reden erbij.`,
+      ),
+    );
+  }
+
   // Bevoegdheidscontrole per commit. Een rol die buiten zijn mandaat schrijft
   // is geen stijlkwestie: het is het verschil tussen "QA keurde onafhankelijk"
   // en "QA repareerde wat hij zelf beoordeelde".
+  if ((invoer.commitsAfgekapt ?? 0) > 0) {
+    // Stil afkappen is erger dan niet controleren: het ziet eruit als een
+    // volledige toets terwijl de oudste commits nooit zijn bekeken.
+    bevindingen.push(
+      bevinding(
+        "commits_afgekapt",
+        "waarschuwing",
+        "rolcontrole",
+        `${invoer.commitsAfgekapt} commit(s) vielen buiten de rolcontrole omdat de branch langer is dan ` +
+          `de leeslimiet. Splits de branch of voeg hem eerder samen.`,
+      ),
+    );
+  }
+
+  const rechten = rolSchrijfrechten(config);
   for (const commit of invoer.commits ?? []) {
     if (commit.voorStartpunt) continue;
     if (commit.rol === null) {
@@ -285,7 +353,23 @@ export function lint(invoer: LintInvoer): LintResultaat {
       );
       continue;
     }
-    const toegestaan = ROL_SCHRIJFRECHTEN[commit.rol];
+    // Kleine letters: `Jarvis-Role: QA` hoort dezelfde grens te krijgen als
+    // `qa`. Zonder deze stap is een hoofdletter genoeg om de controle over te
+    // slaan, en dat is geen grens maar een suggestie.
+    const rol = commit.rol.trim().toLowerCase();
+    if (!BEKENDE_ROLLEN.includes(rol as (typeof BEKENDE_ROLLEN)[number])) {
+      bevindingen.push(
+        bevinding(
+          "rol_onbekend",
+          "fout",
+          commit.hash,
+          `commit draagt rol "${commit.rol}", die niet bestaat. Bekende rollen: ${BEKENDE_ROLLEN.join(", ")}. ` +
+            `Een onbekende rol kent geen mandaat en zou dus alles mogen — daarom is dit een fout, geen signaal.`,
+        ),
+      );
+      continue;
+    }
+    const toegestaan = rechten.get(rol);
     if (!toegestaan) continue;
     const buiten = commit.bestanden
       .map(normaliseerPad)
@@ -296,7 +380,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
         "rol_overschrijding",
         "fout",
         commit.hash,
-        `rol "${commit.rol}" mag alleen schrijven in ${toegestaan.join(", ")}, maar deze commit raakt ` +
+        `rol "${rol}" mag alleen schrijven in ${toegestaan.join(", ")}, maar deze commit raakt ` +
           `${buiten.slice(0, 4).join(", ")}${buiten.length > 4 ? ` en ${buiten.length - 4} meer` : ""}`,
       ),
     );
