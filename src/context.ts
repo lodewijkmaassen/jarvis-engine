@@ -247,17 +247,50 @@ export async function bouwContextPakket(verzoek: ContextVerzoek): Promise<Contex
     }
   }
 
-  // 4. Expliciet geraakte bestanden, geclassificeerd.
-  for (const pad of verzoek.bestanden ?? []) {
+  // 4. Codecontext die de gevonden kennis zelf aanwijst.
+  //
+  // Zonder deze stap levert het pakket alleen kennis en geen code, tenzij de
+  // aanroeper toevallig de juiste bestanden meegeeft — en juist een blanco
+  // sessie wéét niet welke dat zijn. De records weten het wel: hun `bronnen`
+  // verwijzen naar de bestanden waar het besluit over gaat. Documentatie valt
+  // af, want die zit al als kennis in het pakket.
+  // Volgorde is hier het hele punt. Records die op de taak scoorden wijzen de
+  // relevantste code aan; harde randvoorwaarden zitten in het pakket omdat ze
+  // ALTIJD gelden, niet omdat ze bij deze taak horen — hun code hoort dus
+  // achteraan, anders verdringt hij het bestand waar de taak echt over gaat.
+  const expliciet = new Set((verzoek.bestanden ?? []).map(normaliseerPad));
+  const afgeleid: string[] = [];
+  const voegBronnenToe = (soort: ItemSoort) => {
+    for (const item of budget.items) {
+      if (item.soort !== soort) continue;
+      const record = actief.find((r) => r.id === item.id);
+      if (!record) continue;
+      for (const bron of record.bronnen) {
+        const pad = normaliseerPad(bron);
+        if (expliciet.has(pad) || afgeleid.includes(pad)) continue;
+        // Documentatie zit al als kennis in het pakket; die nog eens voluit
+        // meenemen kost budget zonder iets toe te voegen.
+        if (/\.(md|txt|docx|pdf)$/i.test(pad)) continue;
+        afgeleid.push(pad);
+      }
+    }
+  };
+  voegBronnenToe("record");
+  voegBronnenToe("randvoorwaarde");
+
+  for (const pad of [...expliciet, ...afgeleid]) {
     const gelezen = await leesEnClassificeer(pad, termen, config, readSource);
     if (!gelezen) {
       budget.sla({ soort: "bestand", id: normaliseerPad(pad), reden: "niet leesbaar of uitgesloten", tokens: 0 });
       continue;
     }
+    const herkomst = expliciet.has(normaliseerPad(pad))
+      ? "expliciet genoemd bij de taak"
+      : "aangewezen door de gevonden kennis";
     const geplaatst = budget.voegToe({
       soort: "bestand",
       id: normaliseerPad(pad),
-      reden: gelezen.reden,
+      reden: `${herkomst} — ${gelezen.reden}`,
       tokens: schatTokens(gelezen.tekst),
       tekst: gelezen.tekst,
       bestandsKlasse: gelezen.klasse,
