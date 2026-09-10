@@ -11,7 +11,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { bouwContextPakket, rendereerPakket } from "./context";
 import { laadConfig, leesStartpuntUitConfig, vindWortel, type JarvisConfig, type TaakKlasse } from "./config";
-import { formatteerLint, lint } from "./lint";
+import { ackBronIsVertrouwd, formatteerLint, lint, parseerAcks } from "./lint";
 import { analyseerPlan, parseerPlanTabel, rendereerPlan } from "./plan";
 import { RECORD_TYPES, type RecordType } from "./records";
 import { createFileReader } from "./sources";
@@ -158,7 +158,28 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
     }
   }
 
-  const acks = [...tekst.matchAll(/Constraint-ack:\s*(CON-\d{4}|ROL-STARTPUNT)/gi)].map((m) => m[1]);
+  // Acks komen UITSLUITEND uit een aparte bron, nooit uit `tekst`.
+  //
+  // `tekst` is de PR-titel en -body, en die schrijft de agent die de PR opent.
+  // Een ack die daaruit gelezen wordt, is een agent die zichzelf toestemming
+  // geeft. Het ack-kanaal is daarom structureel gescheiden: een review op de
+  // pull request, met de auteur en diens relatie tot de repository erbij.
+  const ackBestand = vlaggen.get("ack-bestand");
+  let ackTekst = "";
+  if (ackBestand) {
+    try {
+      ackTekst = await readFile(path.resolve(wortel, ackBestand), "utf8");
+    } catch {
+      console.error(`jarvis lint: kon ${ackBestand} niet lezen.`);
+    }
+  }
+  const ackActor = vlaggen.get("ack-actor") ?? "";
+  const ackRelatie = vlaggen.get("ack-relatie") ?? "";
+  const acks = parseerAcks(ackTekst);
+  const ackBronVertrouwd = ackBronIsVertrouwd(ackActor, ackRelatie);
+  const ackBron = ackActor
+    ? `een review van ${ackActor} (${ackRelatie || "relatie onbekend"})`
+    : "een bron zonder aanwijsbare menselijke auteur";
   const statusImpact = /Current-State-Impact:\s*(none|geen)/i.test(tekst);
   // Mapnamen komen uit de configuratie en de indeling eronder is vrij; tel dus
   // op de bestandsnaam, niet op een vast pad.
@@ -234,6 +255,8 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
     nieuweDecs,
     rolControleVanafBasis: basisStartpunt,
     commitsAfgekapt: alleHashes.length - hashes.length,
+    ackBronVertrouwd,
+    ackBron,
   });
 
   console.log(formatteerLint(resultaat));
@@ -569,6 +592,9 @@ function help(): number {
       "",
       "  index    [--schrijf]              Bouwt knowledge/INDEX.json; zonder --schrijf alleen controle",
       "  lint     [--basis <ref>] [--tekst <s>] [--tekst-bestand <pad>]",
+      "           [--ack-bestand <pad>] [--ack-actor <naam>] [--ack-relatie <relatie>]",
+      "           Acks komen alleen uit --ack-bestand, en alleen wanneer de actor",
+      "           een mens is met schrijfrecht. Niet uit --tekst: die schrijft de agent.",
       "                                    Deterministische poort: kennis, randvoorwaarden, status",
       '  context  --taak "<tekst>" [--klasse S|M|L] [--bestanden a,b] [--uit <map>]',
       "                                    Stelt een begrensd, herleidbaar contextpakket samen",

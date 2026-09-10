@@ -30,6 +30,7 @@ export const LINT_CODES = [
   "rol_onbekend",
   "startpunt_verschoven",
   "commits_afgekapt",
+  "ack_bron_onbetrouwbaar",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -61,6 +62,10 @@ export type LintInvoer = {
   readonly rolControleVanafBasis?: string;
   /** Aantal commits dat buiten de rolcontrole viel doordat de lijst is afgekapt. */
   readonly commitsAfgekapt?: number;
+  /** Komen de acks uit een bron met een aanwijsbare menselijke auteur? */
+  readonly ackBronVertrouwd?: boolean;
+  /** Omschrijving van die bron, voor de foutmelding. */
+  readonly ackBron?: string;
 };
 
 export type CommitOverzicht = {
@@ -157,6 +162,69 @@ export function bevatTriggerwoord(tekst: string, woord: string): boolean {
 }
 
 /**
+ * De enige vorm die als ack telt: een hele regel, precies zo geschreven.
+ *
+ * Hoofdlettergevoelig en zonder speelruimte. De losse variant hiervoor was
+ * hoofdletterongevoelig en kende geen regelanker, waardoor een onafhankelijke
+ * QA vier manieren aantoonde om er per ongeluk of expres een te plaatsen:
+ * kleine letters, zonder spatie na de dubbele punt, binnen een codeblok dat als
+ * "slechts documentatie" was gelabeld, en geciteerd als
+ * `> Reviewer zei: Constraint-ack: ... (nog niet akkoord)`.
+ */
+export const ACK_REGEL = /^Constraint-ack: (CON-\d{4}|ROL-STARTPUNT)$/;
+
+const FENCE = /^\s*(```|~~~)/;
+
+/**
+ * Leest acks uit een tekst.
+ *
+ * Drie uitsluitingen, elk met een reden:
+ *   - regels binnen een codeblok tellen niet; daar staat voorbeeldtekst
+ *   - geciteerde regels (beginnend met ">") tellen niet; wie iemand aanhaalt
+ *     doet zelf geen toezegging
+ *   - inspringing telt niet; een ack is een eigen regel, geen lijstitem
+ */
+export function parseerAcks(tekst: string): readonly string[] {
+  const gevonden: string[] = [];
+  let blok: string | null = null;
+  for (const ruw of tekst.split(/\r?\n/)) {
+    const fence = FENCE.exec(ruw);
+    if (blok !== null) {
+      if (fence !== null && fence[1] === blok) blok = null;
+      continue;
+    }
+    if (fence !== null) {
+      blok = fence[1];
+      continue;
+    }
+    if (ruw.trimStart().startsWith(">")) continue;
+    const match = ACK_REGEL.exec(ruw.replace(/[ \t]+$/, ""));
+    if (match) gevonden.push(match[1]);
+  }
+  return gevonden;
+}
+
+/**
+ * Mag een ack uit deze bron meetellen?
+ *
+ * Een ack is een menselijk besluit. De PR-tekst schrijft de agent die de PR
+ * opent, dus een ack die daaruit komt is een agent die zichzelf toestemming
+ * geeft. Daarom telt alleen een bron met een aanwijsbare menselijke auteur die
+ * schrijfrecht op de repository heeft.
+ *
+ * Dit is de deterministische helft. CODEOWNERS en branch protection blijven
+ * ernaast staan als organisatorische controle; die twee vervangen elkaar niet.
+ */
+export const ACK_RELATIES = ["OWNER", "MEMBER", "COLLABORATOR"] as const;
+
+export function ackBronIsVertrouwd(actor: string, relatie: string): boolean {
+  const naam = actor.trim();
+  if (naam.length === 0) return false;
+  if (naam.toLowerCase().endsWith("[bot]")) return false;
+  return (ACK_RELATIES as readonly string[]).includes(relatie.trim().toUpperCase());
+}
+
+/**
  * Controleert de harde en zachte randvoorwaarden tegen deze wijziging.
  *
  * Een randvoorwaarde wordt "geraakt" wanneer de wijziging een van haar paden
@@ -239,6 +307,24 @@ export function lint(invoer: LintInvoer): LintResultaat {
   const { config, lading } = invoer;
   const bevindingen: LintBevinding[] = [];
 
+  // Een ack uit een onbetrouwbare bron telt niet, en verdwijnt niet stilzwijgend.
+  // Zonder deze stap kan de agent die de PR opent zichzelf toestemming geven voor
+  // precies de afweging waarvoor een mens is aangewezen.
+  const ackBronVertrouwd = invoer.ackBronVertrouwd ?? false;
+  const acks = ackBronVertrouwd ? invoer.acks : [];
+  if (!ackBronVertrouwd && invoer.acks.length > 0) {
+    bevindingen.push(
+      bevinding(
+        "ack_bron_onbetrouwbaar",
+        "fout",
+        invoer.acks.join(", "),
+        `deze ack komt uit ${invoer.ackBron ?? "een bron zonder aanwijsbare menselijke auteur"} en telt niet. ` +
+          `Een ack is een menselijk besluit; een agent mag er geen voor zichzelf schrijven. ` +
+          `Laat iemand met schrijfrecht de regel plaatsen in een review op de pull request.`,
+      ),
+    );
+  }
+
   for (const fout of lading.laadFouten) {
     bevindingen.push(bevinding("laadfout", "fout", fout.bestand, formatteerLaadFout(fout)));
   }
@@ -254,7 +340,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   }
 
   bevindingen.push(
-    ...toetsRandvoorwaarden(lading.records, invoer.gewijzigdeBestanden, invoer.tekstCorpus, invoer.acks),
+    ...toetsRandvoorwaarden(lading.records, invoer.gewijzigdeBestanden, invoer.tekstCorpus, acks),
   );
 
   // Statusdrift. Alleen relevant wanneer de wijziging status-dragende paden
@@ -314,7 +400,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   const startpuntGewijzigd =
     invoer.rolControleVanafBasis !== undefined &&
     invoer.rolControleVanafBasis !== config.rol_controle_vanaf;
-  if (startpuntGewijzigd && !invoer.acks.some((a) => a.trim().toUpperCase() === "ROL-STARTPUNT")) {
+  if (startpuntGewijzigd && !acks.some((a) => a === "ROL-STARTPUNT")) {
     bevindingen.push(
       bevinding(
         "startpunt_verschoven",
