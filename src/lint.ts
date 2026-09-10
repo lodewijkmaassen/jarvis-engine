@@ -164,70 +164,58 @@ export function bevatTriggerwoord(tekst: string, woord: string): boolean {
 /**
  * De enige vorm die als ack telt: een hele regel, precies zo geschreven.
  *
- * Hoofdlettergevoelig en zonder speelruimte. De losse variant hiervoor was
- * hoofdletterongevoelig en kende geen regelanker, waardoor een onafhankelijke
- * QA vier manieren aantoonde om er per ongeluk of expres een te plaatsen:
- * kleine letters, zonder spatie na de dubbele punt, binnen een codeblok dat als
- * "slechts documentatie" was gelabeld, en geciteerd als
- * `> Reviewer zei: Constraint-ack: ... (nog niet akkoord)`. Zie parseerAcks
- * voor de tweede regel die daarnaast geldt.
+ * Hoofdlettergevoelig, precies één spatie na de dubbele punt, geen inspringing
+ * en niets erachter.
  */
 export const ACK_REGEL = /^Constraint-ack: (CON-\d{4}|ROL-STARTPUNT)$/;
-
-const FENCE = /^ {0,3}(```|~~~)/;
 
 /**
  * Leest acks uit een reviewtekst.
  *
- * Twee regels, en meer niet.
+ * EEN REGEL: de volledige review-body moet uitsluitend uit ack-regels bestaan.
+ * Staat er ook maar één andere niet-lege regel in, dan levert de hele review
+ * geen enkele ack.
  *
- * EEN. Staat er ergens in de tekst een `<` of een `>`, dan levert die review
- * geen enkele ack. Niet "de regel telt niet", maar de hele tekst.
+ * Dit is de vierde opzet, en de eerste die niet naar een verbergtechniek zoekt.
+ * De drie ervoor probeerden te bepalen wat een lezer wél of niet ziet, en werden
+ * alle drie gebroken: eerst HTML-tags, toen een elementenstack, toen een verbod
+ * op puntige haken. Die laatste sneuvelde op markdown, dat tekst verbergt zonder
+ * één punthaak — een linkreferentie met meerregelige titel toont de lezer alleen
+ * een afwijzing terwijl de ack eronder meetelde.
  *
- * Dat is bewust bot. De vorige drie pogingen probeerden te bepalen welke HTML
- * iets verbergt, en elke poging werd gebroken: eerst telden `<details>` en
- * `<!-- -->` niet mee maar `<?xml ?>` wel, toen sloot een losse `</p>` het blok
- * weer, daarna sloot `</ details>` met een spatie iets wat in HTML juist
- * openblijft. Dat is geen reeks slordigheden maar een structureel verlies: wie
- * HTML-semantiek naprogrammeert met reguliere expressies, verliest van iemand
- * die de specificatie beter kent. Er is één manier om die wedstrijd niet te
- * spelen, en dat is niet meedoen.
+ * De fout zat niet in de filters maar in de vraag. Een review-body is vrije
+ * tekst in een taal die verbergen ondersteunt; welk filter je er ook op zet, de
+ * volgende manier is altijd nog niet bedacht. Deze opzet stelt de vraag niet
+ * meer: is er niets omheen, dan valt er niets in te verbergen. Wat de parser
+ * verwerkt is exact de volledige zichtbare inhoud van de review.
  *
- * De prijs is zichtbaar en klein: een reviewer die toevallig een `<` in zijn
- * tekst heeft, plaatst de ack opnieuw zonder. De winst is dat er niets meer te
- * omzeilen valt — er is geen verbergtechniek die zonder puntige haken werkt.
+ * WITRUIMTE, expliciet:
+ *   - lege regels mogen overal — voor, tussen en na de ack-regels. Ze dragen
+ *     geen zichtbare inhoud en GitHub voegt er zelf een toe aan het eind.
+ *   - inspringing mag niet: een ingesprongen regel is in markdown een codeblok.
+ *   - spaties en tabs ACHTER de ack mogen; die zijn onzichtbaar en er past niets
+ *     in. Al het andere erachter niet.
+ *   - de scheiding tussen regels is `\n` of `\r\n`. Een losse `\r`, een
+ *     regelscheider uit unicode of een harde spatie blijft in de regel staan,
+ *     matcht dus niet, en maakt de hele body ongeldig.
  *
- * TWEE. Binnen die tekst telt alleen een exacte, losse regel: hoofdletter-
- * gevoelig, niet ingesprongen, niet in een codeblok.
- *
- * Geciteerde regels vallen automatisch af, want die beginnen met `>`.
- *
- * De codeblokherkenning draagt hier geen beveiligingsgewicht meer. Wijkt zij af
- * van die van GitHub, dan is het ergste geval dat een ack in monospace staat in
- * plaats van in gewone tekst — de reviewer ziet hem hoe dan ook. Verbergen kan
- * niet meer: dat vraagt HTML, en HTML is er niet.
+ * Een reviewer die iets wil toelichten doet dat in een tweede review of een
+ * comment. Die zijn geen ackbron, en dat is de bedoeling.
  */
 export function parseerAcks(tekst: string): readonly string[] {
-  if (BEVAT_PUNTIGE_HAAK.test(tekst)) return [];
-
   const gevonden: string[] = [];
-  let blok: string | null = null;
   for (const regel of tekst.split(/\r?\n/)) {
-    const fence = FENCE.exec(regel);
-    if (fence !== null) {
-      if (blok === null) blok = fence[1];
-      else if (fence[1] === blok) blok = null;
-      continue;
-    }
-    if (blok !== null) continue;
-
-    const match = ACK_REGEL.exec(regel.replace(/[ \t]+$/, ""));
-    if (match) gevonden.push(match[1]);
+    if (regel.length === 0) continue;
+    const zonderStaart = regel.replace(/[ \t]+$/, "");
+    if (zonderStaart.length === 0) continue;
+    const match = ACK_REGEL.exec(zonderStaart);
+    // Eén afwijkende regel maakt de hele body ongeldig. Niet alleen die regel:
+    // juist de tekst eromheen is de plek waar iets verstopt kan worden.
+    if (match === null) return [];
+    gevonden.push(match[1]);
   }
   return gevonden;
 }
-
-const BEVAT_PUNTIGE_HAAK = /[<>]/;
 
 /**
  * Mag een ack uit deze bron meetellen?

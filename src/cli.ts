@@ -31,12 +31,30 @@ type Argumenten = {
   readonly opdracht: string;
   readonly vlaggen: ReadonlyMap<string, string>;
   readonly losse: readonly string[];
+  /** Vlaggen die meer dan een keer zijn meegegeven. */
+  readonly dubbel: readonly string[];
 };
 
-function leesArgumenten(argv: readonly string[]): Argumenten {
+/**
+ * Leest de argumenten. Een vlag die twee keer voorkomt is een FOUT.
+ *
+ * Niet de eerste laten winnen en niet de laatste: allebei geeft een verschil
+ * tussen wat een lezer denkt dat er staat en wat er gebeurt. De workflow
+ * schreef `--ack-relatie "$REVIEW_RELATIE"`, en wie daar een tweede
+ * `--ack-relatie OWNER` achter zette kreeg een controle die het eerste
+ * voorkomen las en een CLI die het tweede gebruikte. Elke review werd daarmee
+ * een OWNER-review.
+ *
+ * Dat geldt voor alle vlaggen, niet alleen voor de gevoelige. Een lijst
+ * bijhouden van welke vlaggen "gevoelig" zijn is een lijst die iemand vergeet
+ * bij te werken, en er is geen enkele vlag waarvoor twee keer meegeven zinnig
+ * is.
+ */
+export function leesArgumenten(argv: readonly string[]): Argumenten {
   const [opdracht = "help", ...rest] = argv;
   const vlaggen = new Map<string, string>();
   const losse: string[] = [];
+  const dubbel: string[] = [];
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i];
     if (!arg.startsWith("--")) {
@@ -45,14 +63,12 @@ function leesArgumenten(argv: readonly string[]): Argumenten {
     }
     const naam = arg.slice(2);
     const volgende = rest[i + 1];
-    if (volgende === undefined || volgende.startsWith("--")) {
-      vlaggen.set(naam, "true");
-      continue;
-    }
-    vlaggen.set(naam, volgende);
-    i += 1;
+    const waarde = volgende === undefined || volgende.startsWith("--") ? "true" : volgende;
+    if (waarde !== "true") i += 1;
+    if (vlaggen.has(naam) && !dubbel.includes(naam)) dubbel.push(naam);
+    vlaggen.set(naam, waarde);
   }
-  return { opdracht, vlaggen, losse };
+  return { opdracht, vlaggen, losse, dubbel };
 }
 
 /** Git-aanroep die nooit gooit: een lege repo of ontbrekende ref is geen crash. */
@@ -610,7 +626,16 @@ function help(): number {
 }
 
 async function hoofd(): Promise<void> {
-  const { opdracht, vlaggen, losse } = leesArgumenten(process.argv.slice(2));
+  const { opdracht, vlaggen, losse, dubbel } = leesArgumenten(process.argv.slice(2));
+  if (dubbel.length > 0) {
+    // Voor elke opdracht, niet alleen voor lint. Een dubbele vlag is altijd een
+    // vergissing of een poging; in geen van beide gevallen hoort de CLI te raden
+    // welke van de twee bedoeld was.
+    for (const naam of dubbel) {
+      console.error(`jarvis: de vlag --${naam} is meer dan een keer meegegeven. Geef hem precies een keer.`);
+    }
+    process.exit(2);
+  }
   let code = 0;
   switch (opdracht) {
     case "index":
