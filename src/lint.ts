@@ -183,10 +183,15 @@ const FENCE = /^\s*(```|~~~)/;
  *   - geciteerde regels (beginnend met ">") tellen niet; wie iemand aanhaalt
  *     doet zelf geen toezegging
  *   - inspringing telt niet; een ack is een eigen regel, geen lijstitem
+ *   - HTML telt niet; een ack binnen `<!-- ... -->` of `<details>` is voor de
+ *     reviewer onzichtbaar, en een regel die niemand ziet is geen besluit
  */
 export function parseerAcks(tekst: string): readonly string[] {
   const gevonden: string[] = [];
   let blok: string | null = null;
+  let inCommentaar = false;
+  let htmlDiepte = 0;
+
   for (const ruw of tekst.split(/\r?\n/)) {
     const fence = FENCE.exec(ruw);
     if (blok !== null) {
@@ -197,11 +202,89 @@ export function parseerAcks(tekst: string): readonly string[] {
       blok = fence[1];
       continue;
     }
-    if (ruw.trimStart().startsWith(">")) continue;
-    const match = ACK_REGEL.exec(ruw.replace(/[ \t]+$/, ""));
-    if (match) gevonden.push(match[1]);
+
+    // De zichtbaarheid wordt bepaald VÓÓR deze regel wordt verwerkt. Een regel
+    // die zelf een comment of een element opent, telt dus al niet mee.
+    const zichtbaar = !inCommentaar && htmlDiepte === 0 && !BEVAT_HTML.test(ruw);
+
+    if (zichtbaar && !ruw.trimStart().startsWith(">")) {
+      const match = ACK_REGEL.exec(ruw.replace(/[ \t]+$/, ""));
+      if (match) gevonden.push(match[1]);
+    }
+
+    ({ inCommentaar, htmlDiepte } = volgHtml(ruw, inCommentaar, htmlDiepte));
   }
   return gevonden;
+}
+
+/** Elk teken dat op HTML wijst maakt een regel onbetrouwbaar als ack. */
+const BEVAT_HTML = /[<>]/;
+
+/** Tags zonder sluitvorm; die openen geen blok. */
+const LOSSE_TAGS = new Set([
+  "br",
+  "hr",
+  "img",
+  "input",
+  "meta",
+  "link",
+  "area",
+  "base",
+  "col",
+  "embed",
+  "source",
+  "track",
+  "wbr",
+]);
+
+/**
+ * Houdt bij of we binnen een HTML-comment of een geopend element zitten.
+ *
+ * Elk geopend element telt, niet alleen `<details>`. Een witte lijst van
+ * "verbergende" tags zou raden zijn: `<details>`, `<div hidden>`,
+ * `<span style="display:none">` en `<summary>` verbergen allemaal op hun eigen
+ * manier, en de volgende manier is altijd nog niet bedacht. Een ack hoort in
+ * gewone tekst te staan; staat er HTML omheen, dan telt hij niet.
+ *
+ * Een niet-gesloten element maakt alles erna onzichtbaar. Dat is de goede kant
+ * om op te falen: het gevolg is een ack die niet meetelt, niet een ack die
+ * ongezien meetelt.
+ */
+function volgHtml(
+  regel: string,
+  inCommentaar: boolean,
+  htmlDiepte: number,
+): { inCommentaar: boolean; htmlDiepte: number } {
+  let commentaar = inCommentaar;
+  let diepte = htmlDiepte;
+  let i = 0;
+
+  while (i < regel.length) {
+    if (commentaar) {
+      const eind = regel.indexOf("-->", i);
+      if (eind < 0) return { inCommentaar: true, htmlDiepte: diepte };
+      commentaar = false;
+      i = eind + 3;
+      continue;
+    }
+    const start = regel.indexOf("<", i);
+    if (start < 0) break;
+    if (regel.startsWith("<!--", start)) {
+      commentaar = true;
+      i = start + 4;
+      continue;
+    }
+    const sluit = regel.indexOf(">", start);
+    const inhoud = sluit < 0 ? regel.slice(start + 1) : regel.slice(start + 1, sluit);
+    const naam = /^\/?\s*([a-zA-Z][a-zA-Z0-9-]*)/.exec(inhoud)?.[1]?.toLowerCase();
+    if (naam !== undefined && !LOSSE_TAGS.has(naam) && !inhoud.trimEnd().endsWith("/")) {
+      if (inhoud.trimStart().startsWith("/")) diepte = Math.max(0, diepte - 1);
+      else diepte += 1;
+    }
+    if (sluit < 0) break;
+    i = sluit + 1;
+  }
+  return { inCommentaar: commentaar, htmlDiepte: diepte };
 }
 
 /**
@@ -209,13 +292,25 @@ export function parseerAcks(tekst: string): readonly string[] {
  *
  * Een ack is een menselijk besluit. De PR-tekst schrijft de agent die de PR
  * opent, dus een ack die daaruit komt is een agent die zichzelf toestemming
- * geeft. Daarom telt alleen een bron met een aanwijsbare menselijke auteur die
- * schrijfrecht op de repository heeft.
+ * geeft. Daarom telt alleen een bron met een aanwijsbare menselijke auteur.
+ *
+ * ALLEEN `OWNER`. Dat is de enige waarde van `author_association` waarvan
+ * GitHub werkelijk garandeert dat de actor bevoegd is. `COLLABORATOR` zegt
+ * uitsluitend dat iemand is uitgenodigd, op welk rechtenniveau dan ook - lezen
+ * en triage inbegrepen - en `MEMBER` zegt alleen dat iemand in de organisatie
+ * zit, niet dat hij op deze repository iets mag. Beide stonden hier eerst,
+ * onder een commentaar dat "schrijfrecht" beloofde. De code deed toen minder
+ * dan er stond, en dat is bij een beveiligingsgrens het gevaarlijkste soort
+ * fout: hij is niet zichtbaar tot iemand hem gebruikt.
+ *
+ * Krijgt de repository later meerdere mensen met schrijfrecht, dan is de juiste
+ * uitbreiding NIET er relaties bij zetten maar het recht zelf opvragen bij de
+ * GitHub-API. Dat vraagt een token en is daarmee een aparte afweging.
  *
  * Dit is de deterministische helft. CODEOWNERS en branch protection blijven
  * ernaast staan als organisatorische controle; die twee vervangen elkaar niet.
  */
-export const ACK_RELATIES = ["OWNER", "MEMBER", "COLLABORATOR"] as const;
+export const ACK_RELATIES = ["OWNER"] as const;
 
 export function ackBronIsVertrouwd(actor: string, relatie: string): boolean {
   const naam = actor.trim();
