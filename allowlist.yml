@@ -42,5 +42,5 @@ tokens:
   # ook - vandaar dat het rapport zelf erop afketst. Het zijn geen credentials
   # van enig systeem. Verwijder deze twee regels zodra dat rapport is
   # gearchiveerd.
-  - correct-horse-battery-staple-amsterdam-2026 in tasks/T-20260910-jarvis-v1/qa-rapport.md
-  - zomer_regen_kabel_vlieger_2026_geheim in tasks/T-20260910-jarvis-v1/qa-rapport.md
+  - correct-horse-battery-staple-amsterdam-2026 in tasks/T-20260910-jarvis-v1/
+  - zomer_regen_kabel_vlieger_2026_geheim in tasks/T-20260910-jarvis-v1/

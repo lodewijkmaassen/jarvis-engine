@@ -48,6 +48,9 @@ export const configSchema = z.strictObject({
   // herschrijven zou een force-push vragen, en dat is geen keuze die een
   // agent zelfstandig hoort te maken.
   rol_controle_vanaf: z.string().trim().default(""),
+  // Waar de tests van dit project staan. Zit in de configuratie en niet in de
+  // engine, omdat de rolcontrole erop steunt en niet elk project "tests" heet.
+  test_pad: z.string().trim().default("tests"),
   branch_voorvoegsel: z.string().trim().min(1).default("jarvis/"),
 });
 
