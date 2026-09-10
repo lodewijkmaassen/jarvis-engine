@@ -83,7 +83,18 @@ jobs:
           node-version: 22
           cache: npm
 
-      - run: npm ci
+      # --ignore-scripts: GEEN lifecycle-scripts.
+      #
+      # `npm ci` draait normaal preinstall, install en postinstall van elk
+      # pakket in de boom, plus die van dit project zelf. Dat is willekeurige
+      # code, en ze draait VOORDAT de poort iets heeft gecontroleerd. Een
+      # onafhankelijke QA zette met een postinstall in package.json de hele
+      # poort van rood naar groen.
+      #
+      # Deze job heeft die scripts niet nodig: hij draait tsx en leest
+      # bestanden. De gewone build-workflow installeert wel op de normale
+      # manier.
+      - run: npm ci --ignore-scripts
 
       - name: Jarvis-poort
         # Deze stap is een ADAPTER, geen script. Hij zet zes GitHub-waarden in
