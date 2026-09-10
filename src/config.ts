@@ -47,7 +47,17 @@ export const configSchema = z.strictObject({
   // Bedoeld voor het invoeren van de regel op een bestaande historie: die
   // herschrijven zou een force-push vragen, en dat is geen keuze die een
   // agent zelfstandig hoort te maken.
-  rol_controle_vanaf: z.string().trim().default(""),
+  // Uitsluitend een volledige commit-hash, nooit een branch of tag. Een ref is
+  // een bewegend doel: `git branch -f startpunt HEAD` verschuift dan de
+  // vrijstelling zonder dat er ook maar een bestand wijzigt, en de poort die de
+  // verschuiving moet zien vergelijkt twee identieke strings.
+  rol_controle_vanaf: z
+    .string()
+    .trim()
+    .default("")
+    .refine((v) => v === "" || /^[0-9a-f]{40}$/.test(v), {
+      message: "moet een volledige commit-hash van 40 hexadecimale tekens zijn, geen branch of tag",
+    }),
   // Waar de tests van dit project staan. Zit in de configuratie en niet in de
   // engine, omdat de rolcontrole erop steunt en niet elk project "tests" heet.
   test_pad: z.string().trim().default("tests"),
@@ -68,6 +78,25 @@ export type ConfigResultaat =
  * configuratie is gevaarlijker dan geen configuratie, want dan draait de
  * engine met stille standaardwaarden op iemands echte project.
  */
+/**
+ * Leest alleen `rol_controle_vanaf` uit een ruwe configuratietekst.
+ *
+ * Bewust dezelfde parser als de rest, en niet een regex: een regex leest
+ * `'AAAA'` en `AAAA  # notitie` anders dan de parser, en dan meldt de poort een
+ * verschuiving die er niet is. `null` betekent "niet te lezen" en is iets
+ * anders dan `""` ("leeg"); alleen zo kan de aanroeper stil blijven wanneer er
+ * niets is om mee te vergelijken.
+ */
+export function leesStartpuntUitConfig(ruw: string): string | null {
+  if (ruw.trim().length === 0) return null;
+  const omhuld = `---\n${ruw.replace(/\r\n/g, "\n").replace(/^\n+/, "")}\n---\n`;
+  const geparsed = parseFrontMatter(omhuld);
+  if (!geparsed.ok) return null;
+  const waarde = geparsed.data["rol_controle_vanaf"];
+  if (waarde === undefined) return "";
+  return typeof waarde === "string" ? waarde.trim() : null;
+}
+
 export async function laadConfig(wortel: string): Promise<ConfigResultaat> {
   const pad = path.join(wortel, CONFIG_BESTANDSNAAM);
   let ruw: string;

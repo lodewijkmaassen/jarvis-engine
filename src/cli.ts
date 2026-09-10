@@ -10,7 +10,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { bouwContextPakket, rendereerPakket } from "./context";
-import { laadConfig, vindWortel, type JarvisConfig, type TaakKlasse } from "./config";
+import { laadConfig, leesStartpuntUitConfig, vindWortel, type JarvisConfig, type TaakKlasse } from "./config";
 import { formatteerLint, lint } from "./lint";
 import { analyseerPlan, parseerPlanTabel, rendereerPlan } from "./plan";
 import { RECORD_TYPES, type RecordType } from "./records";
@@ -198,7 +198,7 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
   // hij van de huidige, dan verschuift iemand de vrijstelling; dat hoort de
   // poort te zien.
   const basisConfigTekst = await git(wortel, ["show", `${basis}:jarvis.config.yml`]);
-  const basisStartpunt = /^rol_controle_vanaf:[ \t]*"?([^"\r\n]*)"?[ \t]*$/m.exec(basisConfigTekst)?.[1]?.trim() ?? "";
+  const basisStartpunt = leesStartpuntUitConfig(basisConfigTekst) ?? config.rol_controle_vanaf;
 
   const commits = [];
   for (const hash of hashes) {

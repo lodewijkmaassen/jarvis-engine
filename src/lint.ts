@@ -332,12 +332,13 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // is geen stijlkwestie: het is het verschil tussen "QA keurde onafhankelijk"
   // en "QA repareerde wat hij zelf beoordeelde".
   if ((invoer.commitsAfgekapt ?? 0) > 0) {
-    // Stil afkappen is erger dan niet controleren: het ziet eruit als een
+    // Blokkerend, niet signalerend. Een waarschuwing die de build groen laat is
+    // op dit punt hetzelfde als stil afkappen: het resultaat ziet eruit als een
     // volledige toets terwijl de oudste commits nooit zijn bekeken.
     bevindingen.push(
       bevinding(
         "commits_afgekapt",
-        "waarschuwing",
+        "fout",
         "rolcontrole",
         `${invoer.commitsAfgekapt} commit(s) vielen buiten de rolcontrole omdat de branch langer is dan ` +
           `de leeslimiet. Splits de branch of voeg hem eerder samen.`,

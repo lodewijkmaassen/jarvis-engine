@@ -16,12 +16,26 @@
 # leverancierssecrets (sb_secret_, sk-, SG., re_, AC/SK + 32 hex): die zijn per
 # definitie fout en zijn niet vrij te geven.
 
+# Een regel mag worden afgesloten met " in <pad>". Dan geldt de uitzondering
+# alleen daar: een pad dat op "/" eindigt is een map, al het andere is een
+# bestandsnaam die exact moet kloppen. Zonder " in " geldt de uitzondering
+# overal, en dat hoort een bewuste keuze te zijn - voor waarden die werkelijk
+# overal legitiem zijn, zoals het publieke telefoonnummer van het bedrijf.
+# " in " zonder pad erachter is een laadfout.
+
 emails:
   - info@tovas.nl
   - flow@tovas.nl
+  # Het publieke standaard-afzenderadres van de e-maildienst, geciteerd in de
+  # secretsdocumentatie. Van de leverancier, niet van dit bedrijf.
+  - onboarding@resend.dev in docs/SECRETS.md
+  # Verzonnen adres in het voorbeeld dat laat zien hoe de diagnoseroute maskeert.
+  - jan.jansen@bakkerijjansen.nl in docs/DIAG.md
 
 telefoonnummers:
   - "+31612686292"
+  # Verzonnen nummer uit hetzelfde maskeervoorbeeld.
+  - "+31612345678 in docs/DIAG.md"
 
 # Vorm: `<waarde> in <padvoorvoegsel>`. Het padgedeelte is niet optioneel in
 # de praktijk: zonder " in " geldt de uitzondering repo-breed en is de scanner

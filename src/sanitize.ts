@@ -177,14 +177,96 @@ export function isHash(token: string): boolean {
 export const BASE64_PAD_DREMPEL_BITS = 4.2;
 
 /**
+ * Vanaf hoeveel tekens een base64-reeks als sleutelkandidaat telt.
+ *
+ * 22 en niet 24: een sleutel van 128 bits is precies 22 base64-tekens zonder
+ * opvulling, en die viel onder beide eerdere drempels door.
+ */
+export const BASE64_MINIMUM_LENGTE = 22;
+
+/**
  * Base64-kandidaat, met een strengere eis zodra er een schuine streep in zit.
  *
  * Zonder die extra eis vlagt het patroon elk padfragment van vierentwintig
  * tekens, en een poort die bij elk bestandspad afgaat wordt genegeerd.
  */
-export function isVerdachtBase64(token: string): boolean {
-  if (!isVerdachteEntropie(token, 24)) return false;
+export // Het liggend streepje is hier een GRENS en geen woordteken. Met de gewone
+// woordgrens van een regex mist `SESSION_SECRET=` het woord "secret", omdat de
+// onderstreping ervoor als woordteken telt - en juist die schrijfwijze is de
+// normaalvorm van een omgevingsvariabele. Dezelfde val zat eerder in de
+// triggerdetectie van de poort, daar met het koppelteken.
+const CREDENTIALWOORDEN =
+  /(^|[^a-z0-9])(key|token|secret|password|passwd|pass|pwd|auth|credential|bearer|basic|sleutel|wachtwoord|geheim)([^a-z0-9]|$)/i;
+
+/**
+ * Ziet de regel eruit als een plek waar een credential wordt toegekend?
+ *
+ * Dit is het signaal dat vorm alleen niet geeft. Een base64-reeks met een
+ * schuine streep is vormelijk niet te onderscheiden van een bestandspad -
+ * `Files/PostgreSQL/17/bin/pg` past net zo goed als een AWS-sleutel. Wat ze wel
+ * scheidt is de omgeving: een sleutel staat achter `SMTP_PASS=` of achter
+ * `Authorization:`, een pad staat in een zin.
+ */
+export function lijktOpCredentialRegel(regel: string): boolean {
+  return CREDENTIALWOORDEN.test(regel);
+}
+
+/**
+ * Base64-kandidaat, met de drempel afhankelijk van de omgeving.
+ *
+ * Zonder schuine streep is vorm genoeg. Mét schuine streep zou een lage drempel
+ * elk padfragment vlaggen, en een poort die bij elk bestandspad afgaat wordt
+ * genegeerd. De uitweg is niet de drempel opschroeven - dan glipt bijna een
+ * derde van de korte sleutels erdoor - maar kijken of de regel over een
+ * credential gaat.
+ */
+/** Vormen waarin documentatie een wachtwoord aanduidt zonder er een te noemen. */
+const PLAATSHOUDERS =
+  /^(?:<[^>]*>|\$\{[^}]*\}|\$[A-Z_][A-Z0-9_]*|%[A-Za-z_][A-Za-z0-9_]*%|\*+|x+|\.\.\.|password|passwd|pass|pwd|wachtwoord|geheim|changeme|your[_-]?password|secret)$/i;
+
+/**
+ * Is het wachtwoorddeel van een verbindingsreeks een plaatshouder?
+ *
+ * `postgresql://postgres:<pw>@host` en `...:password@localhost` staan in vrijwel
+ * elk runbook. Ze vlaggen levert alleen ruis op, en ruis is hoe een poort zijn
+ * gezag verliest. De vorm is bovendien ondubbelzinnig genoeg om hier geen echt
+ * wachtwoord mee te missen: wie `password` als wachtwoord gebruikt heeft een
+ * ander probleem dan deze scanner.
+ */
+export function isPlaatshouderVerbinding(waarde: string): boolean {
+  const match = /:\/\/[^\s:/@]+:([^\s@]+)@/.exec(waarde);
+  if (!match) return false;
+  return PLAATSHOUDERS.test(match[1]);
+}
+
+export function isVerdachtBase64(token: string, regel = ""): boolean {
+  const credentialRegel = lijktOpCredentialRegel(regel);
+  // Base64 gebruikt "+" en "/", base64url gebruikt "-" en "_". Geen enkele
+  // codering gebruikt beide. Een reeks met een schuine streep EN een streepje of
+  // liggend streepje is daarom geen sleutel maar vrijwel altijd een pad:
+  // `db/migrations/0012_factuur_herinnering_3`. Dat is een scherper
+  // onderscheid dan een entropiedrempel, die op lange paden gewoon te hoog komt.
+  // Geldt ook op een credentialregel: geen codering mengt deze twee alfabetten,
+  // dus een pad blijft een pad, ook wanneer het woord "secret" in de zin staat.
+  const gemengdAlfabet = token.includes("/") && /[-_]/.test(token);
+  if (gemengdAlfabet) return false;
+  // Een slug: uitsluitend kleine letters en cijfers, met streepjes ertussen,
+  // zoals `mijnapp-prod-2026-08-31`. Een base64url-sleutel van tweeentwintig
+  // tekens of meer put uit tweeenzestig tekens; dat daar geen enkele hoofdletter
+  // in zit, gebeurt praktisch nooit. Deze regel geldt ook op een regel die over
+  // een credential gaat - juist secretsdocumentatie staat vol rotatienamen naast
+  // het woord "key".
+  if (/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/.test(token)) return false;
+  // Streepjes en liggende streepjes zijn wat door mensen gemaakte slugs
+  // kenmerkt: `mijnapp-prod-2026-08`, `T-20260910-review-reminder`,
+  // `docs/CLAUDE_ARCHIEF_2026-09-10.md`. Sleutels hebben ze zelden, en dan nog
+  // alleen in base64url. Bevat de kandidaat er een, dan geldt de oude, hogere
+  // lengte-eis - tenzij de regel zelf over een credential gaat.
+  const heeftScheidingstekens = /[-_]/.test(token);
+  const minimum = heeftScheidingstekens && !credentialRegel ? ENTROPIE_MINIMUM_LENGTE : BASE64_MINIMUM_LENGTE;
+  if (!isVerdachteEntropie(token, minimum)) return false;
   if (!token.includes("/")) return true;
+  if (credentialRegel) return true;
   return shannonEntropie(token) >= BASE64_PAD_DREMPEL_BITS;
 }
 
@@ -319,6 +401,14 @@ export function laadAllowlist(inhoud: string): AllowlistResultaat {
   for (const sleutel of ALLOWLIST_SLEUTELS) {
     uitkomst.data[sleutel].forEach((waarde, positie) => {
       const plek = `${ALLOWLIST_BESTANDSNAAM}: ${sleutel}[${positie}]`;
+      // Een regel met " in " maar zonder pad erachter is bijna altijd een
+      // vergeten pad, en het gevolg zou een repo-brede blinde vlek zijn. Dat is
+      // te ernstig om stilzwijgend te laten passeren.
+      const ontleed = ontleedTokenRegel(waarde);
+      if (ontleed.pad !== null && ontleed.pad === "") {
+        fouten.push(`${plek}: " in " zonder pad erachter. Schrijf het pad, of laat " in " helemaal weg.`);
+        return;
+      }
       if (bevatUuid(waarde)) {
         fouten.push(
           `${plek}: UUID's mogen NOOIT in de allowlist staan — interne tenant- en klant-id's horen niet in persistente Jarvis-data (gemaskeerd: ${maskeerFragment(waarde)})`,
@@ -461,7 +551,7 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     // hier terechtkomt en niet bij het patroon dat uitgezet kan worden.
     naam: "verbindingsreeks",
     categorie: "secret",
-    patroon: /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:/@]+:[^\s:/@]+@[^\s/]+/,
+    patroon: /[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^\s:/@]+:[^\s@]+@[^\s/]+/,
     linkerGrens: /[A-Za-z0-9+.-]/,
     // Niet /\S/: het teken na een verbindingsreeks is doorgaans "/" (het
     // padgedeelte), en een grens die daarop aanslaat verwerpt elke treffer.
@@ -500,7 +590,9 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     // ongezien. De header staat er altijd, precies één keer.
     naam: "prive_sleutel",
     categorie: "secret",
-    patroon: /-----BEGIN(?:\s+[A-Z0-9]+)*\s+PRIVATE KEY-----/,
+    // "PGP PRIVATE KEY BLOCK" eindigt niet op "KEY", vandaar het optionele
+    // staartstuk. Zonder dat viel precies dat formaat buiten de controle.
+    patroon: /-----BEGIN(?:\s+[A-Z0-9]+)*\s+PRIVATE KEY(?:\s+BLOCK)?-----/,
     linkerGrens: /[A-Za-z0-9-]/,
     rechterGrens: /[A-Za-z0-9-]/,
     vervangbaar: false,
@@ -520,9 +612,9 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     // `SLEUTEL=<base64>` als midden-in-een-token en wordt de treffer verworpen.
     naam: "base64_geheim",
     categorie: "secret",
-    patroon: /[A-Za-z0-9+/]{24,}={0,2}/,
-    linkerGrens: /[A-Za-z0-9+/]/,
-    rechterGrens: /[A-Za-z0-9+/]/,
+    patroon: /[A-Za-z0-9+/_-]{22,}={0,2}/,
+    linkerGrens: /[A-Za-z0-9+/_-]/,
+    rechterGrens: /[A-Za-z0-9+/_-]/,
     vervangbaar: false,
   },
 ];
@@ -611,10 +703,10 @@ type Treffer = {
 };
 
 type AllowlistIndex = {
-  readonly emails: ReadonlySet<string>;
-  readonly telefoons: ReadonlySet<string>;
+  readonly emails: ReadonlyMap<string, readonly (string | null)[]>;
+  readonly telefoons: ReadonlyMap<string, readonly (string | null)[]>;
   /** Waarde -> padvoorvoegsels waarbinnen de uitzondering geldt ("" = overal). */
-  readonly tokens: ReadonlyMap<string, readonly string[]>;
+  readonly tokens: ReadonlyMap<string, readonly (string | null)[]>;
 };
 
 /**
@@ -626,23 +718,40 @@ type AllowlistIndex = {
  * nooit spaties, dus de scheiding is ondubbelzinnig.
  */
 export function ontleedTokenRegel(regel: string): { readonly waarde: string; readonly pad: string | null } {
-  const knip = regel.lastIndexOf(" in ");
-  if (knip < 0) return { waarde: regel.trim(), pad: null };
-  return { waarde: regel.slice(0, knip).trim(), pad: regel.slice(knip + 4).trim() };
+  const opgeschoond = regel.trim();
+  // Een regel die op " in" eindigt is een vergeten pad. YAML haalt de spatie
+  // erachter weg, dus zonder deze regel valt zo'n regel terug op "geen pad" en
+  // wordt de uitzondering stilzwijgend repo-breed - precies het omgekeerde van
+  // wat er bedoeld werd.
+  if (/\sin$/.test(opgeschoond)) {
+    return { waarde: opgeschoond.replace(/\sin$/, "").trim(), pad: "" };
+  }
+  const knip = opgeschoond.lastIndexOf(" in ");
+  if (knip < 0) return { waarde: opgeschoond, pad: null };
+  return { waarde: opgeschoond.slice(0, knip).trim(), pad: opgeschoond.slice(knip + 4).trim() };
 }
 
-function indexeer(allowlist: Allowlist): AllowlistIndex {
-  const tokens = new Map<string, string[]>();
-  for (const regel of allowlist.tokens) {
+function bouwKaart(
+  regels: readonly string[],
+  normaliseer: (waarde: string) => string,
+): Map<string, (string | null)[]> {
+  const kaart = new Map<string, (string | null)[]>();
+  for (const regel of regels) {
     const { waarde, pad } = ontleedTokenRegel(regel);
-    const bestaand = tokens.get(waarde) ?? [];
-    bestaand.push(pad ?? "");
-    tokens.set(waarde, bestaand);
+    const sleutel = normaliseer(waarde);
+    const bestaand = kaart.get(sleutel) ?? [];
+    bestaand.push(pad);
+    kaart.set(sleutel, bestaand);
   }
+  return kaart;
+}
+
+/** Padbinding geldt voor alle drie de categorieen, niet alleen voor tokens. */
+function indexeer(allowlist: Allowlist): AllowlistIndex {
   return {
-    emails: new Set(allowlist.emails.map((e) => e.trim().toLowerCase())),
-    telefoons: new Set(allowlist.telefoonnummers.map((t) => normaliseerTelefoon(t))),
-    tokens,
+    emails: bouwKaart(allowlist.emails, (e) => e.trim().toLowerCase()),
+    telefoons: bouwKaart(allowlist.telefoonnummers, normaliseerTelefoon),
+    tokens: bouwKaart(allowlist.tokens, (t) => t.trim()),
   };
 }
 
@@ -652,11 +761,35 @@ function indexeer(allowlist: Allowlist): AllowlistIndex {
  * samengesteld Allowlist-object (of een toekomstige tweede loader) de poort
  * evenmin kan omzeilen.
  */
-function tokenToegestaan(waarde: string, bestand: string, index: AllowlistIndex): boolean {
-  const paden = index.tokens.get(waarde.trim());
+/**
+ * Past een uitzondering op DIT bestand?
+ *
+ * Een pad dat op "/" eindigt is een map en werkt als voorvoegsel; al het andere
+ * is een bestandsnaam en moet exact kloppen. Zonder dat onderscheid dekt de
+ * uitzondering `docs` ook `docs-oud/`, en dat is precies de stilzwijgende
+ * verbreding waar een allowlist niet voor bedoeld is.
+ *
+ * Een leeg pad past nergens op. Een uitzondering zonder pad is een repo-brede
+ * blinde vlek, en die mag niet ontstaan doordat iemand het padgedeelte vergat.
+ */
+function padPast(pad: string | null, bestand: string): boolean {
+  // null = bewust geen padbeperking (een regel zonder " in "). Dat is de
+  // uitzondering voor waarden die overal legitiem zijn, zoals het publieke
+  // telefoonnummer van het bedrijf. Een LEEG pad bestaat niet: dat weigert de
+  // loader, omdat het bijna altijd een vergeten pad is.
+  if (pad === null) return true;
+  // Hoofdletterongevoelig: de e-maillijst gaat bij het laden in zijn geheel
+  // naar kleine letters, dus ook het padgedeelte. Het bestandssysteem hier is
+  // bovendien zelf niet hoofdlettergevoelig.
+  const doel = bestand.replace(/\\/g, "/").toLowerCase();
+  const doelPad = pad.toLowerCase();
+  return doelPad.endsWith("/") ? doel.startsWith(doelPad) : doel === doelPad;
+}
+
+function inAllowlist(kaart: ReadonlyMap<string, readonly (string | null)[]>, sleutel: string, bestand: string): boolean {
+  const paden = kaart.get(sleutel);
   if (!paden) return false;
-  const doel = bestand.replace(/\\/g, "/");
-  return paden.some((pad) => pad === "" || doel.startsWith(pad));
+  return paden.some((pad) => padPast(pad, bestand));
 }
 
 function isToegestaan(
@@ -667,15 +800,15 @@ function isToegestaan(
 ): boolean {
   switch (naam) {
     case "email":
-      return index.emails.has(waarde.toLowerCase());
+      return inAllowlist(index.emails, waarde.toLowerCase(), bestand);
     case "telefoon_e164":
     case "telefoon_nl":
-      return index.telefoons.has(normaliseerTelefoon(waarde));
+      return inAllowlist(index.telefoons, normaliseerTelefoon(waarde), bestand);
     case "verbindingsreeks":
     case "prive_sleutel":
     case "base64_geheim":
     case "hoge_entropie":
-      return tokenToegestaan(waarde, bestand, index);
+      return inAllowlist(index.tokens, waarde.trim(), bestand);
     default:
       return false;
   }
@@ -728,11 +861,15 @@ function zoekTreffers(
         const rechtsOk = eind >= regel.length || !def.rechterGrens.test(regel[eind]);
         // base64_geheim heeft een eigen, lagere drempel: vierentwintig tekens
         // base64 is zestien bytes, en zestien bytes is een sleutel.
+        if (def.naam === "verbindingsreeks" && isPlaatshouderVerbinding(waarde)) {
+          match = zoeker.exec(regel);
+          continue;
+        }
         const entropieOk =
           def.naam === "hoge_entropie"
             ? isVerdachteEntropie(waarde)
             : def.naam === "base64_geheim"
-              ? isVerdachtBase64(waarde)
+              ? isVerdachtBase64(waarde, regel)
               : true;
 
         if (linksOk && rechtsOk && entropieOk && !overlapt(bezet, start, eind)) {
@@ -906,11 +1043,38 @@ export async function sanitizeBestanden(
     const gesanitized = sanitizeTekst(origineel, allowlist, pad);
     if (gesanitized.tekst !== origineel) {
       await schrijfBestand(pad, gesanitized.tekst);
-      gewijzigd.push(pad);
     }
 
-    // Onafhankelijke rescan op de tekst zoals die er nu staat.
-    bevindingen.push(...scanTekst(gesanitized.tekst, allowlist, pad));
+    // De rescan leest het bestand OPNIEUW en scant wat daar staat.
+    //
+    // Niet `gesanitized.tekst`: dat was de eigen uitvoer van stap 1, en die
+    // rescannen is geen onafhankelijke uitspraak maar een echo. Erger nog, het
+    // was een gat. De poort draait in CI bewust zonder `--schrijf`, waar de
+    // schrijffunctie niets doet; de rescan keek dan naar een geredigeerde
+    // tekst die nergens bestond, terwijl het bestand op schijf het secret nog
+    // gewoon bevatte. Elk patroon dat automatisch vervangen kan worden - dertien
+    // van de zestien, inclusief alle leverancierssleutels - was daardoor
+    // onzichtbaar in precies de stand waarin de poort draait.
+    //
+    // Opnieuw lezen dekt beide standen zonder onderscheid: zonder `--schrijf`
+    // komt het origineel terug, met `--schrijf` de geredigeerde tekst.
+    const opSchijf = await leesBestand(pad);
+    if (opSchijf === null) {
+      bevindingen.push({
+        bestand: pad,
+        regel: 0,
+        patroon: "bestand_onleesbaar",
+        fragment: "",
+        severity: "hoog",
+      });
+      continue;
+    }
+    // Pas hier melden dat er iets gewijzigd is. Of de schrijffunctie werkelijk
+    // schrijft weet deze laag niet - zonder --schrijf doet hij niets - en een
+    // lijst "geredigeerde bestanden" die bestanden noemt die ongemoeid bleven,
+    // is een verkeerde geruststelling.
+    if (opSchijf !== origineel) gewijzigd.push(pad);
+    bevindingen.push(...scanTekst(opSchijf, allowlist, pad));
   }
 
   return { ok: bevindingen.length === 0, bevindingen, gewijzigd };
