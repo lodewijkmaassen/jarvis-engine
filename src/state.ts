@@ -27,6 +27,11 @@ export type StateFeiten = {
   readonly recordTellingen: Readonly<Partial<Record<RecordType, number>>>;
   readonly openConflicten: readonly string[];
   readonly openTaken: readonly OpenTaak[];
+  /**
+   * Bewust NIET in het feitenblok: een branchlijst verandert bij elke push en
+   * zou de driftcontrole in CI permanent laten falen op iets dat niets zegt
+   * over de stand van het project. Het veld blijft bestaan voor rapportage.
+   */
   readonly actieveBranches: readonly string[];
 };
 
@@ -58,7 +63,6 @@ export function genereerFeitenblok(feiten: StateFeiten): string {
     `| Testbestanden | ${feiten.aantalTestbestanden ?? "onbekend"} |`,
     `| Kennisrecords | ${tellingen} |`,
     `| Open conflicten | ${feiten.openConflicten.length === 0 ? "geen" : feiten.openConflicten.join(", ")} |`,
-    `| Actieve branches | ${feiten.actieveBranches.length === 0 ? "geen" : feiten.actieveBranches.join(", ")} |`,
     "",
   ];
 

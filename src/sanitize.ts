@@ -146,18 +146,39 @@ export function isHash(token: string): boolean {
 }
 
 /**
- * Vier eisen tegelijk, bewust conservatief tegen vals-positieven:
+ * Is dit een leesbare identifier in plaats van een sleutel?
+ *
+ * Aanleiding: een naam van een databaseconstraint uit een analysedocument —
+ * ruim dertig tekens, met een cijfer erin, en daardoor door de
+ * entropiecontrole heen. Zulke namen komen overal in documentatie voor en
+ * elke treffer erop is ruis.
+ *
+ * Het onderscheid is de vorm, niet de lengte: een identifier bestaat uit drie
+ * of meer door `_` of `-` gescheiden woorddelen die elk een klinker bevatten.
+ * Gegenereerde sleutels zien er nooit zo uit — die hebben hooguit een
+ * voorvoegsel en dan een blok willekeur.
+ */
+export function isLeesbareIdentifier(token: string): boolean {
+  const delen = token.split(/[_-]/).filter((d) => d.length > 0);
+  if (delen.length < 3) return false;
+  return delen.every((deel) => /^[a-z0-9]+$/i.test(deel) && (/[aeiouy]/i.test(deel) || /^\d+$/.test(deel)));
+}
+
+/**
+ * Vijf eisen tegelijk, bewust conservatief tegen vals-positieven:
  *   1. lengte >= ENTROPIE_MINIMUM_LENGTE uit het alfabet [A-Za-z0-9_-];
  *   2. minstens één cijfer én één letter — gegenereerde sleutels en hashes
  *      hebben die mix vrijwel altijd, lange Nederlandse identifiers niet;
  *   3. geen herkenbare cryptografische hash (zie isHash);
- *   4. entropie >= ENTROPIE_DREMPEL_BITS.
+ *   4. geen leesbare identifier (zie isLeesbareIdentifier);
+ *   5. entropie >= ENTROPIE_DREMPEL_BITS.
  */
 export function isVerdachteEntropie(token: string): boolean {
   if (token.length < ENTROPIE_MINIMUM_LENGTE) return false;
   if (!/[0-9]/.test(token)) return false;
   if (!/[A-Za-z]/.test(token)) return false;
   if (isHash(token)) return false;
+  if (isLeesbareIdentifier(token)) return false;
   return shannonEntropie(token) >= ENTROPIE_DREMPEL_BITS;
 }
 
