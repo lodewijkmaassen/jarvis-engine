@@ -2,7 +2,7 @@
 //
 // Het probleem dat dit oplost: één gegenereerd typebestand kan in zijn eentje
 // het hele contextbudget opeten. In deze repo is `lib/db/types.ts` 1.306
-// regels Supabase-output — ruim meer dan het volledige S-budget. Zonder
+// regels gegenereerde schematypes — ruim meer dan het volledige S-budget. Zonder
 // classificatie is "selecteer de geraakte bestanden" dus een budgetlek.
 //
 // Vier klassen, van goedkoop naar duur:
@@ -135,7 +135,7 @@ const DECLARATIE =
 /**
  * Symbolenskelet van een bestand: declaraties en ondiepe objectsleutels.
  *
- * Voor een gegenereerd Supabase-typebestand levert dit de tabel- en
+ * Voor een gegenereerd schematypebestand levert dit de tabel- en
  * kolomnamen zonder de omringende typeruis — genoeg om te weten wat er
  * bestaat, zonder duizend regels te betalen.
  */

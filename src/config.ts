@@ -40,6 +40,9 @@ export const configSchema = z.strictObject({
   context_fragment_regels: positiefGeheel.default(400),
   sanitize_paden: z.array(z.string().min(1)).default([]),
   status_paden: z.array(z.string().min(1)).default([]),
+  // Waar de migraties staan. Leeg = dit project kent ze niet; het feitenblok
+  // laat het veld dan weg in plaats van een pad te veronderstellen.
+  migratie_pad: z.string().trim().default(""),
   branch_voorvoegsel: z.string().trim().min(1).default("jarvis/"),
 });
 

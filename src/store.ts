@@ -6,19 +6,19 @@
 // secties in de body, met de kop als veldnaam. Dat leest als een document en
 // laadt als data.
 //
-// Voorbeeld (knowledge/DECISIONS/DEC-0018.md):
+// Voorbeeld (een DEC-record in de kennismap):
 //
 //   ---
 //   id: DEC-0018
 //   type: DEC
-//   titel: WhatsApp-productie via per-tenant Content Templates
-//   samenvatting: Templatenaam -> Content SID staat per tenant in config.
+//   titel: Berichtsjablonen per klant in de configuratie
+//   samenvatting: De koppeling naam -> sjabloon staat per klant in de config.
 //   datum: 2026-08-30
 //   status: besloten
-//   onderwerp: whatsapp-template-resolutie
-//   tags: [whatsapp, messaging]
+//   onderwerp: berichtsjabloon-resolutie
+//   tags: [berichten, configuratie]
 //   bronnen:
-//     - docs/DECISIONS.md
+//     - docs/BESLUITEN.md
 //   ---
 //
 //   ## Besluit

@@ -60,7 +60,7 @@ const baseShape = {
 const onderwerpField = z
   .string()
   .trim()
-  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "verwacht kebab-case, bv. whatsapp-template-resolutie");
+  .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, "verwacht kebab-case, bv. berichtsjabloon-resolutie");
 
 export const decisionSchema = z.strictObject({
   ...baseShape,

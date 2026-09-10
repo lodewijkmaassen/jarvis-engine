@@ -237,7 +237,7 @@ async function verzamelFeiten(
   const hoofdbranch = "main";
   const commit = await git(wortel, ["rev-parse", "--short", `origin/${hoofdbranch}`]);
   const datum = await git(wortel, ["log", "-1", "--format=%ad", "--date=short", `origin/${hoofdbranch}`]);
-  const migraties = await git(wortel, ["ls-files", "supabase/migrations"]);
+  const migraties = config.migratie_pad ? await git(wortel, ["ls-files", config.migratie_pad]) : "";
   const hoogste =
     migraties
       .split("\n")
