@@ -1,0 +1,29 @@
+# Jarvis — allowlist voor de sanitizer (jarvis/src/sanitize.ts).
+#
+# Uitsluitend aantoonbaar PUBLIEKE bedrijfsgegevens: waarden die al op de
+# website, op briefpapier of in het handelsregister staan. Interne identifiers
+# horen hier NIET, ook niet "even tijdelijk".
+#
+# Drie sleutels, allemaal optioneel; alles daarbuiten laat het laden falen.
+#   emails            publieke contactadressen
+#   telefoonnummers   publieke nummers (E.164 of NL-notatie, beide matchen)
+#   tokens            aantoonbaar publieke hoge-entropiestrings (bv. een
+#                     publieke site-key), NOOIT een secret
+#
+# HARDE REGEL: UUID's kunnen hier NOOIT in. Interne tenant- en klant-UUID's
+# zijn het gevoeligste dat in deze repo kan lekken, dus laadAllowlist() weigert
+# elk item dat een UUID bevat. Hetzelfde geldt voor herkenbare
+# leverancierssecrets (sb_secret_, sk-, SG., re_, AC/SK + 32 hex): die zijn per
+# definitie fout en zijn niet vrij te geven.
+
+emails:
+  - info@tovas.nl
+  - flow@tovas.nl
+
+telefoonnummers:
+  - "+31612686292"
+
+# Leeg houden tenzij aantoonbaar publiek. Een string van 32+ tekens die je hier
+# wilt zetten omdat "de scan zeurt" hoort in negen van de tien gevallen gewoon
+# uit het bestand verwijderd te worden.
+tokens: []

@@ -1,0 +1,108 @@
+// Projectconfiguratie van de Jarvis-engine.
+//
+// Dit is de scheidslijn die de engine generiek houdt: alle projectspecifieke
+// paden, drempels en patronen komen hier binnen als DATA. Nergens in
+// jarvis/src staat een pad, tabelnaam of domeinwoord van een concreet project.
+// De portabiliteitstest bewaakt dat.
+//
+// Hergebruikt bewust de front-matterparser: dezelfde strikte YAML-subset, dus
+// geen tweede parser en geen externe afhankelijkheid.
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { z } from "zod";
+import { parseFrontMatter } from "./frontmatter";
+
+export const CONFIG_BESTANDSNAAM = "jarvis.config.yml";
+
+const positiefGeheel = z.number().int().positive();
+
+export const configSchema = z.strictObject({
+  project: z.string().trim().min(1),
+  enabled: z.boolean().default(true),
+  knowledge_map: z.string().trim().min(1).default("knowledge"),
+  taken_map: z.string().trim().min(1).default("tasks"),
+  current_state: z.string().trim().min(1).default("docs/CURRENT_STATE.md"),
+  project_kaart: z.string().trim().min(1).default("project/PROJECT.md"),
+  budget: z.strictObject({
+    S: positiefGeheel,
+    M: positiefGeheel,
+    L: positiefGeheel,
+  }),
+  limieten: z.strictObject({
+    qa_rondes: positiefGeheel,
+    subagenten: positiefGeheel,
+    besluiten_per_taak: positiefGeheel,
+    nieuwe_dec_per_taak: positiefGeheel,
+    wallclock_minuten: positiefGeheel,
+  }),
+  context_nooit: z.array(z.string().min(1)).default([]),
+  context_symbolen: z.array(z.string().min(1)).default([]),
+  context_fragment_regels: positiefGeheel.default(400),
+  sanitize_paden: z.array(z.string().min(1)).default([]),
+  status_paden: z.array(z.string().min(1)).default([]),
+  branch_voorvoegsel: z.string().trim().min(1).default("jarvis/"),
+});
+
+export type JarvisConfig = z.infer<typeof configSchema>;
+export type TaakKlasse = "S" | "M" | "L";
+
+export type ConfigResultaat =
+  | { readonly ok: true; readonly config: JarvisConfig }
+  | { readonly ok: false; readonly fouten: readonly string[] };
+
+/**
+ * Leest en valideert de configuratie.
+ *
+ * Faalt hard en met een volledige lijst bevindingen: een half begrepen
+ * configuratie is gevaarlijker dan geen configuratie, want dan draait de
+ * engine met stille standaardwaarden op iemands echte project.
+ */
+export async function laadConfig(wortel: string): Promise<ConfigResultaat> {
+  const pad = path.join(wortel, CONFIG_BESTANDSNAAM);
+  let ruw: string;
+  try {
+    ruw = await readFile(pad, "utf8");
+  } catch {
+    return { ok: false, fouten: [`${CONFIG_BESTANDSNAAM} niet gevonden in ${wortel}`] };
+  }
+
+  // De configuratie is een kaal YAML-document; de parser verwacht een
+  // front-matterblok. Vandaar de omhulling — één parser, één subset.
+  const geparsed = parseFrontMatter(`---\n${ruw.replace(/\r\n/g, "\n").replace(/^\n+/, "")}\n---\n`);
+  if (!geparsed.ok) {
+    return {
+      ok: false,
+      fouten: geparsed.fouten.map((f) => `${CONFIG_BESTANDSNAAM}:${f.regel - 1}: ${f.boodschap}`),
+    };
+  }
+
+  const uitkomst = configSchema.safeParse(geparsed.data);
+  if (!uitkomst.success) {
+    return {
+      ok: false,
+      fouten: uitkomst.error.issues.map(
+        (i) => `${CONFIG_BESTANDSNAAM}: ${i.path.join(".") || "(root)"}: ${i.message}`,
+      ),
+    };
+  }
+  return { ok: true, config: uitkomst.data };
+}
+
+/**
+ * Zoekt de projectwortel: de dichtstbijzijnde map (vanaf `start` omhoog) met
+ * een jarvis.config.yml. Zo werkt de CLI vanuit elke submap.
+ */
+export async function vindWortel(start: string): Promise<string | null> {
+  const { access } = await import("node:fs/promises");
+  let huidig = path.resolve(start);
+  for (;;) {
+    try {
+      await access(path.join(huidig, CONFIG_BESTANDSNAAM));
+      return huidig;
+    } catch {
+      const ouder = path.dirname(huidig);
+      if (ouder === huidig) return null;
+      huidig = ouder;
+    }
+  }
+}
