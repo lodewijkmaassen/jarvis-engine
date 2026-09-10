@@ -6,7 +6,7 @@
 // secties in de body, met de kop als veldnaam. Dat leest als een document en
 // laadt als data.
 //
-// Voorbeeld (knowledge/DEC/DEC-0018.md):
+// Voorbeeld (knowledge/DECISIONS/DEC-0018.md):
 //
 //   ---
 //   id: DEC-0018

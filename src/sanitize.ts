@@ -121,16 +121,43 @@ export function shannonEntropie(waarde: string): number {
 }
 
 /**
- * Drie eisen tegelijk, bewust conservatief tegen vals-positieven:
+ * Lengtes van de hashes die Jarvis zelf produceert en moet kunnen opslaan:
+ * MD5 (32), Git-blob-SHA-1 (40), SHA-256 (64).
+ */
+const HASH_LENGTES = new Set([32, 40, 64]);
+
+/**
+ * Is dit een cryptografische hash in plaats van een sleutel?
+ *
+ * Uitsluitend hexadecimaal én precies een van de bekende hashlengtes. Dat is
+ * geen kosmetische uitzondering maar een noodzakelijke: een contextmanifest
+ * BESTAAT uit Git-blob-hashes, en dat manifest is precies het bewijsstuk dat
+ * duurzaam moet worden vastgelegd. Zonder deze uitzondering blokkeert de
+ * privacypoort de audittrail van het systeem zelf.
+ *
+ * De prijs is bewust: een secret dat toevallig als 40 of 64 hex-tekens is
+ * gecodeerd glipt langs dit ene patroon. Dat risico is klein — elk secret van
+ * een leverancier in deze keten heeft een herkenbaar voorvoegsel en wordt door
+ * een eigen patroon gevangen — en het alternatief (geen manifest kunnen
+ * opslaan) weegt zwaarder.
+ */
+export function isHash(token: string): boolean {
+  return HASH_LENGTES.has(token.length) && /^[0-9a-f]+$/i.test(token);
+}
+
+/**
+ * Vier eisen tegelijk, bewust conservatief tegen vals-positieven:
  *   1. lengte >= ENTROPIE_MINIMUM_LENGTE uit het alfabet [A-Za-z0-9_-];
  *   2. minstens één cijfer én één letter — gegenereerde sleutels en hashes
  *      hebben die mix vrijwel altijd, lange Nederlandse identifiers niet;
- *   3. entropie >= ENTROPIE_DREMPEL_BITS.
+ *   3. geen herkenbare cryptografische hash (zie isHash);
+ *   4. entropie >= ENTROPIE_DREMPEL_BITS.
  */
 export function isVerdachteEntropie(token: string): boolean {
   if (token.length < ENTROPIE_MINIMUM_LENGTE) return false;
   if (!/[0-9]/.test(token)) return false;
   if (!/[A-Za-z]/.test(token)) return false;
+  if (isHash(token)) return false;
   return shannonEntropie(token) >= ENTROPIE_DREMPEL_BITS;
 }
 

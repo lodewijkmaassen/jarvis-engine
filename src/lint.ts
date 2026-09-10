@@ -242,7 +242,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
       bevinding(
         "dec_quotum",
         "waarschuwing",
-        "knowledge/DEC",
+        "knowledge/DECISIONS",
         `${decs} nieuwe besluiten in één taak (drempel ${config.limieten.nieuwe_dec_per_taak}) — ` +
           `meestal een teken van te fijnmazig registreren`,
       ),

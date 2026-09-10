@@ -160,7 +160,10 @@ async function opdrachtLint(vlaggen: ReadonlyMap<string, string>): Promise<numbe
 
   const acks = [...tekst.matchAll(/Constraint-ack:\s*(CON-\d{4})/gi)].map((m) => m[1]);
   const statusImpact = /Current-State-Impact:\s*(none|geen)/i.test(tekst);
-  const nieuweDecs = bestanden.filter((b) => /knowledge\/DEC\/DEC-\d{4}\.md$/.test(b)).length;
+  // Mapnamen komen uit de configuratie en de indeling eronder is vrij; tel dus
+  // op de bestandsnaam, niet op een vast pad.
+  const decPatroon = new RegExp(`^${config.knowledge_map}/.*DEC-\\d{4}\\.md$`);
+  const nieuweDecs = bestanden.filter((b) => decPatroon.test(b.replace(/\\/g, "/"))).length;
 
   const statusCommits = await git(wortel, [
     "rev-list",
