@@ -21,7 +21,7 @@
 // de goedgekeurde bron. Verder wordt er niets gelezen, niets begrepen en niets
 // beoordeeld.
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -363,6 +363,10 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
     // De proefrepository is de engine zelf (package.json noemt de engine), dus
     // de canonieke bron staat in de repository en de verplichte tests horen er.
     await writeFile(path.join(map, "package.json"), JSON.stringify({ name: "jarvis-engine" }));
+    // ... en node_modules/jarvis-engine wijst naar de wortel zelf, zoals de
+    // file:.-koppeling dat doet. Alleen de naam is niet genoeg (H-1).
+    await mkdir(path.join(map, "node_modules"), { recursive: true });
+    await symlink(map, path.join(map, "node_modules", "jarvis-engine"), "junction");
     await writeFile(path.join(map, ".github/workflows/jarvis-lint.yml"), workflow);
     await writeFile(path.join(map, "jarvis/canonical/jarvis-lint.yml"), workflow);
     for (const naam of TOEGESTANE_WORKFLOWS) {

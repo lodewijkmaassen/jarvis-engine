@@ -37,9 +37,15 @@ export type EngineStand =
       readonly shaGeinstalleerd: string | null;
     };
 
-/** Bepaalt de modus uit de package.json van de repositorywortel. */
-export function bepaalModus(pakketTekst: string | null): EngineModus {
-  if (pakketTekst === null) return "consumer";
+/**
+ * Bepaalt de modus. "engine" vraagt twee dingen tegelijk: package.json aan de
+ * wortel noemt de engine, én `node_modules/jarvis-engine` lost op naar de
+ * wortel zelf (de `file:.`-koppeling). Een consumer die alleen zijn
+ * pakketnaam verandert, wordt daarmee géén engine en houdt de SHA-controle
+ * (QA-bevinding H-1: de naam alleen was te makkelijk na te doen).
+ */
+export function bepaalModus(pakketTekst: string | null, engineMapIsWortel = false): EngineModus {
+  if (pakketTekst === null || !engineMapIsWortel) return "consumer";
   try {
     const pakket = JSON.parse(pakketTekst) as { name?: unknown };
     return pakket.name === ENGINE_PAKKET ? "engine" : "consumer";
@@ -70,8 +76,9 @@ export function leesEngineStand(
   pakketTekst: string | null,
   lockTekst: string | null,
   verborgenLockTekst: string | null,
+  engineMapIsWortel = false,
 ): EngineStand {
-  if (bepaalModus(pakketTekst) === "engine") return { modus: "engine" };
+  if (bepaalModus(pakketTekst, engineMapIsWortel) === "engine") return { modus: "engine" };
   const lock = ontleedResolved(lockTekst);
   const geinstalleerd = ontleedResolved(verborgenLockTekst);
   return { modus: "consumer", slug: lock.slug, shaLock: lock.sha, shaGeinstalleerd: geinstalleerd.sha };
@@ -85,14 +92,40 @@ export function leesEngineStand(
  */
 export type HoofdbranchVergelijking = "identical" | "behind" | "ahead" | "diverged" | null;
 
-/** Alle redenen waarom de engine niet te vertrouwen is. Leeg betekent in orde. */
-export function beoordeelEngine(stand: EngineStand, vergelijking: HoofdbranchVergelijking): readonly string[] {
+/**
+ * Alle redenen waarom de engine niet te vertrouwen is. Leeg betekent in orde.
+ *
+ * `verwachteSlug` is de engine-repository die het project zelf noemt
+ * (`engine_repository` in jarvis.config.yml, onder CODEOWNERS). Zonder die
+ * binding zou een fork met dezelfde naam, gepind in package-lock.json, een
+ * groene poort geven: de vergelijking met "main" zou dan tegen de fork lopen
+ * (QA-bevinding B-2).
+ */
+export function beoordeelEngine(
+  stand: EngineStand,
+  vergelijking: HoofdbranchVergelijking,
+  verwachteSlug: string,
+): readonly string[] {
   if (stand.modus === "engine") return [];
   const redenen: string[] = [];
+  if (verwachteSlug.trim().length === 0) {
+    redenen.push(
+      "jarvis.config.yml noemt geen engine_repository; zonder die binding is niet te zeggen welke " +
+        "repository de engine hoort te leveren",
+    );
+    return redenen;
+  }
   if (stand.shaLock === null || stand.slug === null) {
     redenen.push(
       `package-lock.json pint ${ENGINE_PAKKET} niet op een commit van GitHub; de engine hoort een ` +
         `git-afhankelijkheid op een vaste SHA te zijn`,
+    );
+    return redenen;
+  }
+  if (stand.slug.toLowerCase() !== verwachteSlug.trim().toLowerCase()) {
+    redenen.push(
+      `package-lock.json haalt de engine uit ${stand.slug}, maar jarvis.config.yml noemt ${verwachteSlug.trim()}; ` +
+        `een andere bron dan de vastgelegde engine-repository wordt niet gedraaid`,
     );
     return redenen;
   }

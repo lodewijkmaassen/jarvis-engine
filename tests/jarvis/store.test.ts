@@ -39,6 +39,7 @@ const CONFIG: JarvisConfig = {
   test_pad: "tests",
   branch_voorvoegsel: "jarvis/",
   rollen_map: "jarvis/roles",
+  engine_repository: "",
   overzicht_kern_id: "",
   overzicht_kern_naam: "",
   overzicht_kern_paden: [],
