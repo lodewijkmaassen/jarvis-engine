@@ -1,0 +1,9 @@
+# Allowlist van een fictief project, voor de test van laadAllowlist.
+# Uitsluitend aantoonbaar publieke gegevens; tokens altijd aan een pad gebonden.
+emails:
+  - balie@bibliotheek.example
+  - Uitleen@Bibliotheek.example
+telefoonnummers:
+  - "+31201234567"
+tokens:
+  - herinnering_boeken_2_positief in kennis/
