@@ -252,9 +252,22 @@ describe("rolmandaat", () => {
     const l = await lading();
     const resultaat = lint({
       ...basis(l),
-      commits: [commit("qa", ["tests/iets.test.ts", "tasks/T-1/qa-rapport.md"])],
+      commits: [commit("qa", ["tasks/T-1/qa-rapport.md"])],
     });
     expect(resultaat.bevindingen.some((b) => b.code === "rol_overschrijding")).toBe(false);
+  });
+
+  it("laat QA geen tests committen: dat is werk van de bouwende rol", async () => {
+    // Het QA-contract verbood het al; de poort stond het toe en sprak het
+    // contract tegen. Beslist door de eigenaar op 2026-09-12: het contract wint.
+    const l = await lading();
+    const resultaat = lint({
+      ...basis(l),
+      commits: [commit("qa", ["tests/iets.test.ts", "tasks/T-1/qa-rapport.md"])],
+    });
+    const bevinding = resultaat.bevindingen.find((b) => b.code === "rol_overschrijding");
+    expect(bevinding?.severity).toBe("fout");
+    expect(bevinding?.boodschap).toContain("tests/iets.test.ts");
   });
 
   it("legt een onbekende rol geen padbeperking op", async () => {
@@ -398,7 +411,7 @@ describe("rolmandaat — de gaten die de tweede QA-ronde vond", () => {
     };
     const rechten = rolSchrijfrechten(anders);
     expect(rechten.get("knowledge-manager")).toEqual(["kennis/", "taken/", "documenten/"]);
-    expect(rechten.get("qa")).toEqual(["proeven/", "taken/"]);
+    expect(rechten.get("qa")).toEqual(["taken/"]);
 
     // Ligt CURRENT_STATE in de wortel, dan is er geen documentatiemap. Zonder
     // deze afhandeling werd "STAND.md/" als mapvoorvoegsel gelezen en paste die
