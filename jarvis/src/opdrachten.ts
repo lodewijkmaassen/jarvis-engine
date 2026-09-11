@@ -51,6 +51,8 @@ import {
   type BestandsFeiten,
 } from "./workflow";
 import { bepaalModus, beoordeelEngine, leesEngineStand, type HoofdbranchVergelijking } from "./engine";
+import { beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, type PullRequestFeiten } from "./pr";
+import { homedir } from "node:os";
 
 const uitvoeren = promisify(execFile);
 
@@ -1170,6 +1172,9 @@ function help(): number {
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
       "  rollen   [--schrijf]              Genereert de providerafgeleiden van de rolcontracten;",
       "                                    zonder --schrijf een driftcontrole (zit in de poort)",
+      "  pr <wie|openen|status|mergen|uitnodigingen> [opties]",
+      "                                    Pull requests als de bot: openen, volgen, en samenvoegen",
+      "                                    na goedkeuring van de eigenaar op de huidige kop.",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
@@ -1178,6 +1183,221 @@ function help(): number {
     ].join("\n"),
   );
   return 0;
+}
+
+// ---------------------------------------------------------------------------
+// Pull requests als de bot. Zie pr.ts voor wie wat doet en waarom.
+// ---------------------------------------------------------------------------
+
+const BOT_TOKEN_BESTAND = process.env.JARVIS_BOT_TOKEN_BESTAND ?? path.join(homedir(), ".jarvis-bot-token");
+
+/** Leest het token van de bot. Het komt nergens in uitvoer, logs of fouten. */
+async function leesBotToken(): Promise<string | null> {
+  try {
+    const inhoud = (await readFile(BOT_TOKEN_BESTAND, "utf8")).trim();
+    return inhoud.length > 0 ? inhoud : null;
+  } catch {
+    return null;
+  }
+}
+
+type GitHubAntwoord = { readonly status: number; readonly lading: unknown; readonly koppen: Headers };
+
+async function github(token: string, methode: string, pad: string, body?: unknown): Promise<GitHubAntwoord> {
+  const antwoord = await fetch(`https://api.github.com${pad}`, {
+    method: methode,
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "User-Agent": "jarvis-pr",
+      ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  let lading: unknown = null;
+  try {
+    lading = await antwoord.json();
+  } catch {
+    lading = null;
+  }
+  return { status: antwoord.status, lading, koppen: antwoord.headers };
+}
+
+function foutTekst(a: GitHubAntwoord): string {
+  const l = a.lading as { message?: unknown } | null;
+  return typeof l?.message === "string" ? `${a.status}: ${l.message}` : `HTTP ${a.status}`;
+}
+
+async function slugUitOrigin(wortel: string): Promise<string | null> {
+  const url = await git(wortel, ["remote", "get-url", "origin"]);
+  const m = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
+  return m ? `${m[1]}/${m[2]}` : null;
+}
+
+async function leesPullRequest(token: string, slug: string, nummer: number): Promise<PullRequestFeiten | string> {
+  const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
+  if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
+  const p = pr.lading as {
+    user: { login: string };
+    head: { sha: string };
+    base: { ref: string };
+    state: string;
+    draft: boolean;
+    mergeable: boolean | null;
+    mergeable_state: string;
+  };
+  const reviews = await github(token, "GET", `/repos/${slug}/pulls/${nummer}/reviews?per_page=100`);
+  if (reviews.status !== 200) return `reviews niet te lezen (${foutTekst(reviews)})`;
+  const checks = await github(token, "GET", `/repos/${slug}/commits/${p.head.sha}/check-runs?per_page=100`);
+  if (checks.status !== 200) return `checks niet te lezen (${foutTekst(checks)})`;
+  const lijst = (reviews.lading as { user: { login: string }; state: string; commit_id: string }[]).map((r) => ({
+    gebruiker: r.user.login,
+    staat: r.state,
+    commit: r.commit_id,
+  }));
+  const runs = (checks.lading as { check_runs: { name: string; status: string; conclusion: string | null }[] }).check_runs;
+  return {
+    nummer,
+    auteur: p.user.login,
+    kop: p.head.sha,
+    basis: p.base.ref,
+    open: p.state === "open",
+    concept: p.draft,
+    samenvoegbaar: p.mergeable,
+    samenvoegStaat: p.mergeable_state,
+    reviews: lijst,
+    checks: runs.map((r) => ({ naam: r.name, status: r.status, conclusie: r.conclusion })),
+  };
+}
+
+/**
+ * `jarvis pr <wie|openen|status|mergen|uitnodigingen> [opties]`
+ *
+ *   wie                              Wie is de bot, en wanneer verloopt het token.
+ *   openen --branch <b> --titel <t> --body <bestand> [--repo <slug>] [--basis main]
+ *   status <nummer> [--repo <slug>]
+ *   mergen <nummer> [--repo <slug>]  Alleen na goedkeuring van de eigenaar op de huidige kop.
+ *   uitnodigingen                    Accepteert openstaande repository-uitnodigingen voor de bot.
+ */
+async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const wat = losse[0] ?? "";
+  const token = await leesBotToken();
+  if (token === null) {
+    console.error(`jarvis pr: geen bottoken gevonden in ${BOT_TOKEN_BESTAND}. Zie docs: de eigenaar zet daar het token van de bot.`);
+    return 1;
+  }
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  const slug = vlaggen.get("repo") ?? (await slugUitOrigin(wortel));
+
+  const ik = await github(token, "GET", "/user");
+  if (ik.status !== 200) {
+    console.error(`jarvis pr: het token werkt niet (${foutTekst(ik)}); is het verlopen of ingetrokken?`);
+    return 1;
+  }
+  const botLogin = (ik.lading as { login: string }).login;
+  const verloopt = ik.koppen.get("github-authentication-token-expiration");
+
+  if (wat === "wie") {
+    console.log(`jarvis pr: bot ${botLogin}; token verloopt ${verloopt ?? "onbekend"}.`);
+    return 0;
+  }
+
+  if (wat === "uitnodigingen") {
+    const lijst = await github(token, "GET", "/user/repository_invitations");
+    if (lijst.status !== 200) {
+      console.error(`jarvis pr: uitnodigingen niet te lezen (${foutTekst(lijst)})`);
+      return 1;
+    }
+    const items = lijst.lading as { id: number; repository: { full_name: string } }[];
+    for (const u of items) {
+      const a = await github(token, "PATCH", `/user/repository_invitations/${u.id}`);
+      console.log(`jarvis pr: uitnodiging voor ${u.repository.full_name} ${a.status === 204 ? "geaccepteerd" : `niet geaccepteerd (${foutTekst(a)})`}.`);
+    }
+    if (items.length === 0) console.log("jarvis pr: geen openstaande uitnodigingen.");
+    return 0;
+  }
+
+  if (slug === null) {
+    console.error("jarvis pr: geen repository bekend; geef --repo <eigenaar/naam>.");
+    return 1;
+  }
+
+  if (wat === "openen") {
+    const branch = vlaggen.get("branch") ?? "";
+    const titel = vlaggen.get("titel") ?? "";
+    const bodyBestand = vlaggen.get("body") ?? "";
+    const basis = vlaggen.get("basis") ?? "main";
+    if (!branch || !titel || !bodyBestand) {
+      console.error("jarvis pr openen: --branch, --titel en --body <bestand> zijn verplicht.");
+      return 2;
+    }
+    const body = await leesOfNull(path.resolve(wortel, bodyBestand));
+    if (body === null) {
+      console.error(`jarvis pr openen: kon ${bodyBestand} niet lezen.`);
+      return 1;
+    }
+    const open = await github(token, "GET", `/repos/${slug}/pulls?state=open&per_page=100`);
+    if (open.status !== 200) {
+      console.error(`jarvis pr openen: open pull requests niet te lezen (${foutTekst(open)})`);
+      return 1;
+    }
+    const koppen = (open.lading as { head: { ref: string } }[]).map((p) => p.head.ref);
+    const redenen = beoordeelOpenen(botLogin, slug, koppen, branch);
+    if (redenen.length > 0) {
+      for (const r of redenen) console.error(`jarvis pr openen: ${r}`);
+      return 1;
+    }
+    const nieuw = await github(token, "POST", `/repos/${slug}/pulls`, { title: titel, head: branch, base: basis, body });
+    if (nieuw.status !== 201) {
+      console.error(`jarvis pr openen: aanmaken mislukt (${foutTekst(nieuw)})`);
+      return 1;
+    }
+    const pr = nieuw.lading as { number: number; html_url: string };
+    console.log(`jarvis pr: #${pr.number} geopend door ${botLogin}: ${pr.html_url}`);
+    return 0;
+  }
+
+  const nummer = Number.parseInt(losse[1] ?? "", 10);
+  if (!Number.isInteger(nummer) || nummer <= 0) {
+    console.error(`jarvis pr ${wat || "?"}: geef het nummer van de pull request.`);
+    return 2;
+  }
+  const feiten = await leesPullRequest(token, slug, nummer);
+  if (typeof feiten === "string") {
+    console.error(`jarvis pr: ${feiten}`);
+    return 1;
+  }
+  const eigenaar = eigenaarVan(slug);
+  const redenen = beoordeelSamenvoegen(feiten, eigenaar);
+
+  if (wat === "status") {
+    console.log(`jarvis pr: #${nummer} van ${feiten.auteur} naar ${feiten.basis}, kop ${feiten.kop.slice(0, 7)}, ${feiten.open ? "open" : "gesloten"}.`);
+    for (const c of feiten.checks) console.log(`  check ${c.naam}: ${c.status}${c.conclusie ? ` / ${c.conclusie}` : ""}`);
+    for (const r of feiten.reviews) console.log(`  review ${r.gebruiker}: ${r.staat} op ${r.commit.slice(0, 7)}`);
+    console.log(redenen.length === 0 ? "  klaar om samen te voegen." : `  nog niet samen te voegen: ${redenen.join("; ")}`);
+    return 0;
+  }
+
+  if (wat === "mergen") {
+    if (redenen.length > 0) {
+      for (const r of redenen) console.error(`jarvis pr mergen: ${r}`);
+      return 1;
+    }
+    const samen = await github(token, "PUT", `/repos/${slug}/pulls/${nummer}/merge`, {
+      merge_method: SAMENVOEGMETHODE,
+      sha: feiten.kop,
+    });
+    if (samen.status !== 200) {
+      console.error(`jarvis pr mergen: samenvoegen mislukt (${foutTekst(samen)})`);
+      return 1;
+    }
+    const uit = samen.lading as { sha: string };
+    console.log(`jarvis pr: #${nummer} samengevoegd in ${feiten.basis} als ${uit.sha.slice(0, 7)} (mergecommit), na goedkeuring van ${eigenaar}.`);
+    return 0;
+  }
+
+  console.error(`jarvis pr: onbekende deelopdracht "${wat}". Gebruik wie, openen, status, mergen of uitnodigingen.`);
+  return 2;
 }
 
 export async function voerUit(argv: readonly string[]): Promise<number> {
@@ -1224,6 +1444,9 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
       break;
     case "plan":
       code = await opdrachtPlan(losse);
+      break;
+    case "pr":
+      code = await opdrachtPr(losse, vlaggen);
       break;
     case "help":
     case "--help":
