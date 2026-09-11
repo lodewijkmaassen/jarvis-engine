@@ -745,7 +745,7 @@ async function start() {
       $status.innerHTML = `<span class="dot uit"></span>leeg`; return;
     }
     const data = snap.data();
-    staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [] };
+    staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, centraal: data.centraal ?? null, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [] };
     render();
   }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code}).`; if (staat.overzicht) render(); else $inhoud.innerHTML = `<div class="melding fout" style="margin-top:18px">${esc(staat.dbFout)}</div>`; });
   db.doc("jarvis/status").onSnapshot((snap) => { staat.jarvis = snap.exists ? snap.data() : null; render(); }, () => { /* geen status: offline */ });
