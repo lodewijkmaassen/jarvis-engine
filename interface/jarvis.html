@@ -555,10 +555,24 @@ function gesprekHtml() {
   const live = jarvisLive();
   const berichten = [...staat.berichten].sort((a, b) => String(a.op).localeCompare(String(b.op))).slice(-60);
   let s = `<div class="gesprek">${berichten.length ? berichten.map((b) => `<div class="bericht ${b.van === "jarvis" ? "jarvis" : "eigenaar"} ${b.status === "nieuw" && b.van !== "jarvis" ? "wacht" : ""}"><span class="van">${b.van === "jarvis" ? "Jarvis" : "Jij"}<span class="tijd">${esc(datumKort(b.op))} ${esc(tijd(b.op))}${b.van !== "jarvis" && b.status === "nieuw" ? " · wacht op Jarvis" : ""}</span></span>${inlineMd(b.tekst)}</div>`).join("") : `<div class="paneel leeg"><strong>Nog geen gesprek</strong>Stel een vraag of geef een opdracht. ${live.live ? "Er is een sessie actief; Jarvis antwoordt hier." : "Er is nu geen sessie actief; je bericht wacht tot de volgende."}</div>`}</div>`;
-  s += `<div class="invoer"><textarea id="bericht-invoer" placeholder="${live.live ? "Zeg het maar…" : "Bericht voor de volgende sessie…"}" aria-label="Bericht aan Jarvis"></textarea>${"SpeechRecognition" in window || "webkitSpeechRecognition" in window ? `<button class="knop mic ${staat.luistert ? "aan" : ""}" data-actie="mic" aria-label="Spreek">${staat.luistert ? "● luistert" : "🎙 spreek"}</button>` : ""}<button class="knop" data-actie="verstuur">Verstuur</button></div>`;
+  const mic = micStatus();
+  s += `<div class="invoer"><textarea id="bericht-invoer" placeholder="${live.live ? "Zeg het maar…" : "Bericht voor de volgende sessie…"}" aria-label="Bericht aan Jarvis"></textarea>${mic.kan ? `<button class="knop mic ${staat.luistert ? "aan" : ""}" data-actie="mic" aria-label="Spreek">${staat.luistert ? "● luistert" : "🎙 spreek"}</button>` : ""}<button class="knop" data-actie="verstuur">Verstuur</button></div>`;
+  if (!mic.kan || staat.micFout) s += `<div class="stemregel" style="margin-top:6px"><span>${esc(staat.micFout ?? mic.reden)}</span></div>`;
   const stemmen = ("speechSynthesis" in window) ? speechSynthesis.getVoices().filter((v) => /^nl/i.test(v.lang)) : [];
   s += `<div class="stemregel"><label><input type="checkbox" data-actie="stem-aan" ${staat.stem.aan ? "checked" : ""}> Jarvis leest antwoorden voor</label>${stemmen.length ? `<label>stem <select data-actie="stem-kies">${stemmen.map((v) => `<option value="${esc(v.name)}" ${v.name === staat.stem.naam ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></label>` : `<span>geen Nederlandse stem in deze browser</span>`}<span>bericht wekt de sessie zoals een antwoord</span></div>`;
   return s;
+}
+
+/* De pagina draait in een frame van claude.ai. Of dat frame een microfoon
+   mag gebruiken bepaalt de host, niet de pagina; zonder die toestemming faalt
+   spraakherkenning stil. Dan is de eerlijke weg: de dicteerknop van het
+   toetsenbord, die werkt overal en typt gewoon in het vak. */
+function micStatus() {
+  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!R) return { kan: false, reden: "Dicteren: gebruik de microfoonknop van je toetsenbord; deze browser heeft geen spraakherkenning voor pagina's." };
+  const beleid = document.permissionsPolicy ?? document.featurePolicy;
+  if (beleid?.allowsFeature && !beleid.allowsFeature("microphone")) return { kan: false, reden: "Dicteren: gebruik de microfoonknop van je toetsenbord. Dit venster mag van claude.ai zelf geen microfoon gebruiken." };
+  return { kan: true, reden: "" };
 }
 
 /* ---------- stem ---------- */
@@ -580,8 +594,18 @@ function luister() {
   const basis = vak ? vak.value : "";
   herkenner.onresult = (e) => { let t = ""; for (const r of e.results) t += r[0].transcript; const v = document.getElementById("bericht-invoer"); if (v) v.value = (basis ? basis + " " : "") + t; };
   herkenner.onend = () => { staat.luistert = false; render(); };
-  herkenner.onerror = () => { staat.luistert = false; render(); };
-  staat.luistert = true; herkenner.start(); render();
+  herkenner.onerror = (e) => {
+    staat.luistert = false;
+    const code = e?.error ?? "onbekend";
+    staat.micFout = code === "not-allowed" || code === "service-not-allowed"
+      ? "Microfoon geweigerd in dit venster. Gebruik de microfoonknop van je toetsenbord om te dicteren."
+      : code === "no-speech" ? "Niets gehoord. Probeer opnieuw, dichter bij de microfoon." : `Spraakherkenning mislukt (${code}). Gebruik de microfoonknop van je toetsenbord.`;
+    render();
+  };
+  staat.micFout = null;
+  staat.luistert = true;
+  try { herkenner.start(); } catch (err) { staat.luistert = false; staat.micFout = `Spraakherkenning kon niet starten (${err?.name ?? "onbekend"}).`; }
+  render();
 }
 if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => { if (staat.zicht.soort === "jarvis" && staat.zicht.tab === "gesprek") render(); };
 
