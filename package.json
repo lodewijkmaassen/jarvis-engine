@@ -23,7 +23,8 @@
   "devDependencies": {
     "@types/node": "^20",
     "typescript": "^5",
-    "vitest": "^4.1.11"
+    "vitest": "^4.1.11",
+    "jarvis-engine": "file:."
   },
   "engines": {
     "node": ">=22"

@@ -118,4 +118,4 @@ jobs:
           REVIEW_BODY: ${{ github.event.review.body }}
           REVIEW_ACTOR: ${{ github.event.review.user.login }}
           REVIEW_RELATIE: ${{ github.event.review.author_association }}
-        run: npx tsx jarvis/src/cli.ts poort
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs poort

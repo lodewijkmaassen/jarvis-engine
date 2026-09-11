@@ -44,12 +44,13 @@ import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from
 import { laadKennis, type KennisLading } from "./store";
 import {
   ACTIEVE_WORKFLOW,
-  CANONIEKE_WORKFLOW,
+  canoniekeWorkflowPad,
   VERPLICHTE_GOVERNANCE_TESTS,
   WORKFLOW_MAP,
   controleerGovernance,
   type BestandsFeiten,
 } from "./workflow";
+import { bepaalModus, beoordeelEngine, leesEngineStand, type HoofdbranchVergelijking } from "./engine";
 
 const uitvoeren = promisify(execFile);
 
@@ -190,6 +191,8 @@ export async function controleerWorkflow(wortel: string): Promise<number> {
   } catch {
     wortelEchtPad = wortel;
   }
+  const modus = bepaalModus(await leesOfNull(path.join(wortelEchtPad, "package.json")));
+  const canoniekPad = canoniekeWorkflowPad(modus);
   let workflowMapInhoud: readonly string[] | null = null;
   try {
     workflowMapInhoud = (await readdir(path.join(wortelEchtPad, WORKFLOW_MAP))).sort();
@@ -208,24 +211,81 @@ export async function controleerWorkflow(wortel: string): Promise<number> {
 
   const redenen = controleerGovernance({
     wortelEchtPad,
+    modus,
     actief: await feitenOver(wortelEchtPad, ACTIEVE_WORKFLOW),
-    canoniek: await feitenOver(wortelEchtPad, CANONIEKE_WORKFLOW),
+    canoniek: await feitenOver(wortelEchtPad, canoniekPad),
     workflowMapInhoud,
     testGroottes,
   });
 
   if (redenen.length === 0) {
     console.log(
-      `jarvis workflow: ${ACTIEVE_WORKFLOW} is byte-identiek aan ${CANONIEKE_WORKFLOW} op deze commit, ` +
+      `jarvis workflow: ${ACTIEVE_WORKFLOW} is byte-identiek aan ${canoniekPad} op deze commit, ` +
         `en ${WORKFLOW_MAP} bevat geen onbekende workflows.`,
     );
     return 0;
   }
   for (const reden of redenen) console.error(`jarvis workflow: ${reden}`);
   console.error(
-    `jarvis workflow: de canonieke bron is ${CANONIEKE_WORKFLOW}. Wil je de poort wijzigen, wijzig dan die ` +
-      `bron en laat de wijziging door een mens beoordelen; CODEOWNERS eist dat.`,
+    `jarvis workflow: de canonieke bron is ${canoniekPad}. Wil je de poort wijzigen, wijzig dan die ` +
+      `bron in de engine-repository en laat de wijziging door een mens beoordelen; CODEOWNERS eist dat.`,
   );
+  return 1;
+}
+
+async function leesOfNull(pad: string): Promise<string | null> {
+  try {
+    return await readFile(pad, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Vraagt GitHub hoe een commit zich verhoudt tot de hoofdbranch van de
+ * engine-repository. Publieke API, geen token; bij een privé repository of
+ * zonder netwerk is het antwoord null en oordeelt de poort streng.
+ */
+async function vergelijkMetHoofdbranch(slug: string, sha: string): Promise<HoofdbranchVergelijking> {
+  try {
+    const antwoord = await fetch(`https://api.github.com/repos/${slug}/compare/main...${sha}`, {
+      headers: { Accept: "application/vnd.github+json", "User-Agent": "jarvis-poort" },
+    });
+    if (!antwoord.ok) return null;
+    const lading = (await antwoord.json()) as { status?: unknown };
+    const status = lading.status;
+    return status === "identical" || status === "behind" || status === "ahead" || status === "diverged"
+      ? status
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * De enginecontrole: is de engine die deze poort draait de vastgepinde, en
+ * staat die pin op de hoofdbranch van de engine-repository? Zie engine.ts.
+ */
+export async function controleerEngine(wortel: string): Promise<number> {
+  const stand = leesEngineStand(
+    await leesOfNull(path.join(wortel, "package.json")),
+    await leesOfNull(path.join(wortel, "package-lock.json")),
+    await leesOfNull(path.join(wortel, "node_modules", ".package-lock.json")),
+  );
+  if (stand.modus === "engine") {
+    console.log("jarvis engine: deze repository is de engine zelf; er is niets te pinnen.");
+    return 0;
+  }
+  const vergelijking =
+    stand.slug !== null && stand.shaLock !== null ? await vergelijkMetHoofdbranch(stand.slug, stand.shaLock) : null;
+  const redenen = beoordeelEngine(stand, vergelijking);
+  if (redenen.length === 0) {
+    console.log(
+      `jarvis engine: ${stand.slug} op ${stand.shaLock?.slice(0, 7)}, geïnstalleerd en op de hoofdbranch.`,
+    );
+    return 0;
+  }
+  for (const reden of redenen) console.error(`jarvis engine: ${reden}`);
   return 1;
 }
 
@@ -285,6 +345,9 @@ export function poortStappen(wortel: string, waarden: PoortInvoer): readonly Poo
   return [
     // Eerst, en met opzet: als de poort zelf gewijzigd is, zegt de rest niets.
     { naam: "workflow", draai: () => controleerWorkflow(wortel) },
+    // Dan: is de engine die dit draait de vastgepinde, door een mens
+    // samengevoegde engine? Zo niet, dan zegt ook de rest niets.
+    { naam: "engine", draai: () => controleerEngine(wortel) },
     // Direct daarna: een rolcontract waarvan de afgeleide drift, stuurt elke
     // agent in deze omgeving met een ander contract op pad dan de bron zegt.
     { naam: "rollen", draai: () => opdrachtRollen(new Map()) },
@@ -1088,7 +1151,7 @@ function help(): number {
     [
       "jarvis — provider-onafhankelijke projectkennis en contextassemblage",
       "",
-      "Gebruik: npx tsx jarvis/src/cli.ts <opdracht> [opties]",
+      "Gebruik: npx jarvis <opdracht> [opties]",
       "",
       "  index    [--schrijf]              Bouwt knowledge/INDEX.json; zonder --schrijf alleen controle",
       "  poort    De volledige poort, zoals CI hem draait. Geen argumenten:",

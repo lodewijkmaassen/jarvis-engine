@@ -41,8 +41,19 @@ import path from "node:path";
 /** Het bestand dat GitHub draait. Niet instelbaar. */
 export const ACTIEVE_WORKFLOW = ".github/workflows/jarvis-lint.yml";
 
-/** De goedgekeurde bron ervan. Niet instelbaar. */
+/**
+ * De goedgekeurde bron ervan. Niet instelbaar.
+ *
+ * In de engine-repository zelf staat hij in de repository; bij een consumer
+ * komt hij mee met de geïnstalleerde engine. Welke van de twee geldt, volgt
+ * uit de modus (zie engine.ts), niet uit configuratie.
+ */
 export const CANONIEKE_WORKFLOW = "jarvis/canonical/jarvis-lint.yml";
+export const CANONIEKE_WORKFLOW_CONSUMER = "node_modules/jarvis-engine/jarvis/canonical/jarvis-lint.yml";
+
+export function canoniekeWorkflowPad(modus: "engine" | "consumer"): string {
+  return modus === "engine" ? CANONIEKE_WORKFLOW : CANONIEKE_WORKFLOW_CONSUMER;
+}
 
 /** De governanceconfiguratie zelf. Niet instelbaar. */
 export const GOVERNANCE_CONFIG = "jarvis.config.yml";
@@ -106,6 +117,14 @@ export type BestandsFeiten = {
 export type GovernanceInvoer = {
   /** Absoluut pad van de repositorywortel, al opgelost. */
   readonly wortelEchtPad: string;
+  /**
+   * "engine" in de engine-repository zelf, "consumer" in een project dat de
+   * engine als afhankelijkheid heeft. Bepaalt waar de canonieke bron staat en
+   * of de verplichte governance-tests hier horen te staan (alleen in de
+   * engine: een consumer heeft die tests niet, de engine draait ze zelf).
+   * Ontbreekt: "engine", zodat bestaande toetsen hun betekenis houden.
+   */
+  readonly modus?: "engine" | "consumer";
   readonly actief: BestandsFeiten;
   readonly canoniek: BestandsFeiten;
   /** Bestandsnamen in de workflowmap, of null wanneer die niet te lezen is. */
@@ -189,16 +208,18 @@ function binnenRepo(wortelEchtPad: string, echtPad: string): boolean {
 export function controleerGovernance(invoer: GovernanceInvoer): readonly string[] {
   const redenen: string[] = [];
   const { wortelEchtPad, actief, canoniek } = invoer;
+  const modus = invoer.modus ?? "engine";
+  const canoniekPad = canoniekeWorkflowPad(modus);
 
   // Symlinks eerst: een link maakt elk oordeel over "welk bestand is dit"
   // onbetrouwbaar. QA liet `jarvis/canonical` naar `.github/workflows` wijzen,
   // waarna het bestand met zichzelf werd vergeleken en alles klopte.
   if (actief.viaSymlink) redenen.push(`${ACTIEVE_WORKFLOW} is een symbolische link of ligt achter een link`);
-  if (canoniek.viaSymlink) redenen.push(`${CANONIEKE_WORKFLOW} is een symbolische link of ligt achter een link`);
+  if (canoniek.viaSymlink) redenen.push(`${canoniekPad} is een symbolische link of ligt achter een link`);
 
   for (const [naam, feiten] of [
     [ACTIEVE_WORKFLOW, actief],
-    [CANONIEKE_WORKFLOW, canoniek],
+    [canoniekPad, canoniek],
   ] as const) {
     if (feiten.echtPad !== null && !binnenRepo(wortelEchtPad, feiten.echtPad)) {
       redenen.push(`${naam} wijst na het volgen van links buiten de repository`);
@@ -207,7 +228,7 @@ export function controleerGovernance(invoer: GovernanceInvoer): readonly string[
 
   // Twee paden die hetzelfde bestand zijn, vergelijken niets.
   if (actief.echtPad !== null && canoniek.echtPad === actief.echtPad) {
-    redenen.push(`${ACTIEVE_WORKFLOW} en ${CANONIEKE_WORKFLOW} zijn hetzelfde bestand`);
+    redenen.push(`${ACTIEVE_WORKFLOW} en ${canoniekPad} zijn hetzelfde bestand`);
   }
 
   if (redenen.length === 0) {
@@ -228,7 +249,9 @@ export function controleerGovernance(invoer: GovernanceInvoer): readonly string[
     }
   }
 
-  for (const testpad of VERPLICHTE_GOVERNANCE_TESTS) {
+  // Alleen in de engine-repository: een consumer draagt deze tests niet, de
+  // engine draait ze in zijn eigen CI vóór een commit ooit op main komt.
+  for (const testpad of modus === "engine" ? VERPLICHTE_GOVERNANCE_TESTS : []) {
     const grootte = invoer.testGroottes.get(testpad) ?? null;
     if (grootte === null) {
       redenen.push(`${testpad} ontbreekt; dat is een verplichte governance-test`);
