@@ -600,7 +600,9 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         ),
       });
     }
-    if (r.type === "RSK" && r.status === "open") {
+    // Een open risico met een lopende aanpak is werk van Jarvis, geen keuze
+    // van de eigenaar; het staat dan niet in zijn lijst.
+    if (r.type === "RSK" && r.status === "open" && !r.aanpak) {
       items.push({
         id: `${p}:${r.id}`,
         project: projectVoorRecord(r),
