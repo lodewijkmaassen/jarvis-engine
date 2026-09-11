@@ -58,7 +58,7 @@ test_pad: tests
 # De rolcontrole bindt vanaf de commit die deze repository als eigen project
 # inricht. De historie daarvoor is de afgesplitste geschiedenis uit het
 # project waarin de engine is gebouwd; die commits zijn daar al getoetst.
-rol_controle_vanaf: "d17febea70cf2fb2f5f50ac69c3c679df5930c3e"
+rol_controle_vanaf: "6cf25531ba80bd192b6539fb13897aab684920dd"
 
 branch_voorvoegsel: jarvis/
 
