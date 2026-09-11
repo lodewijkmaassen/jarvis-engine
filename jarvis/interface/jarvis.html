@@ -570,7 +570,7 @@ const VRIJ_VERPLICHT = new Set(["beslist"]);
 const KEUZE_LABEL = { beslist: "Beslist", later: "Later", gedaan: "Gedaan", geaccepteerd: "Geaccepteerd", aanpakken: "Aanpakken", opgelost: "Opgelost", gezien: "Gezien" };
 function itemHtml(n) {
   const item = n.item; const antwoord = staat.antwoorden.get(item.id); const opties = item.opties ?? [];
-  const adviesKeuze = item.advies ? (opties.find((o) => new RegExp(`^${o.keuze.replace(/-/g, "[ -]")}\\b`, "i").test(item.advies.normalize("NFD").replace(/[̀-ͯ]/g, ""))) ?? null) : null;
+  const adviesKeuze = item.advies ? (opties.find((o) => new RegExp(`^${o.keuze.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/-/g, "[ -]")}\\b`, "i").test(item.advies.normalize("NFD").replace(/[̀-ͯ]/g, ""))) ?? null) : null;
   let s = `<div class="itemmeta"><span class="chip soort-${esc(item.soort)}">${esc(SOORT[item.soort] ?? item.soort)}</span><span class="chip project">${esc(n.project.naam)}</span><span class="chip">${esc(item.urgentie)}</span>${antwoord ? `<span class="chip ${antwoord.status === "verwerkt" ? "ok" : "wacht"}">${antwoord.status === "verwerkt" ? "verwerkt" : "wacht op Jarvis"}</span>` : ""}</div>`;
   if (item.toelichting) s += `<div class="blok"><span class="eyebrow">Wat er speelt</span><p>${inlineMd(item.toelichting)}</p></div>`;
   if (item.waarom) s += `<div class="blok"><span class="eyebrow">Waarom dit bij jou ligt</span><p>${inlineMd(item.waarom)}</p></div>`;

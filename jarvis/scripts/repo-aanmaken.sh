@@ -18,13 +18,21 @@ bot="${JARVIS_BOT_LOGIN:-}"
 args=()
 verwacht_bot=false
 for a in "$@"; do
-  if $verwacht_bot; then bot="$a"; verwacht_bot=false; continue; fi
+  if $verwacht_bot; then
+    # --bot gevolgd door een vlag is een vergissing, geen login (QA N-2).
+    if [[ "$a" == --* ]]; then echo "repo-aanmaken: --bot zonder login" >&2; exit 2; fi
+    bot="$a"; verwacht_bot=false; continue
+  fi
   case "$a" in
     --publiek) publiek=true ;;
     --bot) verwacht_bot=true ;;
     *) args+=("$a") ;;
   esac
 done
+if $verwacht_bot; then
+  echo "repo-aanmaken: --bot zonder login" >&2
+  exit 2
+fi
 naam="${args[0]:-}"
 beschrijving="${args[1]:-}"
 if [[ -z "$naam" || ! "$naam" =~ ^[a-z0-9][a-z0-9-]{0,99}$ ]]; then
