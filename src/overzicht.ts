@@ -49,6 +49,10 @@ export type AandachtItem = {
   readonly opties: readonly Optie[];
   /** Het advies van Jarvis, als dat in de bron staat. */
   readonly advies: string | null;
+  /** Voor een handeling: de stappen in volgorde, elk met waar, wat je ziet en wat je doet. */
+  readonly stappen: readonly string[];
+  /** Hoe de eigenaar zelf ziet dat het gelukt is. */
+  readonly controle: string | null;
 };
 
 export type RecentItem = {
@@ -407,27 +411,32 @@ export function leesOptieRegels(tekst: string | undefined | null): readonly { la
 export function bouwOpties(
   regels: readonly { label: string; tekst: string }[],
   standaard: readonly Optie[],
-): { opties: readonly Optie[]; advies: string | null; waarom: string | null } {
+): { opties: readonly Optie[]; advies: string | null; waarom: string | null; stappen: readonly string[]; controle: string | null } {
   const opties: Optie[] = [];
+  const stappen: { nr: number; tekst: string }[] = [];
   let advies: string | null = null;
   let waarom: string | null = null;
+  let controle: string | null = null;
   for (const r of regels) {
     const l = r.label.toLowerCase();
-    if (l === "advies") advies = r.tekst;
+    const stap = /^stap\s*(\d+)$/.exec(l);
+    if (stap) stappen.push({ nr: Number(stap[1]), tekst: r.tekst });
+    else if (l === "advies") advies = r.tekst;
     else if (l === "waarom") waarom = r.tekst;
+    else if (l === "controle") controle = r.tekst;
     else if (r.tekst.length > 0) opties.push({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst });
   }
   const basis = opties.length > 0 ? opties : [...standaard];
   if (!basis.some((o) => o.keuze === "later")) basis.push(OPTIE_LATER);
-  return { opties: basis, advies, waarom };
+  return { opties: basis, advies, waarom, stappen: stappen.sort((a, b) => a.nr - b.nr).map((s) => s.tekst), controle };
 }
 
 /** Vult "waarom" met de standaardtekst wanneer de bron er geen geeft. */
 function metWaarom(
   gebouwd: ReturnType<typeof bouwOpties>,
   standaard: string,
-): { opties: readonly Optie[]; advies: string | null; waarom: string } {
-  return { opties: gebouwd.opties, advies: gebouwd.advies, waarom: gebouwd.waarom ?? standaard };
+): { opties: readonly Optie[]; advies: string | null; waarom: string; stappen: readonly string[]; controle: string | null } {
+  return { opties: gebouwd.opties, advies: gebouwd.advies, waarom: gebouwd.waarom ?? standaard, stappen: gebouwd.stappen, controle: gebouwd.controle };
 }
 
 const eersteZin = (tekst: string) => {
@@ -511,6 +520,8 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         OPTIE_LATER,
       ],
       advies: null,
+      stappen: [],
+      controle: null,
     });
     return items;
   }
@@ -613,6 +624,8 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         waarom: "Een agent kan dit niet zonder jouw toegang of toestemming; daarom staat er een markering in het taakdossier.",
         opties: [...STANDAARD_HUMAN, OPTIE_LATER],
         advies: null,
+        stappen: [],
+        controle: null,
       });
     }
   }
