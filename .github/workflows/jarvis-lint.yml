@@ -1,0 +1,121 @@
+name: jarvis-lint
+
+# De deterministische poort van Jarvis.
+#
+# Draait GEEN model en gebruikt GEEN secrets: alles hieronder is uitrekenbaar
+# uit de repository zelf. Dat is precies de bedoeling — een conflictcontrole
+# die de ene keer aanslaat en de andere keer niet, is geen vangrail.
+#
+# Loop-preventie zit in twee lagen, geen ervan promptmatig:
+#   1. actor-filter — een push die door een bot is aangestoken start niets. Hij
+#      geldt bewust NIET voor pull requests: daar is controle juist nodig.
+#   2. event-filter — pushes uitsluitend op agentbranches.
+# Plus een concurrency-groep, zodat een reeks snelle pushes één run oplevert.
+#
+# Een pad-filter stond hier ooit en is er twee keer uitgehaald nadat hij een gat
+# bleek: elk pad dat de poort overslaat is een pad waarlangs iets binnenkomt.
+#
+# Constraint-acks komen UITSLUITEND uit een review, nooit uit de PR-tekst.
+#
+# Deze workflow bevat geen logica. Hij zet zes GitHub-waarden in de omgeving en
+# roept `jarvis poort` aan; die opdracht draait de vier controles en bepaalt de
+# exitcode. Alles wat hier te lezen valt is dus configuratie, geen gedrag.
+
+on:
+  pull_request:
+    # "edited" hoort erbij. De conflictcontrole leest de PR-titel en -body:
+    # daar staan de triggerwoorden in. Zonder "edited" kon een groene check
+    # groen blijven terwijl de body daarna werd herschreven naar het voorstel
+    # dat de poort had moeten tegenhouden.
+    types: [opened, reopened, ready_for_review, synchronize, edited]
+  # Reviews zijn het ENIGE kanaal waaruit een Constraint-ack telt. De PR-tekst
+  # schrijft de agent die de PR opent; een ack die daaruit gelezen wordt is een
+  # agent die zichzelf toestemming geeft. Een review draagt een auteur en diens
+  # relatie tot de repository, en die twee kan een agent niet vervalsen.
+  pull_request_review:
+    types: [submitted, edited]
+  push:
+    branches: ["jarvis/**"]
+    # BEWUST GEEN paths of paths-ignore, op geen enkel event. Twee keer eerder
+    # liet een uitsluiting hier een gat vallen: "**/*.md" sloeg alle
+    # kennisrecords over, en "tasks/**" sloeg de sanitize-stap over terwijl
+    # `sanitize_paden` juist tasks bevat.
+
+concurrency:
+  group: jarvis-lint-${{ github.event.pull_request.number || github.event.review.id || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  poort:
+    runs-on: ubuntu-latest
+    # De actor-filter breekt de keten commit -> workflow -> agent -> commit, en
+    # geldt daarom alleen voor PUSH. Op job-niveau voor alle events gold hij ook
+    # voor pull_request, en dan draaide de hele poort niet zodra een bot de PR
+    # opende - precies het geval waarin controle het hardst nodig is.
+    if: ${{ github.event_name != 'push' || !endsWith(github.actor, '[bot]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Expliciet de kop van de pull request, niet de standaardbranch.
+          #
+          # Zonder deze regel checkt een `pull_request_review`-run de
+          # standaardbranch uit, want daar wijst GITHUB_SHA bij dat event naar.
+          # Twee gevolgen, en samen hieven ze de hele ack-constructie op: die run
+          # beoordeelde een lege diff en gaf altijd exitcode 0, en zijn checkrun
+          # hing aan de verkeerde commit. De run die wél aan de PR hing was de
+          # `pull_request`-run, en die ziet nooit een review. Een geldige
+          # menselijke ack kon een rode check daardoor nooit groen maken.
+          #
+          # Beide events checken nu dezelfde commit uit en beoordelen dus
+          # dezelfde diff. Buiten een pull request valt dit terug op de commit
+          # die de run aanstak.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Volledige historie: `jarvis lint` vergelijkt met de hoofdbranch en
+          # telt status-dragende commits. Met een shallow clone zou die telling
+          # stil op nul uitkomen — erger dan geen controle.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # --ignore-scripts: GEEN lifecycle-scripts.
+      #
+      # `npm ci` draait normaal preinstall, install en postinstall van elk
+      # pakket in de boom, plus die van dit project zelf. Dat is willekeurige
+      # code, en ze draait VOORDAT de poort iets heeft gecontroleerd. Een
+      # onafhankelijke QA zette met een postinstall in package.json de hele
+      # poort van rood naar groen.
+      #
+      # Deze job heeft die scripts niet nodig: hij draait tsx en leest
+      # bestanden. De gewone build-workflow installeert wel op de normale
+      # manier.
+      - run: npm ci --ignore-scripts
+
+      - name: Jarvis-poort
+        # Deze stap is een ADAPTER, geen script. Hij zet zes GitHub-waarden in
+        # de omgeving en roept een vaste opdracht aan. Verder niets: geen
+        # toewijzingen, geen voorwaarden, geen pipelines, geen fallbacks.
+        #
+        # Dat is met opzet zo klein. Hier stond eerder een shellscript met
+        # variabelen en vlaggen, en dat oppervlak bleek niet te bewaken: een
+        # onafhankelijke QA schreef `--ack-relatie "${REVIEW_RELATIE:-OWNER}"`
+        # en `REVIEW_BODY="$PR_BODY"` langs elke controle heen. Een lijst
+        # verboden schrijfwijzen verliest van een taal. Een aanroep zonder
+        # argumenten heeft geen schrijfwijzen.
+        #
+        # De opdracht draait index, state, sanitize en lint in vaste volgorde
+        # en bepaalt zelf de exitcode. Wat hier rood of groen wordt, wordt daar
+        # beslist.
+        env:
+          PR_BASIS: ${{ github.event.pull_request.base.ref }}
+          PR_TITEL: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          REVIEW_BODY: ${{ github.event.review.body }}
+          REVIEW_ACTOR: ${{ github.event.review.user.login }}
+          REVIEW_RELATIE: ${{ github.event.review.author_association }}
+        run: npx tsx jarvis/src/cli.ts poort

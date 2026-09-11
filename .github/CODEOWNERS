@@ -1,0 +1,24 @@
+# CODEOWNERS — jarvis-engine
+#
+# Alles wat de regels bepaalt waaronder agents werken, en alles waarmee CI code
+# zou kunnen uitvoeren voordat de poort draait, vraagt review van de eigenaar.
+# De LAATSTE match wint.
+
+/.github/                     @lodewijkmaassen
+/.github/CODEOWNERS           @lodewijkmaassen
+/jarvis/                      @lodewijkmaassen
+/jarvis/canonical/            @lodewijkmaassen
+/jarvis/src/                  @lodewijkmaassen
+/bin/                         @lodewijkmaassen
+/tests/                       @lodewijkmaassen
+/package.json                 @lodewijkmaassen
+/package-lock.json            @lodewijkmaassen
+/vitest.config.*              @lodewijkmaassen
+/vite.config.*                @lodewijkmaassen
+/tsconfig*.json               @lodewijkmaassen
+/.npmrc                       @lodewijkmaassen
+/.nvmrc                       @lodewijkmaassen
+/.gitattributes               @lodewijkmaassen
+/jarvis.config.yml            @lodewijkmaassen
+/knowledge/CONSTRAINTS/       @lodewijkmaassen
+/CLAUDE.md                    @lodewijkmaassen

@@ -1,0 +1,31 @@
+{
+  "name": "jarvis-engine",
+  "version": "0.1.0",
+  "description": "Jarvis: provider-onafhankelijke werkomgeving met een deterministische governance-poort. Engine zonder projectkennis; een project levert jarvis.config.yml en verder niets.",
+  "license": "UNLICENSED",
+  "bin": {
+    "jarvis": "bin/jarvis.mjs"
+  },
+  "files": [
+    "bin",
+    "jarvis",
+    "tests"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "poort": "node bin/jarvis.mjs poort"
+  },
+  "dependencies": {
+    "tsx": "^4.23.13",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5",
+    "vitest": "^4.1.11"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

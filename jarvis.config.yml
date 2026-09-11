@@ -1,0 +1,65 @@
+# Jarvis — configuratie van de engine-repository zelf.
+#
+# De engine is óók een project onder Jarvis: dezelfde poort, dezelfde regels.
+# Wat hier staat gaat over deze repository; een consumer (een product dat de
+# engine als afhankelijkheid neemt) heeft zijn eigen bestand en verder niets.
+
+project: jarvis-engine
+enabled: true
+
+knowledge_map: knowledge
+taken_map: tasks
+current_state: docs/CURRENT_STATE.md
+project_kaart: project/PROJECT.md
+
+budget:
+  S: 8000
+  M: 20000
+  L: 40000
+
+limieten:
+  qa_rondes: 3
+  subagenten: 12
+  besluiten_per_taak: 1
+  nieuwe_dec_per_taak: 3
+  wallclock_minuten: 60
+
+context_nooit:
+  - package-lock.json
+  - "**/*.tsbuildinfo"
+  - "**/node_modules/**"
+
+context_symbolen: []
+context_fragment_regels: 400
+
+# De hele engine is gereedschap zonder projectkennis; de sanitizer scant
+# daarom alles wat mensen lezen en alles wat een consumer meekrijgt.
+sanitize_paden:
+  - knowledge
+  - tasks
+  - project
+  - docs
+  - jarvis
+  - tests
+  - bin
+  - .github
+  - README.md
+  - CLAUDE.md
+
+status_paden:
+  - jarvis/src
+  - jarvis/canonical
+  - bin
+  - package.json
+  - .github/workflows
+
+test_pad: tests
+
+# De rolcontrole bindt vanaf de commit die deze repository als eigen project
+# inricht. De historie daarvoor is de afgesplitste geschiedenis uit het
+# project waarin de engine is gebouwd; die commits zijn daar al getoetst.
+rol_controle_vanaf: "ROL_CONTROLE_VANAF"
+
+branch_voorvoegsel: jarvis/
+
+rollen_map: jarvis/roles
