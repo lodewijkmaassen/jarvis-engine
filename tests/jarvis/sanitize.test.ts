@@ -12,6 +12,7 @@ import {
   laadAllowlist,
   maskeerFragment,
   normaliseerTelefoon,
+  isVerdachtBase64,
   ontleedTokenRegel,
   sanitizeBestanden,
   sanitizeTekst,
@@ -38,6 +39,7 @@ const SECRET_MONSTERS: readonly (readonly [PatroonNaam, string])[] = [
   ["supabase_secret_key", "sb_secret_AbCdEf12345678xyzQRS"],
   ["supabase_publishable_key", "sb_publishable_AbCdEf12345678xyz"],
   ["anthropic_api_key", "sk-ant-api03-AbCdEf1234567890XyZaBcDeFgHi"],
+  ["github_token", "github_pat_" + "11ABCDEFG0" + "AbCdEfGhIjKlMnOpQrStUv"],
   ["openai_api_key", "sk-AbCdEf1234567890XyZaBcDeFgHi"],
   ["sendgrid_api_key", "SG.AbCdEf1234567890Xy.ZaBcDeFgHi1234567890"],
   ["resend_api_key", "re_AbCd1234_EfGhIjKlMnOpQrStUvWx"],
@@ -149,6 +151,13 @@ describe("vals-positieven", () => {
 // ---------------------------------------------------------------------------
 // Allowlist
 // ---------------------------------------------------------------------------
+
+describe("isVerdachtBase64 en Jarvis-ids", () => {
+  it("ziet een taak- of record-id nooit als sleutel, ook niet op een credentialregel", () => {
+    expect(isVerdachtBase64("T-20260911-engine-repository", 'wacht_op: "T-20260911-engine-repository: het token van de bot"')).toBe(false);
+    expect(isVerdachtBase64("DEC-0038", "de secret key staat in DEC-0038")).toBe(false);
+  });
+});
 
 describe("laadAllowlist", () => {
   it("leest de allowlist van een project uit een bestand", () => {

@@ -66,6 +66,12 @@ export const configSchema = z.strictObject({
   // bij naam; welke map, welk voorvoegsel en welke gereedschapsnamen bij
   // "lezen", "schrijven" en "uitvoeren" horen, zegt de configuratie.
   rollen_map: z.string().trim().default("jarvis/roles"),
+  /**
+   * De repository (eigenaar/naam op GitHub) die de engine levert. Leeg in de
+   * engine-repository zelf; verplicht bij een consumer, want de poort bindt
+   * de gepinde engine-SHA aan precies deze repository.
+   */
+  engine_repository: z.string().trim().default(""),
   // Jarvis als eigen project in het overzicht: de kern op de kaart. Wat in
   // deze repository bij Jarvis hoort (paden voor de beweging) en welke tag op
   // een record "dit gaat over Jarvis" betekent, zegt de configuratie; leeg =

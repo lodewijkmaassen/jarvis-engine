@@ -4,11 +4,21 @@
 //
 // Geen bouwstap. Consumers installeren met `npm ci --ignore-scripts` (zie de
 // canonieke workflow), dus er is niets dat TypeScript vooraf zou kunnen
-// omzetten. tsx wordt hier geregistreerd en laadt de bron rechtstreeks.
+// omzetten. De bron wordt rechtstreeks gedraaid via de tsx-opdrachtregel in
+// een kindproces. Niet via een loader-hook in dit proces: Node's eigen
+// type-stripping (standaard aan sinds 22.18) weigert .ts-bestanden onder
+// node_modules vóór een hook ze te zien krijgt; de tsx-opdrachtregel zet dat
+// gedrag uit.
+import { spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import { register } from "tsx/esm/api";
+import { fileURLToPath } from "node:url";
 
-register();
-const cli = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "jarvis", "src", "cli.ts");
-await import(pathToFileURL(cli).href);
+const hier = path.dirname(fileURLToPath(import.meta.url));
+const cli = path.join(hier, "..", "jarvis", "src", "cli.ts");
+const tsx = createRequire(import.meta.url).resolve("tsx/cli");
+
+const kind = spawn(process.execPath, [tsx, cli, ...process.argv.slice(2)], { stdio: "inherit" });
+kind.on("exit", (code, signal) => {
+  process.exit(signal ? 1 : (code ?? 1));
+});

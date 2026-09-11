@@ -1,0 +1,7 @@
+# Regeleinden: altijd LF, ook op Windows. De poort vergelijkt de actieve
+# workflow byte voor byte met de canonieke bron; met CRLF in de werkboom
+# faalt die vergelijking lokaal terwijl CI groen is (QA-bevinding H-3).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

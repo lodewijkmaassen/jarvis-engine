@@ -30,6 +30,7 @@ export const LINT_CODES = [
   "rol_onbekend",
   "startpunt_verschoven",
   "commits_afgekapt",
+  "commitlog_onleesbaar",
   "ack_bron_onbetrouwbaar",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
@@ -62,6 +63,12 @@ export type LintInvoer = {
   readonly rolControleVanafBasis?: string;
   /** Aantal commits dat buiten de rolcontrole viel doordat de lijst is afgekapt. */
   readonly commitsAfgekapt?: number;
+  /**
+   * De commitlog was niet volledig en eenduidig te lezen (een record zonder
+   * geldige vorm, of een verschil met de lijst uit rev-list). Blokkerend: een
+   * commit die niet gelezen is, is een commit die de rolcontrole niet zag.
+   */
+  readonly commitlogOnleesbaar?: boolean;
   /** Komen de acks uit een bron met een aanwijsbare menselijke auteur? */
   readonly ackBronVertrouwd?: boolean;
   /** Omschrijving van die bron, voor de foutmelding. */
@@ -442,6 +449,18 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // Bevoegdheidscontrole per commit. Een rol die buiten zijn mandaat schrijft
   // is geen stijlkwestie: het is het verschil tussen "QA keurde onafhankelijk"
   // en "QA repareerde wat hij zelf beoordeelde".
+  if (invoer.commitlogOnleesbaar) {
+    bevindingen.push(
+      bevinding(
+        "commitlog_onleesbaar",
+        "fout",
+        "rolcontrole",
+        "de commitlog van deze branch was niet volledig en eenduidig te lezen (een commitbericht met een " +
+          "record- of veldscheidingsteken, of een verschil met rev-list); zonder volledige lezing is er geen " +
+          "rolcontrole, dus de poort weigert. Herschrijf het bericht van die commit op een nieuwe commit.",
+      ),
+    );
+  }
   if ((invoer.commitsAfgekapt ?? 0) > 0) {
     // Blokkerend, niet signalerend. Een waarschuwing die de build groen laat is
     // op dit punt hetzelfde als stil afkappen: het resultaat ziet eruit als een

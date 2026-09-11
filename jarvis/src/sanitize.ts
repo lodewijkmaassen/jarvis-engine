@@ -43,6 +43,7 @@ export const PATROON_NAMEN = [
   "supabase_secret_key",
   "supabase_publishable_key",
   "anthropic_api_key",
+  "github_token",
   "openai_api_key",
   "sendgrid_api_key",
   "resend_api_key",
@@ -257,6 +258,11 @@ export function isVerdachtBase64(token: string, regel = ""): boolean {
   // een credential gaat - juist secretsdocumentatie staat vol rotatienamen naast
   // het woord "key".
   if (/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/.test(token)) return false;
+  // Een record- of taak-id van Jarvis zelf (`T-20260911-engine-repository`,
+  // `DEC-0038`): een vast voorvoegsel in hoofdletters, een datum of nummer, en
+  // een slug. Nooit een sleutel, ook niet op een regel die over een credential
+  // gaat - een taak over een token noemt dat woord en haar eigen id in één zin.
+  if (/^[A-Z]{1,4}-\d{4,8}(?:-[a-z0-9]+)*$/.test(token)) return false;
   // Streepjes en liggende streepjes zijn wat door mensen gemaakte slugs
   // kenmerkt: `mijnapp-prod-2026-08`, `T-20260910-review-reminder`,
   // `docs/CLAUDE_ARCHIEF_2026-09-10.md`. Sleutels hebben ze zelden, en dan nog
@@ -488,6 +494,15 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     naam: "supabase_publishable_key",
     categorie: "secret",
     patroon: /sb_publishable_[A-Za-z0-9_-]{8,}/,
+    linkerGrens: TOKEN_GRENS,
+    rechterGrens: TOKEN_GRENS,
+    vervangbaar: true,
+  },
+  {
+    naam: "github_token",
+    categorie: "secret",
+    // Klassieke (ghp_/gho_/ghu_/ghs_/ghr_) en fijnmazige (github_pat_) tokens.
+    patroon: /(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/,
     linkerGrens: TOKEN_GRENS,
     rechterGrens: TOKEN_GRENS,
     vervangbaar: true,

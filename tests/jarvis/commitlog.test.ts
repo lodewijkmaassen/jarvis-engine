@@ -26,7 +26,8 @@ describe("leesCommitLog", () => {
     const uit =
       record(HASH_A, "Nieuwste", "Nieuwste\n\nJarvis-Role: builder\nJarvis-Task: T-1", ["a.ts", "b.ts"]) +
       record(HASH_B, "Oudste", "Oudste\n\nJarvis-Role: qa", ["tests/x.test.ts"]);
-    const commits = leesCommitLog(uit);
+    const { commits, ongeldig } = leesCommitLog(uit);
+    expect(ongeldig).toBe(0);
     expect(commits.map((c) => c.hash)).toEqual([HASH_A, HASH_B]);
     expect(commits[0].onderwerp).toBe("Nieuwste");
     expect(commits[0].bericht).toContain("Jarvis-Task: T-1");
@@ -35,13 +36,25 @@ describe("leesCommitLog", () => {
   });
 
   it("geeft een lege bestandslijst voor een commit zonder wijzigingen", () => {
-    const commits = leesCommitLog(record(HASH_A, "Leeg", "Leeg", []));
+    const { commits } = leesCommitLog(record(HASH_A, "Leeg", "Leeg", []));
     expect(commits).toHaveLength(1);
     expect(commits[0].bestanden).toEqual([]);
   });
 
-  it("laat rommel zonder geldige hash buiten beschouwing", () => {
-    expect(leesCommitLog("")).toEqual([]);
-    expect(leesCommitLog(`${RS}niet-een-hash${FS}x${FS}y${FS}`)).toEqual([]);
+  it("telt elk record dat niet de verwachte vorm heeft als onleesbaar, in plaats van het stil te laten vallen", () => {
+    // Een onafhankelijke QA liet zien dat een commitbericht met een
+    // recordscheidingsteken (0x1e) de commit geruisloos uit de rolcontrole
+    // haalde, en een bericht met een veldscheidingsteken (0x1f) de
+    // bestandslijst uit het bericht liet komen. Beide zijn nu een telling die
+    // de poort laat weigeren.
+    expect(leesCommitLog("")).toEqual({ commits: [], ongeldig: 0 });
+    expect(leesCommitLog(`${RS}niet-een-hash${FS}x${FS}y${FS}`).ongeldig).toBe(1);
+    const metRs = record(HASH_A, "Eerste", `Eerste${RS}verstopt`, ["a.ts"]) + record(HASH_B, "Tweede", "Tweede", ["b.ts"]);
+    const uitRs = leesCommitLog(metRs);
+    expect(uitRs.ongeldig).toBeGreaterThan(0);
+    const metFs = record(HASH_A, "Eerste", `Eerste${FS}extra`, ["a.ts"]);
+    const uitFs = leesCommitLog(metFs);
+    expect(uitFs.ongeldig).toBe(1);
+    expect(uitFs.commits).toHaveLength(0);
   });
 });

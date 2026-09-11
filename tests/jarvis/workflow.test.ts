@@ -21,13 +21,14 @@
 // de goedgekeurde bron. Verder wordt er niets gelezen, niets begrepen en niets
 // beoordeeld.
 import { readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   ACTIEVE_WORKFLOW,
   CANONIEKE_WORKFLOW,
+  CANONIEKE_WORKFLOW_CONSUMER,
   GOVERNANCE_CONFIG,
   TOEGESTANE_WORKFLOWS,
   VERPLICHTE_GOVERNANCE_TESTS,
@@ -91,9 +92,9 @@ describe("elke afwijking is een fout", () => {
     ["een tweede job", `${tekst}\n  tweede:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hoi\n`],
     [
       "een tweede Jarvis-aanroep",
-      tekst.replace("        run: npx tsx", "        run: npx tsx jarvis/src/cli.ts lint\n        run: npx tsx"),
+      tekst.replace("        run: node node_modules", "        run: npx tsx jarvis/src/cli.ts lint\n        run: npx tsx"),
     ],
-    ["een andere shell op de stap", tekst.replace("        run: npx tsx", "        shell: bash -e {0}\n        run: npx tsx")],
+    ["een andere shell op de stap", tekst.replace("        run: node node_modules", "        shell: bash -e {0}\n        run: npx tsx")],
     [
       "defaults.run.shell op jobniveau",
       tekst.replace("    runs-on: ubuntu-latest", "    runs-on: ubuntu-latest\n    defaults:\n      run:\n        shell: bash"),
@@ -133,8 +134,8 @@ describe("elke afwijking is een fout", () => {
       "NODE_OPTIONS erbij",
       tekst.replace("          PR_BASIS:", "          NODE_OPTIONS: --require ./patch.js\n          PR_BASIS:"),
     ],
-    ["een vlag aan de aanroep", tekst.replace("cli.ts poort", "cli.ts poort --ack-relatie OWNER")],
-    ["een fallback achter de aanroep", tekst.replace("cli.ts poort", "cli.ts poort || true")],
+    ["een vlag aan de aanroep", tekst.replace("jarvis.mjs poort", "jarvis.mjs poort --ack-relatie OWNER")],
+    ["een fallback achter de aanroep", tekst.replace("jarvis.mjs poort", "jarvis.mjs poort || true")],
     ["één letter anders", tekst.replace("Jarvis-poort", "Jarvis-Poort")],
     ["één spatie erbij", tekst.replace("runs-on: ubuntu-latest", "runs-on:  ubuntu-latest")],
   ];
@@ -262,6 +263,28 @@ describe("de gehardde governancecontrole", () => {
     expect(controleerGovernance(basis({ testGroottes: leeg })).join(" ")).toContain("leeg");
   });
 
+  it("eist de verplichte governance-tests niet bij een consumer: die draagt ze niet, de engine draait ze", () => {
+    const zonder = new Map(VERPLICHTE_GOVERNANCE_TESTS.map((t) => [t, null as number | null]));
+    const uit = controleerGovernance(
+      basis({
+        modus: "consumer",
+        canoniek: feiten({ echtPad: `${WORTEL}/${CANONIEKE_WORKFLOW_CONSUMER}` }),
+        testGroottes: zonder,
+      }),
+    );
+    expect(uit).toEqual([]);
+  });
+
+  it("noemt bij een consumer de canonieke bron in de geïnstalleerde engine", () => {
+    const uit = controleerGovernance(
+      basis({
+        modus: "consumer",
+        canoniek: feiten({ echtPad: `${WORTEL}/${CANONIEKE_WORKFLOW_CONSUMER}`, viaSymlink: true }),
+      }),
+    );
+    expect(uit.join(" ")).toContain(CANONIEKE_WORKFLOW_CONSUMER);
+  });
+
   it("noemt elk van de verplichte testbestanden", () => {
     // Deze lijst is de dekking. Hij hoort niet stilletjes te krimpen.
     expect(VERPLICHTE_GOVERNANCE_TESTS).toContain("tests/jarvis/workflow.test.ts");
@@ -298,7 +321,7 @@ describe("de poort roept de workflowcontrole werkelijk aan", () => {
   it("heeft workflow als eerste stap", () => {
     const namen = poortStappen("/repo", waarden).map((s) => s.naam);
     expect(namen[0]).toBe("workflow");
-    expect(namen).toEqual(["workflow", "rollen", "index", "state", "sanitize", "lint"]);
+    expect(namen).toEqual(["workflow", "engine", "rollen", "index", "state", "sanitize", "lint"]);
   });
 
   it("laat een falende stap de uitkomst bepalen", async () => {
@@ -337,6 +360,13 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
     await mkdir(path.join(map, "jarvis/canonical"), { recursive: true });
     await mkdir(path.join(map, "tests/jarvis"), { recursive: true });
     const workflow = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-lint.yml"));
+    // De proefrepository is de engine zelf (package.json noemt de engine), dus
+    // de canonieke bron staat in de repository en de verplichte tests horen er.
+    await writeFile(path.join(map, "package.json"), JSON.stringify({ name: "jarvis-engine" }));
+    // ... en node_modules/jarvis-engine wijst naar de wortel zelf, zoals de
+    // file:.-koppeling dat doet. Alleen de naam is niet genoeg (H-1).
+    await mkdir(path.join(map, "node_modules"), { recursive: true });
+    await symlink(map, path.join(map, "node_modules", "jarvis-engine"), "junction");
     await writeFile(path.join(map, ".github/workflows/jarvis-lint.yml"), workflow);
     await writeFile(path.join(map, "jarvis/canonical/jarvis-lint.yml"), workflow);
     for (const naam of TOEGESTANE_WORKFLOWS) {
@@ -430,7 +460,7 @@ describe("opdrachtPoort draait de stappen werkelijk", () => {
       ackRelatie: "",
     }).map((s) => s.naam);
     expect(namen[0]).toBe("workflow");
-    expect(namen).toEqual(["workflow", "rollen", "index", "state", "sanitize", "lint"]);
+    expect(namen).toEqual(["workflow", "engine", "rollen", "index", "state", "sanitize", "lint"]);
   });
 
   it("verbindt die eerste stap met de echte workflowcontrole", async () => {

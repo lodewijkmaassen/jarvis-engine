@@ -3,17 +3,27 @@
 # koppelt de huidige map eraan. Klasse A (CON-0015): Jarvis mag dit zelf,
 # binnen de toestemmingslijst van de eigenaar.
 #
-# Gebruik: bash jarvis/scripts/repo-aanmaken.sh <naam> [beschrijving] [--publiek]
+# Gebruik: bash jarvis/scripts/repo-aanmaken.sh <naam> [beschrijving] [--publiek] [--bot <login>]
 #   - draai vanuit de map die de repository wordt (bestaande git-historie)
 #   - het token komt uit de credential manager; het wordt nooit getoond
 #   - bestaat de repository al, dan alleen de remote koppelen
 #   - standaard privé; --publiek alleen op besluit van de eigenaar
+#   - --bot <login> (of JARVIS_BOT_LOGIN): nodigt de bot direct uit met
+#     schrijfrecht, alleen op een zojuist aangemaakte repository (DEC-0038,
+#     aanvulling 2026-09-11); Jarvis accepteert met `jarvis pr uitnodigingen`
 set -euo pipefail
 
 publiek=false
+bot="${JARVIS_BOT_LOGIN:-}"
 args=()
+verwacht_bot=false
 for a in "$@"; do
-  if [[ "$a" == "--publiek" ]]; then publiek=true; else args+=("$a"); fi
+  if $verwacht_bot; then bot="$a"; verwacht_bot=false; continue; fi
+  case "$a" in
+    --publiek) publiek=true ;;
+    --bot) verwacht_bot=true ;;
+    *) args+=("$a") ;;
+  esac
 done
 naam="${args[0]:-}"
 beschrijving="${args[1]:-}"
@@ -53,6 +63,17 @@ if [[ "$status" == "404" ]]; then
     echo "repo-aanmaken: standaard-ruleset main-protection gezet."
   else
     echo "repo-aanmaken: WAARSCHUWING: ruleset niet gezet (HTTP $rs); zet hem met de hand of meld het aan de eigenaar." >&2
+  fi
+  # De bot als collaborator met schrijfrecht, alleen hier (zojuist aangemaakt):
+  # zonder de bot kan Jarvis er geen pull request openen die de eigenaar kan
+  # goedkeuren (DEC-0039). Nooit admin.
+  if [[ -n "$bot" ]]; then
+    bs="$(curl -s -o /dev/null -w '%{http_code}' -X PUT -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" "$api/repos/$login/$naam/collaborators/$bot" -d '{"permission":"push"}')"
+    if [[ "$bs" == "201" || "$bs" == "204" ]]; then
+      echo "repo-aanmaken: bot $bot uitgenodigd met schrijfrecht; accepteer met: jarvis pr uitnodigingen"
+    else
+      echo "repo-aanmaken: WAARSCHUWING: bot $bot niet uitgenodigd (HTTP $bs); meld het aan de eigenaar." >&2
+    fi
   fi
 elif [[ "$status" == "200" ]]; then
   echo "repo-aanmaken: $login/$naam bestaat al; alleen de remote wordt gekoppeld."
