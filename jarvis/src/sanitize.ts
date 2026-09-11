@@ -43,6 +43,7 @@ export const PATROON_NAMEN = [
   "supabase_secret_key",
   "supabase_publishable_key",
   "anthropic_api_key",
+  "github_token",
   "openai_api_key",
   "sendgrid_api_key",
   "resend_api_key",
@@ -488,6 +489,15 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     naam: "supabase_publishable_key",
     categorie: "secret",
     patroon: /sb_publishable_[A-Za-z0-9_-]{8,}/,
+    linkerGrens: TOKEN_GRENS,
+    rechterGrens: TOKEN_GRENS,
+    vervangbaar: true,
+  },
+  {
+    naam: "github_token",
+    categorie: "secret",
+    // Klassieke (ghp_/gho_/ghu_/ghs_/ghr_) en fijnmazige (github_pat_) tokens.
+    patroon: /(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})/,
     linkerGrens: TOKEN_GRENS,
     rechterGrens: TOKEN_GRENS,
     vervangbaar: true,
