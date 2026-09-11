@@ -38,6 +38,7 @@ const SECRET_MONSTERS: readonly (readonly [PatroonNaam, string])[] = [
   ["supabase_secret_key", "sb_secret_AbCdEf12345678xyzQRS"],
   ["supabase_publishable_key", "sb_publishable_AbCdEf12345678xyz"],
   ["anthropic_api_key", "sk-ant-api03-AbCdEf1234567890XyZaBcDeFgHi"],
+  ["github_token", "github_pat_" + "11ABCDEFG0" + "AbCdEfGhIjKlMnOpQrStUv"],
   ["openai_api_key", "sk-AbCdEf1234567890XyZaBcDeFgHi"],
   ["sendgrid_api_key", "SG.AbCdEf1234567890Xy.ZaBcDeFgHi1234567890"],
   ["resend_api_key", "re_AbCd1234_EfGhIjKlMnOpQrStUvWx"],
