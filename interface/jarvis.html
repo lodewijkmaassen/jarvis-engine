@@ -2,9 +2,9 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
-/* Eén visuele wereld, bewust: een donkere HUD. Beide hostthema's krijgen dezelfde grond. */
+/* Eén visuele wereld, bewust: een donkere HUD. De kaart is de interface; al het andere schuift eroverheen. */
 :root{
-  --grond:#060A10; --grond2:#0B121B; --vlak:rgba(11,19,29,.86); --vlak2:rgba(18,30,44,.9); --lijn:rgba(95,227,255,.16); --lijn2:rgba(95,227,255,.34);
+  --grond:#060A10; --vlak:rgba(11,19,29,.9); --vlak2:rgba(18,30,44,.92); --lijn:rgba(95,227,255,.16); --lijn2:rgba(95,227,255,.34);
   --inkt:#D9E6F2; --gedempt:#8CA2B8; --zacht:#5D7288;
   --cyaan:#5FE3FF; --cyaan-zacht:rgba(95,227,255,.12); --cyaan-gloed:0 0 18px rgba(95,227,255,.35);
   --hoog:#FF5C6C; --hoog-zacht:rgba(255,92,108,.14); --midden:#FFB454; --midden-zacht:rgba(255,180,84,.14); --laag:#6F86A0; --laag-zacht:rgba(111,134,160,.16);
@@ -15,39 +15,56 @@
   color-scheme:dark;
 }
 *{box-sizing:border-box}
+html,body{height:100%}
 html{-webkit-text-size-adjust:100%}
-body{margin:0;background:var(--grond);color:var(--inkt);font:15px/1.5 var(--body);min-height:100vh;
-  background-image:radial-gradient(ellipse 80% 50% at 50% -10%,rgba(95,227,255,.10),transparent 60%),
+body{margin:0;background:var(--grond);color:var(--inkt);font:15px/1.5 var(--body);overflow:hidden;
+  background-image:radial-gradient(ellipse 70% 60% at 50% 45%,rgba(95,227,255,.08),transparent 65%),
     linear-gradient(rgba(95,227,255,.035) 1px,transparent 1px),linear-gradient(90deg,rgba(95,227,255,.035) 1px,transparent 1px);
-  background-size:100% 100%,28px 28px,28px 28px;background-attachment:fixed}
+  background-size:100% 100%,28px 28px,28px 28px}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
 button:focus-visible,[tabindex]:focus-visible,textarea:focus-visible{outline:2px solid var(--cyaan);outline-offset:2px}
 h1,h2,h3{margin:0;text-wrap:balance}
 p{margin:0}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.disp{font-family:var(--display);text-transform:uppercase;letter-spacing:.08em}
 
-/* ---- skelet ---- */
-.app{display:grid;grid-template-columns:1fr;max-width:1180px;margin:0 auto;padding:0 0 56px}
-.kaartkolom{padding:8px 12px 0}
-.inhoud{padding:0 12px}
-@media(min-width:900px){
-  .app{grid-template-columns:420px 1fr;gap:28px;padding:20px 24px 60px}
-  .kaartkolom{position:sticky;top:20px;align-self:start;padding:0}
-  .inhoud{padding:0}
-}
+/* ---- canvas ---- */
+#canvas{position:fixed;inset:0;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+#canvas.sleept{cursor:grabbing}
+#canvas svg{width:100%;height:100%;display:block}
+.tak{fill:none;stroke:var(--lijn2);stroke-width:1.2}
+.tak.los{stroke-dasharray:3 6}
+.tak.hoog{stroke:rgba(255,92,108,.5)}
+.knoop{cursor:pointer}
+.knoop .schijf{fill:rgba(11,19,29,.94);stroke:var(--lijn2);stroke-width:1.2;transition:stroke .15s}
+.knoop.actief .schijf{stroke:var(--cyaan);stroke-width:2;filter:drop-shadow(0 0 8px rgba(95,227,255,.5))}
+.knoop.los .schijf{stroke-dasharray:4 3}
+.knoop.u-hoog .schijf{stroke:var(--hoog)}
+.knoop.u-midden .schijf{stroke:var(--midden)}
+.knoop.beantwoord .schijf{stroke:var(--ok)}
+.knoop.beantwoord text{fill:var(--zacht)}
+.knoop text{font-family:var(--display);font-weight:600;letter-spacing:.06em;text-transform:uppercase;fill:var(--inkt);pointer-events:none}
+.knoop text.sub{font-family:var(--mono);font-weight:400;letter-spacing:0;text-transform:none;fill:var(--gedempt)}
+.knoop text.blad{font-family:var(--body);font-weight:500;letter-spacing:0;text-transform:none;fill:var(--inkt)}
+.knoop.kern .schijf{fill:rgba(95,227,255,.14);stroke:var(--cyaan);stroke-width:2;filter:drop-shadow(0 0 12px rgba(95,227,255,.6))}
+.knoop.kern text{fill:#fff;font-weight:700;letter-spacing:.16em}
+.knoop.kern text.sub{fill:var(--cyaan)}
+.knoop .draai{fill:none;stroke:var(--cyaan);stroke-width:1.5;stroke-dasharray:40 26 8 26;opacity:.7;transform-origin:center;transform-box:fill-box}
+@media(prefers-reduced-motion:no-preference){.knoop .draai{animation:draai 24s linear infinite}.knoop .draai.terug{animation-direction:reverse;animation-duration:38s}}
+@keyframes draai{to{transform:rotate(360deg)}}
+.knoop .buiten{fill:none;stroke:var(--cyaan);stroke-width:1;opacity:.35;stroke-dasharray:6 4}
+.knoop .voortgang{fill:none;stroke:var(--cyaan);stroke-width:3;stroke-linecap:round;opacity:.9}
+.knoop .voortgang-rest{fill:none;stroke:var(--lijn);stroke-width:3}
+.badge circle{fill:var(--hoog);filter:drop-shadow(0 0 6px rgba(255,92,108,.7))}
+.badge.rustig circle{fill:var(--laag)}
+.badge text{fill:#fff;font-family:var(--mono);font-size:10.5px;font-weight:500;pointer-events:none}
+.praat{fill:var(--cyaan);opacity:.9}
+.plus{fill:var(--zacht);font-family:var(--mono);font-size:11px;pointer-events:none}
 
-/* ---- paneel met hoekbeugels ---- */
-.paneel{position:relative;background:var(--vlak);border:1px solid var(--lijn);backdrop-filter:blur(6px)}
-.paneel::before,.paneel::after{content:"";position:absolute;width:12px;height:12px;border-color:var(--cyaan);border-style:solid;opacity:.8}
-.paneel::before{left:-1px;top:-1px;border-width:2px 0 0 2px}
-.paneel::after{right:-1px;bottom:-1px;border-width:0 2px 2px 0}
-
-/* ---- kop + kaart ---- */
-.kop{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;padding:10px 4px 8px}
-.kop h1{font-family:var(--display);font-weight:700;font-size:26px;letter-spacing:.14em;text-transform:uppercase;color:#fff;text-shadow:0 0 14px rgba(95,227,255,.55)}
+/* ---- kop over de kaart ---- */
+.kop{position:fixed;left:12px;top:10px;right:12px;display:flex;align-items:flex-start;justify-content:space-between;gap:12px;pointer-events:none;z-index:5}
+.kop h1{font-family:var(--display);font-weight:700;font-size:24px;letter-spacing:.14em;text-transform:uppercase;color:#fff;text-shadow:0 0 14px rgba(95,227,255,.55)}
 .kop h1 small{font:600 11px/1 var(--display);color:var(--cyaan);margin-left:10px;letter-spacing:.2em}
-.status{font-family:var(--mono);font-size:11.5px;color:var(--gedempt);text-align:right;line-height:1.5}
+.status{font-family:var(--mono);font-size:11.5px;color:var(--gedempt);text-align:right;line-height:1.5;background:rgba(6,10,16,.6);padding:4px 8px;border:1px solid var(--lijn);pointer-events:auto}
 .status b{font-weight:500;color:var(--cyaan)}
 .status .oud{color:var(--midden)}
 .status .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);box-shadow:0 0 8px var(--ok);margin-right:6px;vertical-align:1px}
@@ -55,60 +72,45 @@ p{margin:0}
 .status .dot.bezig{background:var(--midden);box-shadow:0 0 8px var(--midden)}
 @media(prefers-reduced-motion:no-preference){.status .dot.bezig{animation:knip 1.2s ease-in-out infinite}}
 @keyframes knip{50%{opacity:.35}}
-.kaart{padding:6px 6px 2px}
-.kaart svg{display:block;width:100%;height:auto;max-height:270px}
-@media(min-width:900px){.kaart svg{max-height:360px}}
-.kaart .ring{fill:none;stroke:var(--lijn);stroke-width:1}
-.kaart .ring.tik{stroke-dasharray:2 10;stroke:var(--lijn2)}
-.kaart .knoop{cursor:pointer}
-.kaart .knoop circle.schijf{fill:rgba(11,19,29,.92);stroke:var(--lijn2);stroke-width:1.2;transition:stroke .15s,fill .15s}
-.kaart .knoop circle.buiten{fill:none;stroke:var(--cyaan);stroke-width:1;opacity:.35;stroke-dasharray:6 4}
-.kaart .knoop.los circle.schijf{stroke-dasharray:4 3}
-.kaart .knoop.actief circle.schijf{stroke:var(--cyaan);stroke-width:1.8;fill:rgba(95,227,255,.10);filter:drop-shadow(0 0 8px rgba(95,227,255,.45))}
-.kaart .knoop text{font-family:var(--display);font-weight:600;font-size:13px;letter-spacing:.06em;text-transform:uppercase;fill:var(--inkt);pointer-events:none}
-.kaart .knoop text.sub{font-family:var(--mono);font-weight:400;font-size:10px;letter-spacing:0;text-transform:none;fill:var(--gedempt)}
-.kaart .centrum circle.kern{fill:rgba(95,227,255,.14);stroke:var(--cyaan);stroke-width:2;filter:drop-shadow(0 0 12px rgba(95,227,255,.6))}
-.kaart .centrum circle.kern2{fill:none;stroke:var(--cyaan);stroke-width:1;opacity:.6}
-.kaart .centrum.actief circle.kern{fill:rgba(95,227,255,.28)}
-.kaart .centrum text{fill:#fff;font-weight:700;font-size:15px;letter-spacing:.16em}
-.kaart .centrum text.sub{fill:var(--cyaan)}
-.kaart .draai{fill:none;stroke:var(--cyaan);stroke-width:1.5;stroke-dasharray:40 26 8 26;opacity:.7;transform-origin:center;transform-box:fill-box}
-@media(prefers-reduced-motion:no-preference){.kaart .draai{animation:draai 24s linear infinite}.kaart .draai.terug{animation-direction:reverse;animation-duration:38s}}
-@keyframes draai{to{transform:rotate(360deg)}}
-.kaart line{stroke:var(--lijn2);stroke-linecap:round}
-.kaart line.los{stroke-dasharray:3 6}
-.kaart .badge circle{fill:var(--hoog);filter:drop-shadow(0 0 6px rgba(255,92,108,.7))}
-.kaart .badge text{fill:#fff;font-family:var(--mono);font-size:10.5px;font-weight:500;pointer-events:none}
-.legenda{display:flex;flex-wrap:wrap;gap:6px 14px;padding:6px 8px 8px;font-family:var(--mono);font-size:11px;color:var(--gedempt)}
-.legenda span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px;background:var(--lijn2)}
-.legenda .l-jou::before{background:var(--hoog);box-shadow:0 0 6px var(--hoog)}
-.legenda .l-los::before{background:none;border:1px dashed var(--zacht);width:6px;height:6px}
+.gereedschap{position:fixed;left:12px;bottom:12px;display:flex;gap:6px;z-index:5}
+.gereedschap .knop{min-width:44px;min-height:44px;background:rgba(6,10,16,.7)}
+.legenda{position:fixed;right:12px;bottom:12px;display:flex;flex-wrap:wrap;gap:4px 12px;font-family:var(--mono);font-size:10.5px;color:var(--gedempt);background:rgba(6,10,16,.6);padding:4px 8px;border:1px solid var(--lijn);z-index:5;max-width:52vw}
+.legenda span::before{content:"";display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;vertical-align:1px;border:1.5px solid var(--lijn2)}
+.legenda .l-hoog::before{border-color:var(--hoog)}
+.legenda .l-midden::before{border-color:var(--midden)}
+.legenda .l-ok::before{border-color:var(--ok)}
+.legenda .l-los::before{border-style:dashed}
+@media(max-width:899px){.legenda{display:none}}
 
-/* ---- secties ---- */
-.sectie{margin-top:20px}
-.sectiekop{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding:0 4px 8px;border-bottom:1px solid var(--lijn);margin-bottom:10px}
-.sectiekop h2{font-family:var(--display);font-weight:700;font-size:18px;letter-spacing:.12em;text-transform:uppercase;color:#fff}
-.sectiekop h2::before{content:"// ";color:var(--cyaan);font-weight:500}
-.sectiekop .tel{font-family:var(--mono);font-size:11.5px;color:var(--gedempt)}
-.eyebrow{font-family:var(--display);font-size:11.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--cyaan)}
-
-/* ---- items ---- */
-.lijst{display:flex;flex-direction:column;gap:8px}
-.item{position:relative;background:var(--vlak);border:1px solid var(--lijn);border-left-width:3px;border-left-color:var(--laag)}
-.item.u-hoog{border-left-color:var(--hoog);box-shadow:inset 3px 0 12px -6px var(--hoog)}
-.item.u-midden{border-left-color:var(--midden)}
-.item.beantwoord{border-left-color:var(--ok);opacity:.8}
-.item.open{border-color:var(--lijn2)}
-.item > .kopknop{display:block;width:100%;text-align:left;padding:12px 14px;min-height:44px}
-.itemmeta{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin-bottom:5px}
+/* ---- schuifkaart ---- */
+.kaart{position:fixed;z-index:10;background:var(--vlak);border:1px solid var(--lijn2);backdrop-filter:blur(8px);display:flex;flex-direction:column;box-shadow:0 -10px 40px rgba(0,0,0,.5)}
+.kaart::before,.kaart::after{content:"";position:absolute;width:12px;height:12px;border-color:var(--cyaan);border-style:solid;opacity:.8;pointer-events:none}
+.kaart::before{left:-1px;top:-1px;border-width:2px 0 0 2px}
+.kaart::after{right:-1px;bottom:-1px;border-width:0 2px 2px 0}
+.kaart[hidden]{display:none}
+@media(max-width:899px){
+  .kaart{left:0;right:0;bottom:0;max-height:62vh;border-left:0;border-right:0;border-bottom:0}
+  .kaart .greep{height:18px;display:flex;align-items:center;justify-content:center;cursor:grab}
+  .kaart .greep::before{content:"";width:40px;height:4px;border-radius:2px;background:var(--lijn2)}
+}
+@media(min-width:900px){
+  .kaart{top:12px;right:12px;bottom:12px;width:min(520px,46vw)}
+  .kaart .greep{display:none}
+}
+.kaart .kopregel{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;padding:8px 14px 8px;border-bottom:1px solid var(--lijn)}
+.kaart .kopregel h2{font-family:var(--display);font-weight:700;font-size:20px;letter-spacing:.1em;text-transform:uppercase;color:#fff;line-height:1.15}
+.kaart .pad{font-family:var(--mono);font-size:11px;color:var(--zacht);margin-bottom:2px}
+.kaart .pad button{color:var(--cyaan)}
+.kaart .sluit{min-width:40px;min-height:40px;font-family:var(--mono);color:var(--gedempt);flex-shrink:0}
+.kaart .inhoud{overflow:auto;padding:0 14px 14px;flex:1;min-height:0}
+.itemmeta{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;margin:10px 0 4px}
 .chip{display:inline-flex;align-items:center;font-family:var(--display);font-size:11.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;padding:1px 7px;border:1px solid var(--lijn2);color:var(--gedempt);line-height:1.5}
 .chip.soort-beslissing,.chip.soort-conflict,.chip.soort-blokkade{border-color:var(--hoog);color:var(--hoog)}
 .chip.soort-actie{border-color:var(--midden);color:var(--midden)}
 .chip.project{border-color:var(--cyaan);color:var(--cyaan)}
 .chip.ok{border-color:var(--ok);color:var(--ok)}
 .chip.wacht{border-color:var(--midden);color:var(--midden)}
-.itemtitel{font-weight:500;font-size:15.5px;line-height:1.35;color:#fff}
-.itemuit{padding:2px 14px 14px;border-top:1px solid var(--lijn)}
+.eyebrow{font-family:var(--display);font-size:11.5px;font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--cyaan)}
 .blok{margin-top:12px}
 .blok .eyebrow{display:block;margin-bottom:3px}
 .blok p{color:var(--gedempt);max-width:64ch}
@@ -116,7 +118,6 @@ p{margin:0}
 .bron{font-family:var(--mono);font-size:11px;color:var(--zacht);margin-top:10px}
 .opties{display:flex;flex-direction:column;gap:6px;margin-top:6px}
 .optie{display:grid;grid-template-columns:1fr auto;gap:2px 12px;align-items:center;padding:10px 12px;background:var(--vlak2);border:1px solid var(--lijn);text-align:left;min-height:44px;width:100%}
-.optie:hover,.optie:focus-visible{border-color:var(--lijn2)}
 .optie.advies{border-color:var(--cyaan);box-shadow:var(--cyaan-gloed)}
 .optie .lbl{font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:.08em;text-transform:uppercase;color:#fff}
 .optie .lbl .adv{font-size:10.5px;color:var(--cyaan);margin-left:8px;letter-spacing:.18em}
@@ -126,13 +127,13 @@ p{margin:0}
 .stappen{margin:6px 0 0;padding:0;list-style:none;counter-reset:stap}
 .stappen li{counter-increment:stap;display:grid;grid-template-columns:28px 1fr;gap:10px;padding:8px 10px;border:1px solid var(--lijn);background:var(--vlak2);margin-bottom:6px;font-size:14px;line-height:1.5;color:var(--inkt)}
 .stappen li::before{content:counter(stap);font-family:var(--display);font-weight:700;font-size:16px;color:var(--cyaan);line-height:1.3}
-.stappen li code{font-family:var(--mono);font-size:.9em;background:rgba(6,10,16,.7);padding:1px 5px;color:var(--cyaan)}
+.stappen li code,.md code,.bericht code{font-family:var(--mono);font-size:.9em;background:rgba(6,10,16,.7);padding:1px 5px;color:var(--cyaan)}
 .controle{margin-top:8px;padding:8px 10px;border-left:3px solid var(--ok);background:var(--ok-zacht);font-size:13.5px;color:var(--inkt)}
 .adviestekst{margin-top:10px;padding:10px 12px;border:1px solid var(--cyaan);border-left-width:3px;background:var(--cyaan-zacht);font-size:14px;color:var(--inkt)}
 .adviestekst .eyebrow{display:block;margin-bottom:2px}
 .antwoordvak{margin-top:12px;display:flex;flex-direction:column;gap:8px}
-.antwoordvak textarea{width:100%;min-height:60px;resize:vertical;padding:8px 10px;border:1px solid var(--lijn2);background:rgba(6,10,16,.7);color:var(--inkt);font:inherit;font-size:14px}
-.antwoordvak textarea::placeholder{color:var(--zacht)}
+textarea{width:100%;min-height:56px;resize:vertical;padding:8px 10px;border:1px solid var(--lijn2);background:rgba(6,10,16,.7);color:var(--inkt);font:inherit;font-size:14px}
+textarea::placeholder{color:var(--zacht)}
 .knop{min-height:40px;padding:0 14px;border:1px solid var(--lijn2);background:var(--vlak2);font-family:var(--display);font-weight:600;font-size:13px;letter-spacing:.12em;text-transform:uppercase}
 .knop.stil{background:none;border-color:transparent;color:var(--gedempt)}
 .knop:disabled{opacity:.5;cursor:default}
@@ -141,124 +142,107 @@ p{margin:0}
 .antwoordstatus .mono{color:var(--zacht);font-size:11.5px}
 .antwoordstatus .verw{color:var(--inkt)}
 .antwoordstatus .verw::before{content:"Jarvis: ";color:var(--cyaan);font-family:var(--display);letter-spacing:.1em;text-transform:uppercase;font-size:12px}
-.leeg{padding:22px 16px;color:var(--gedempt);text-align:center}
-.leeg strong{display:block;color:#fff;font-family:var(--display);font-size:18px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px}
-
-/* ---- projectpaneel ---- */
-.terug{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:0 6px;color:var(--cyaan);font-family:var(--display);font-weight:600;letter-spacing:.12em;text-transform:uppercase;margin:6px 0 4px}
-.projkop{padding:0 4px 10px}
-.projkop h2{font-family:var(--display);font-weight:700;font-size:28px;letter-spacing:.12em;text-transform:uppercase;color:#fff;text-shadow:0 0 12px rgba(95,227,255,.35)}
-.projkop .sub{display:flex;flex-wrap:wrap;gap:6px 12px;margin-top:4px;font-family:var(--mono);font-size:12px;color:var(--gedempt)}
-.tegels{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-top:4px}
-.tegel{padding:10px 12px}
-.tegel .eyebrow{display:block;margin-bottom:2px}
-.tegel .n{font-family:var(--display);font-size:26px;font-weight:700;line-height:1.05;color:#fff}
+.leeg{padding:16px;color:var(--gedempt);text-align:center;border:1px dashed var(--lijn)}
+.leeg strong{display:block;color:#fff;font-family:var(--display);font-size:16px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px}
+.tegels{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-top:10px}
+.tegel{padding:8px 10px;border:1px solid var(--lijn);background:var(--vlak2)}
+.tegel .eyebrow{display:block;margin-bottom:2px;font-size:10.5px}
+.tegel .n{font-family:var(--display);font-size:24px;font-weight:700;line-height:1.05;color:#fff}
 .tegel .n small{font:400 11px/1 var(--mono);color:var(--gedempt);margin-left:4px}
-.tabs{display:flex;gap:2px;border-bottom:1px solid var(--lijn);margin:16px 0 12px;overflow-x:auto;scrollbar-width:none}
-.tabs::-webkit-scrollbar{display:none}
-.tab{min-height:44px;padding:0 12px;font-family:var(--display);font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--gedempt);border-bottom:2px solid transparent;white-space:nowrap;margin-bottom:-1px}
-.tab[aria-selected="true"]{color:#fff;border-bottom-color:var(--cyaan);text-shadow:0 0 10px rgba(95,227,255,.5)}
-.tab .tel{font-family:var(--mono);font-size:11px;margin-left:5px;color:var(--zacht);letter-spacing:0}
-details.stand{background:var(--vlak);border:1px solid var(--lijn);margin-bottom:8px}
-details.stand summary{cursor:pointer;list-style:none;padding:12px 14px;font-family:var(--display);font-weight:700;font-size:15px;letter-spacing:.1em;text-transform:uppercase;color:#fff;display:flex;justify-content:space-between;align-items:center;min-height:44px}
-details.stand summary::-webkit-details-marker{display:none}
-details.stand summary::after{content:"+";font-family:var(--mono);color:var(--cyaan);font-weight:400}
-details.stand[open] summary::after{content:"–"}
-.md{padding:0 14px 14px;max-width:66ch;color:var(--inkt)}
+.regel{display:flex;gap:10px;align-items:center;padding:9px 10px;border:1px solid var(--lijn);background:var(--vlak2);margin-top:6px;width:100%;text-align:left;min-height:44px}
+.regel .t{flex:1;font-size:14px;color:var(--inkt)}
+.regel .t small{display:block;font-family:var(--mono);font-size:11px;color:var(--zacht)}
+.regel .m{font-family:var(--mono);font-size:11px;color:var(--gedempt);white-space:nowrap}
+.regel.u-hoog{border-left:3px solid var(--hoog)}
+.regel.u-midden{border-left:3px solid var(--midden)}
+.regel.u-laag{border-left:3px solid var(--laag)}
+.regel.beantwoord{border-left:3px solid var(--ok);opacity:.75}
+.md{max-width:66ch;color:var(--inkt)}
 .md p{margin:0 0 10px}
 .md ul{margin:0 0 10px;padding-left:20px}
 .md li{margin:4px 0}
-.md code{font-family:var(--mono);font-size:.88em;background:var(--vlak2);padding:1px 5px;color:var(--cyaan)}
 .md em{color:var(--gedempt)}
-.dag{margin-top:14px}
-.dag .eyebrow{padding:0 4px 6px;display:block}
-.commit{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;padding:8px 12px;background:var(--vlak);border:1px solid var(--lijn);margin-bottom:6px;align-items:baseline}
-.commit .hash{font-family:var(--mono);font-size:12px;color:var(--cyaan);padding-top:2px}
-.commit .ond{font-size:14px;line-height:1.4;overflow-wrap:anywhere}
-.commit .rol{grid-column:2;display:flex;gap:6px;flex-wrap:wrap}
-.commit.merge .ond{color:var(--gedempt)}
-.taak{display:flex;gap:10px;align-items:center;padding:12px 14px;background:var(--vlak);border:1px solid var(--lijn);margin-bottom:8px}
-.taak .id{font-family:var(--mono);font-size:11.5px;color:var(--zacht)}
-.taak .t{font-weight:500;color:#fff}
-.taak .r{margin-left:auto;display:flex;gap:6px;flex-shrink:0}
-.meer{display:block;width:100%;text-align:center;min-height:44px;color:var(--cyaan);font-family:var(--display);letter-spacing:.12em;text-transform:uppercase;font-weight:600}
-.melding{background:var(--midden-zacht);color:var(--inkt);border:1px solid var(--midden);padding:12px 14px;margin:10px 0;font-size:14px}
-.melding.fout{background:var(--hoog-zacht);border-color:var(--hoog)}
-
-/* ---- taken met voortgang ---- */
-.taak{flex-wrap:wrap}
-.taak .kopregel{display:flex;gap:10px;align-items:center;width:100%}
-.voortgang{width:100%;margin-top:8px}
-.balk{height:4px;background:var(--lijn);position:relative;margin:6px 0 8px}
-.balk i{position:absolute;left:0;top:0;bottom:0;background:var(--cyaan);box-shadow:0 0 8px var(--cyaan)}
+details.stand{border:1px solid var(--lijn);margin-top:8px;background:var(--vlak2)}
+details.stand summary{cursor:pointer;list-style:none;padding:10px 12px;font-family:var(--display);font-weight:700;font-size:14px;letter-spacing:.1em;text-transform:uppercase;color:#fff;display:flex;justify-content:space-between;min-height:44px;align-items:center}
+details.stand summary::-webkit-details-marker{display:none}
+details.stand summary::after{content:"+";font-family:var(--mono);color:var(--cyaan)}
+details.stand[open] summary::after{content:"–"}
+details.stand .md{padding:0 12px 10px}
 .stap{display:grid;grid-template-columns:18px 1fr;gap:8px;padding:3px 0;font-size:13.5px;color:var(--gedempt);align-items:start}
-.stap.gedaan{color:var(--zacht);text-decoration:line-through;text-decoration-color:var(--zacht)}
+.stap.gedaan{color:var(--zacht);text-decoration:line-through}
 .stap .vink{font-family:var(--mono);color:var(--ok)}
 .stap.open .vink{color:var(--midden)}
 .stap.nu .vink{color:var(--cyaan)}
 .stap.nu{color:var(--inkt)}
-.taak .gast{font-family:var(--mono);font-size:11px;color:var(--zacht);width:100%}
-/* ---- Jarvis: activiteit ---- */
-.agent{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:10px 12px;background:var(--vlak);border:1px solid var(--lijn);margin-bottom:8px;align-items:center}
+.balk{height:4px;background:var(--lijn);position:relative;margin:6px 0 8px}
+.balk i{position:absolute;left:0;top:0;bottom:0;background:var(--cyaan);box-shadow:0 0 8px var(--cyaan)}
+.agent{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:10px 12px;border:1px solid var(--lijn);background:var(--vlak2);margin-top:8px;align-items:center}
 .agent .naam{font-family:var(--display);font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#fff}
 .agent .naam .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;background:var(--zacht);vertical-align:1px}
 .agent.actief .naam .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
 .agent.bezig .naam .dot{background:var(--cyaan);box-shadow:0 0 8px var(--cyaan)}
-@media(prefers-reduced-motion:no-preference){.agent.bezig .naam .dot{animation:knip 1.2s ease-in-out infinite}}
 .agent .wat{grid-column:1/3;font-size:14px;color:var(--inkt)}
 .agent .meta{grid-column:1/3;font-family:var(--mono);font-size:11px;color:var(--zacht)}
-.rolrij{display:grid;grid-template-columns:auto 1fr auto;gap:8px 12px;padding:8px 12px;border:1px solid var(--lijn);background:var(--vlak);margin-bottom:6px;align-items:baseline}
-.rolrij .rol{font-family:var(--display);font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--cyaan)}
-.rolrij .n{font-family:var(--mono);font-size:12px;color:var(--gedempt)}
-.rolrij .ond{grid-column:1/4;font-size:13.5px;color:var(--gedempt)}
-/* ---- gesprek ---- */
-.gesprek{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
-.bericht{max-width:64ch;padding:10px 12px;border:1px solid var(--lijn);background:var(--vlak);font-size:14.5px;line-height:1.5}
+.commit{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;padding:6px 10px;border:1px solid var(--lijn);background:var(--vlak2);margin-top:6px;align-items:baseline}
+.commit .hash{font-family:var(--mono);font-size:12px;color:var(--cyaan)}
+.commit .ond{font-size:13.5px;line-height:1.4;overflow-wrap:anywhere}
+.melding{background:var(--midden-zacht);color:var(--inkt);border:1px solid var(--midden);padding:10px 12px;margin:10px 0;font-size:13.5px}
+.melding.fout{background:var(--hoog-zacht);border-color:var(--hoog)}
+
+/* ---- draad (gesprek per knoop) ---- */
+.draad{margin-top:16px;border-top:1px solid var(--lijn);padding-top:10px}
+.draad .eyebrow{display:block;margin-bottom:6px}
+.berichten{display:flex;flex-direction:column;gap:8px;margin-bottom:10px}
+.bericht{max-width:92%;padding:9px 11px;border:1px solid var(--lijn);background:var(--vlak2);font-size:14px;line-height:1.5}
 .bericht.jarvis{border-left:3px solid var(--cyaan);align-self:flex-start}
-.bericht.eigenaar{border-right:3px solid var(--midden);align-self:flex-end;background:var(--vlak2)}
+.bericht.eigenaar{border-right:3px solid var(--midden);align-self:flex-end}
 .bericht .van{font-family:var(--display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyaan);display:block;margin-bottom:2px}
 .bericht.eigenaar .van{color:var(--midden)}
 .bericht .tijd{font-family:var(--mono);font-size:10.5px;color:var(--zacht);margin-left:8px}
 .bericht.wacht{opacity:.7}
-.invoer{display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:end}
-.invoer textarea{min-height:48px;resize:vertical;padding:10px;border:1px solid var(--lijn2);background:rgba(6,10,16,.7);color:var(--inkt);font:inherit;font-size:14.5px}
+.invoer{display:grid;grid-template-columns:1fr auto;gap:6px;align-items:end}
+.invoer textarea{min-height:48px}
 .invoer .knop{min-height:48px}
-.knop.mic.aan{border-color:var(--hoog);color:var(--hoog);box-shadow:0 0 10px rgba(255,92,108,.5)}
-.stemregel{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:10px;font-family:var(--mono);font-size:11.5px;color:var(--gedempt)}
+.stemregel{display:flex;flex-wrap:wrap;gap:6px 14px;align-items:center;margin-top:8px;font-family:var(--mono);font-size:11px;color:var(--gedempt)}
 .stemregel label{display:inline-flex;gap:6px;align-items:center;min-height:32px;cursor:pointer}
 .stemregel select{background:var(--vlak2);color:var(--inkt);border:1px solid var(--lijn2);font:inherit;font-size:12px;padding:4px 6px;max-width:100%}
-.voet{margin-top:28px;padding:0 4px;font-family:var(--mono);font-size:11px;color:var(--zacht);line-height:1.7}
 </style>
 
-<div class="app">
-  <div class="kaartkolom">
-    <div class="kop">
-      <h1>Jarvis<small id="kop-versie"></small></h1>
-      <div class="status" id="status">laden…</div>
-    </div>
-    <div class="paneel kaart">
-      <svg id="kaart" viewBox="0 0 360 200" role="group" aria-label="Projectkaart"></svg>
-      <div class="legenda"><span class="l-jou">ligt bij jou</span><span>grootte = beweging, 14 dagen</span><span class="l-los">niet aangesloten</span></div>
-    </div>
-  </div>
-  <div class="inhoud" id="inhoud">
-    <div class="paneel leeg" style="margin-top:18px"><strong>Jarvis laadt</strong>De stand van zaken wordt opgehaald.</div>
-  </div>
+<div id="canvas"><svg id="kaart" role="group" aria-label="Jarvis-kaart"></svg></div>
+<div class="kop">
+  <h1>Jarvis<small id="kop-versie"></small></h1>
+  <div class="status" id="status">laden…</div>
+</div>
+<div class="gereedschap">
+  <button class="knop" data-actie="centreer" aria-label="Terug naar het midden">⌂</button>
+  <button class="knop" data-actie="zoom-in" aria-label="Inzoomen">+</button>
+  <button class="knop" data-actie="zoom-uit" aria-label="Uitzoomen">−</button>
+</div>
+<div class="legenda"><span class="l-hoog">hoog</span><span class="l-midden">midden</span><span>laag</span><span class="l-ok">beantwoord</span><span class="l-los">niet aangesloten</span></div>
+<div class="kaart" id="paneel" hidden>
+  <div class="greep" id="greep"></div>
+  <div class="kopregel"><div><div class="pad" id="paneel-pad"></div><h2 id="paneel-titel"></h2></div><button class="sluit" data-actie="sluit" aria-label="Sluiten">✕</button></div>
+  <div class="inhoud" id="paneel-inhoud"></div>
 </div>
 
 <script>
 (() => {
 "use strict";
-const $inhoud = document.getElementById("inhoud");
-const $kaart = document.getElementById("kaart");
+const $svg = document.getElementById("kaart");
+const $canvas = document.getElementById("canvas");
 const $status = document.getElementById("status");
+const $paneel = document.getElementById("paneel");
+const $ptitel = document.getElementById("paneel-titel");
+const $ppad = document.getElementById("paneel-pad");
+const $pinhoud = document.getElementById("paneel-inhoud");
 const RECENT_DAGEN = 14;
 
-const staat = { overzicht: null, antwoorden: new Map(), berichten: [], jarvis: null, db: null, artifact: null, zicht: { soort: "jou" }, open: new Set(), toonAlles: new Set(), dbFout: null, signaal: "", stem: { aan: false, naam: "" }, luistert: false, laatstVoorgelezen: "" };
+const staat = { overzicht: null, antwoorden: new Map(), berichten: [], jarvis: null, db: null, artifact: null,
+  open: new Set(), gekozen: null, zoom: { k: 1, x: 0, y: 0 }, dbFout: null, signaal: "", stem: { aan: false, naam: "" }, concept: new Map(), laatstVoorgelezen: "", eersteFit: false };
 try { const st = localStorage.getItem("jarvis.stem"); if (st) staat.stem = JSON.parse(st); } catch { /* geen opslag */ }
 const bewaarStem = () => { try { localStorage.setItem("jarvis.stem", JSON.stringify(staat.stem)); } catch { /* geen opslag */ } };
-try { const z = sessionStorage.getItem("jarvis.zicht"); if (z) staat.zicht = JSON.parse(z); } catch { /* geen opslag */ }
-const bewaarZicht = () => { try { sessionStorage.setItem("jarvis.zicht", JSON.stringify(staat.zicht)); } catch { /* geen opslag */ } };
+try { const z = sessionStorage.getItem("jarvis.v2"); if (z) { const j = JSON.parse(z); staat.open = new Set(j.open ?? []); staat.gekozen = j.gekozen ?? null; } } catch { /* geen opslag */ }
+const bewaarZicht = () => { try { sessionStorage.setItem("jarvis.v2", JSON.stringify({ open: [...staat.open], gekozen: staat.gekozen })); } catch { /* geen opslag */ } };
 
 /* ---------- hulpjes ---------- */
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -279,16 +263,14 @@ function relatief(iso) {
   if (m < 2) return "zojuist"; if (m < 60) return `${m} min geleden`;
   if (u < 24) return `${u} uur geleden`; if (d === 1) return "gisteren"; return `${d} dagen geleden`;
 }
+const kort = (t, n) => (t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t);
 const SOORT = { beslissing: "beslissing", conflict: "conflict", actie: "actie", risico: "risico", blokkade: "blokkade" };
+const URG = { hoog: 0, midden: 1, laag: 2 };
 
-/* Minimale, veilige Markdown: eerst escapen, dan alleen wat de bron gebruikt. */
 function md(tekst) {
   const regels = String(tekst).replace(/\r\n/g, "\n").replace(/<!--[\s\S]*?-->/g, "").split("\n");
   const uit = []; let para = []; let lijst = null;
-  const inline = (t) => esc(t)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/(^|[\s(])_([^_]+)_(?=[\s.,;:)]|$)/g, "$1<em>$2</em>");
+  const inline = (t) => esc(t).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[\s(])_([^_]+)_(?=[\s.,;:)]|$)/g, "$1<em>$2</em>");
   const sluitPara = () => { if (para.length) { uit.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
   const sluitLijst = () => { if (lijst) { uit.push(`<ul>${lijst.map((l) => `<li>${inline(l)}</li>`).join("")}</ul>`); lijst = null; } };
   for (const r of regels) {
@@ -303,249 +285,311 @@ function md(tekst) {
   return uit.join("");
 }
 const inlineMd = (t) => md(t).replace(/^<p>|<\/p>$/g, "").replace(/<\/p><p>/g, " ");
+const isOpen = (item) => !staat.antwoorden.has(item.id);
 
-/* ---------- kaart ---------- */
+/* ---------- de boom ----------
+   Eén boom uit het overzicht: de kern in het midden, projecten eromheen,
+   onder een project de taken (het werk) met daaronder de punten die eruit
+   voortkomen, en los een tak risico's. Punten die bij geen taak horen
+   (een conflict, de aansluiting) hangen direct onder het project. */
+function bouwBoom() {
+  const o = staat.overzicht;
+  const kern = o.projecten.find((p) => p.id === o.centraal) ?? null;
+  const root = { id: "root", soort: "root", label: kern ? kern.naam : "Jarvis", project: kern, kinderen: [] };
+  const projectTakken = (p) => {
+    const kinderen = [];
+    const taakIds = new Set(p.taken.map((t) => t.id));
+    for (const t of p.taken.filter((t) => t.status !== "afgerond")) {
+      const items = p.aandacht.filter((a) => a.bron.startsWith(`tasks/${t.id}/`));
+      kinderen.push({ id: `t:${t.id}`, soort: "taak", label: t.titel, taak: t, project: p, kinderen: items.map((a) => bladVan(a, p)) });
+    }
+    const risicos = p.aandacht.filter((a) => a.soort === "risico");
+    if (risicos.length) kinderen.push({ id: `c:${p.id}:risico`, soort: "cluster", label: "Risico's", project: p, kinderen: risicos.map((a) => bladVan(a, p)) });
+    for (const a of p.aandacht) {
+      if (a.soort === "risico") continue;
+      const uitTaak = [...taakIds].some((id) => a.bron.startsWith(`tasks/${id}/`));
+      if (!uitTaak) kinderen.push(bladVan(a, p));
+    }
+    return kinderen;
+  };
+  const bladVan = (a, p) => ({ id: `i:${a.id}`, soort: "item", label: a.titel, item: a, project: p, kinderen: [] });
+  for (const p of o.projecten.filter((p) => p.id !== o.centraal)) {
+    root.kinderen.push({ id: `p:${p.id}`, soort: "project", label: p.naam, project: p, kinderen: projectTakken(p) });
+  }
+  if (kern) root.kinderen.push(...projectTakken(kern));
+  const ouder = (n, pa) => { n.ouder = pa; for (const k of n.kinderen) ouder(k, n); };
+  ouder(root, null);
+  return root;
+}
+function vindKnoop(root, id) { if (root.id === id) return root; for (const k of root.kinderen) { const r = vindKnoop(k, id); if (r) return r; } return null; }
+function openItems(n) { if (n.soort === "item") return isOpen(n.item) ? 1 : 0; return n.kinderen.reduce((s, k) => s + openItems(k), 0); }
+function hoogsteUrg(n) { if (n.soort === "item") return isOpen(n.item) ? URG[n.item.urgentie] ?? 2 : 9; return Math.min(9, ...n.kinderen.map(hoogsteUrg)); }
+function draadVan(id) { return staat.berichten.filter((b) => (b.context?.node ?? "root") === id).sort((a, b) => String(a.op).localeCompare(String(b.op))); }
+
+/* ---------- radiale lay-out ----------
+   Elk kind van de kern krijgt een sector naar rato van wat er zichtbaar
+   onder hangt; dieper wordt dezelfde sector verder verdeeld. Straal per
+   diepte, met wat extra ruimte voor projecten. */
+const STRAAL = [0, 175, 300, 405, 490];
+function gewicht(n) {
+  if (n.soort === "item") return 1;
+  const uitgevouwen = staat.open.has(n.id) && n.kinderen.length > 0;
+  const eigen = n.soort === "project" ? 2.2 : n.soort === "taak" ? 1.4 : 1;
+  return uitgevouwen ? Math.max(eigen, n.kinderen.reduce((s, k) => s + gewicht(k), 0)) : eigen;
+}
+function legUit(root) {
+  root.x = 0; root.y = 0; root.hoek = 0; root.diepte = 0;
+  const plaats = (n, van, tot, diepte) => {
+    const zichtbaar = staat.open.has(n.id) || n.soort === "root" ? n.kinderen : [];
+    const totaal = zichtbaar.reduce((s, k) => s + gewicht(k), 0) || 1;
+    let a = van;
+    for (const k of zichtbaar) {
+      const deel = ((tot - van) * gewicht(k)) / totaal;
+      const mid = a + deel / 2;
+      k.hoek = mid; k.diepte = diepte;
+      const r = STRAAL[Math.min(diepte, STRAAL.length - 1)];
+      k.x = Math.cos(mid) * r; k.y = Math.sin(mid) * r * 0.82;
+      plaats(k, a, a + deel, diepte + 1);
+      a += deel;
+    }
+  };
+  // Projecten links en rechts, de takken van de kern ertussen: begin bij 180°.
+  plaats(root, Math.PI, 3 * Math.PI, 1);
+}
+
+/* ---------- tekenen ---------- */
 function tekenKaart() {
   const o = staat.overzicht; if (!o) return;
-  const W = 360, H = 200, cx = W / 2, cy = H / 2 - 4;
-  const kern = o.projecten.find((p) => p.id === o.centraal) ?? null;
-  const projecten = o.projecten.filter((p) => p.id !== o.centraal);
-  const n = Math.max(1, projecten.length);
-  const R = n <= 2 ? 120 : 104;
-  const start = n <= 2 ? 180 : -90;
-  const maxRecent = Math.max(1, ...projecten.map((p) => p.recent.length));
-  const zicht = staat.zicht;
-  let s = `<circle class="ring" cx="${cx}" cy="${cy}" r="62"/><circle class="ring tik" cx="${cx}" cy="${cy}" r="88"/><circle class="ring" cx="${cx}" cy="${cy}" r="150"/>`;
-  const knopen = projecten.map((p, i) => {
-    const hoek = ((start + (360 / n) * i) * Math.PI) / 180;
-    const x = cx + R * Math.cos(hoek), y = cy + (R * 0.58) * Math.sin(hoek);
-    const activiteit = p.recent.length / maxRecent;
-    const r = 22 + Math.round(activiteit * 12);
-    return { p, x, y, r, activiteit };
-  });
-  for (const k of knopen) {
-    const dikte = 0.8 + k.activiteit * 2.2;
-    s += `<line x1="${cx}" y1="${cy}" x2="${k.x.toFixed(1)}" y2="${k.y.toFixed(1)}" stroke-width="${dikte.toFixed(1)}" class="${k.p.aangesloten ? "" : "los"}"/>`;
-  }
-  const centrumActief = zicht.soort === "jarvis";
-  const openTotaal = o.voor_jou.filter((a) => !staat.antwoorden.has(a.id)).length;
-  const openKern = kern ? kern.aandacht.filter((a) => !staat.antwoorden.has(a.id)).length : 0;
-  s += `<g class="centrum knoop ${centrumActief ? "actief" : ""}" data-doel="jou" tabindex="0" role="button" aria-label="${esc(kern?.naam ?? "Jarvis")}, ${openKern} voor jou, ${openTotaal} in totaal">
-    <circle class="draai" cx="${cx}" cy="${cy}" r="44"/>
-    <circle class="draai terug" cx="${cx}" cy="${cy}" r="50" style="stroke-dasharray:14 30;opacity:.35"/>
-    <circle class="kern2" cx="${cx}" cy="${cy}" r="38"/>
-    <circle class="kern" cx="${cx}" cy="${cy}" r="32"/>
-    <text x="${cx}" y="${cy - 2}" text-anchor="middle">${esc(kern?.naam ?? "Jarvis")}</text>
-    <text class="sub" x="${cx}" y="${cy + 12}" text-anchor="middle">${kern ? `${openKern} · alles ${openTotaal}` : `${openTotaal} voor jou`}</text>
-    ${openKern ? `<g class="badge"><circle cx="${(cx + 26).toFixed(1)}" cy="${(cy - 26).toFixed(1)}" r="9.5"/><text x="${(cx + 26).toFixed(1)}" y="${(cy - 22.5).toFixed(1)}" text-anchor="middle">${openKern}</text></g>` : ""}
+  const root = bouwBoom(); staat.boom = root;
+  legUit(root);
+  const W = $canvas.clientWidth, H = $canvas.clientHeight;
+  $svg.setAttribute("viewBox", `${-W / 2} ${-H / 2} ${W} ${H}`);
+  let takken = "", knopen = "";
+  const teken = (n) => {
+    const zichtbaar = staat.open.has(n.id) || n.soort === "root" ? n.kinderen : [];
+    for (const k of zichtbaar) {
+      const urg = hoogsteUrg(k);
+      const los = k.soort === "project" && !k.project.aangesloten;
+      const mx = (n.x + k.x) / 2, my = (n.y + k.y) / 2;
+      takken += `<path class="tak ${los ? "los" : ""} ${urg === 0 ? "hoog" : ""}" d="M${n.x.toFixed(1)},${n.y.toFixed(1)} Q${(mx + (k.x - n.x) * 0.15).toFixed(1)},${(my - (k.y - n.y) * 0.15).toFixed(1)} ${k.x.toFixed(1)},${k.y.toFixed(1)}"/>`;
+      knopen += knoopSvg(k);
+      teken(k);
+    }
+  };
+  teken(root);
+  knopen = kernSvg(root) + knopen;
+  $svg.innerHTML = `<g id="wereld" transform="translate(${staat.zoom.x} ${staat.zoom.y}) scale(${staat.zoom.k})"><circle r="${STRAAL[1] - 40}" fill="none" stroke="var(--lijn)"/><circle r="${STRAAL[1] + 55}" fill="none" stroke="var(--lijn)" stroke-dasharray="2 10"/>${takken}${knopen}</g>`;
+  if (!staat.eersteFit) { staat.eersteFit = true; centreer(); if (staat.gekozen) focusOp(vindKnoop(root, staat.gekozen)); }
+}
+function kernSvg(root) {
+  const open = root.project ? openItems({ kinderen: root.kinderen.filter((k) => k.soort !== "project") }) : 0;
+  const totaal = staat.overzicht.voor_jou.filter(isOpen).length;
+  const actief = staat.gekozen === "root";
+  const draad = draadVan("root").length;
+  return `<g class="knoop kern ${actief ? "actief" : ""}" data-id="root" tabindex="0" role="button" aria-label="${esc(root.label)}, ${open} voor jou, ${totaal} in totaal">
+    <circle class="draai" r="46"/><circle class="draai terug" r="53" style="stroke-dasharray:14 30;opacity:.35"/>
+    <circle class="buiten" r="40"/><circle class="schijf" r="34"/>
+    <text y="-2" text-anchor="middle" style="font-size:15px">${esc(root.label)}</text>
+    <text class="sub" y="13" text-anchor="middle" style="font-size:10px">${open} · alles ${totaal}</text>
+    ${draad ? `<circle class="praat" cx="-30" cy="-26" r="4"/>` : ""}
+    ${open ? `<g class="badge"><circle cx="28" cy="-26" r="10"/><text x="28" y="-22.5" text-anchor="middle">${open}</text></g>` : ""}
   </g>`;
-  for (const k of knopen) {
-    const actief = zicht.soort === "project" && zicht.id === k.p.id;
-    const aantal = k.p.aandacht.filter((a) => !staat.antwoorden.has(a.id)).length;
-    const labelY = k.y + k.r + 16;
-    const naam = k.p.naam.length > 11 ? k.p.naam.slice(0, 10) + "…" : k.p.naam;
-    s += `<g class="knoop ${actief ? "actief" : ""} ${k.p.aangesloten ? "" : "los"}" data-doel="project" data-id="${esc(k.p.id)}" tabindex="0" role="button" aria-label="${esc(k.p.naam)}, ${aantal} voor jou">
-      <circle class="buiten" cx="${k.x.toFixed(1)}" cy="${k.y.toFixed(1)}" r="${k.r + 5}"/>
-      <circle class="schijf" cx="${k.x.toFixed(1)}" cy="${k.y.toFixed(1)}" r="${k.r}"/>
-      <text x="${k.x.toFixed(1)}" y="${k.y + 4.5}" text-anchor="middle" style="font-size:${k.r > 30 ? 12 : 11}px">${esc(naam)}</text>
-      <text class="sub" x="${k.x.toFixed(1)}" y="${labelY}" text-anchor="middle">${k.p.recent.length} commits</text>
-      ${k.p.aangesloten ? "" : `<text class="sub" x="${k.x.toFixed(1)}" y="${labelY + 12}" text-anchor="middle">niet aangesloten</text>`}
-      ${aantal ? `<g class="badge"><circle cx="${(k.x + k.r * 0.72).toFixed(1)}" cy="${(k.y - k.r * 0.72).toFixed(1)}" r="9.5"/><text x="${(k.x + k.r * 0.72).toFixed(1)}" y="${(k.y - k.r * 0.72 + 3.5).toFixed(1)}" text-anchor="middle">${aantal}</text></g>` : ""}
+}
+function knoopSvg(n) {
+  const actief = staat.gekozen === n.id;
+  const draad = draadVan(n.id).length;
+  const uitgevouwen = staat.open.has(n.id);
+  const x = n.x.toFixed(1), y = n.y.toFixed(1);
+  if (n.soort === "project") {
+    const p = n.project;
+    const open = openItems(n);
+    const r = 26 + Math.min(10, Math.round(p.recent.length / 25));
+    return `<g class="knoop ${actief ? "actief" : ""} ${p.aangesloten ? "" : "los"}" data-id="${esc(n.id)}" transform="translate(${x} ${y})" tabindex="0" role="button" aria-label="${esc(p.naam)}, ${open} voor jou">
+      <circle class="buiten" r="${r + 5}"/><circle class="schijf" r="${r}"/>
+      <text y="4" text-anchor="middle" style="font-size:12px">${esc(kort(p.naam, 12))}</text>
+      <text class="sub" y="${r + 14}" text-anchor="middle" style="font-size:10px">${p.recent.length} commits${p.aangesloten ? "" : " · los"}</text>
+      ${!uitgevouwen && n.kinderen.length ? `<text class="plus" x="${r - 4}" y="${r + 2}">+${n.kinderen.length}</text>` : ""}
+      ${draad ? `<circle class="praat" cx="${-r * 0.72}" cy="${-r * 0.72}" r="4"/>` : ""}
+      ${open ? `<g class="badge"><circle cx="${r * 0.72}" cy="${-r * 0.72}" r="9.5"/><text x="${r * 0.72}" y="${-r * 0.72 + 3.5}" text-anchor="middle">${open}</text></g>` : ""}
     </g>`;
   }
-  $kaart.innerHTML = s;
-}
-$kaart.addEventListener("click", (e) => { const g = e.target.closest(".knoop"); if (g) navigeer(g); });
-$kaart.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { const g = e.target.closest(".knoop"); if (g) { e.preventDefault(); navigeer(g); } } });
-function navigeer(g) {
-  staat.zicht = g.dataset.doel === "jou" ? { soort: "jarvis", tab: "jou" } : { soort: "project", id: g.dataset.id, tab: "jou" };
-  bewaarZicht(); render();
-  if (window.innerWidth < 900) $inhoud.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-/* ---------- items ---------- */
-const VRIJ_VERPLICHT = new Set(["beslist"]);
-
-function antwoordStatusHtml(antwoord) {
-  const verwerkt = antwoord.status === "verwerkt";
-  const keuzeLabel = antwoord.keuze_label ?? antwoord.keuze;
-  return `<div class="antwoordstatus">
-    <div class="rij"><span class="chip ${verwerkt ? "ok" : "wacht"}">${verwerkt ? "verwerkt" : "wacht op Jarvis"}</span><strong>${esc(keuzeLabel)}</strong>${antwoord.notitie ? `<span>— ${esc(antwoord.notitie)}</span>` : ""}<span class="mono">${esc(datumKort(antwoord.op))} ${esc(tijd(antwoord.op))}</span></div>
-    ${verwerkt && antwoord.verwerking ? `<div class="verw">${inlineMd(antwoord.verwerking)}${antwoord.verwerkt_op ? ` <span class="mono">${esc(datumKort(antwoord.verwerkt_op))} ${esc(tijd(antwoord.verwerkt_op))}</span>` : ""}</div>` : ""}
-    ${!verwerkt ? `<div class="rij"><span style="color:var(--gedempt);font-size:13px">Opgeslagen. Jarvis pakt dit op zodra een sessie draait; het resultaat verschijnt hier.</span></div>` : ""}
-    <div class="rij"><button class="knop stil" data-actie="ongedaan" data-id="${esc(antwoord.item_id)}">${verwerkt ? "Verwijderen uit overzicht" : "Ongedaan maken"}</button></div>
-  </div>`;
-}
-
-function itemHtml(item, metProject) {
-  const antwoord = staat.antwoorden.get(item.id);
-  const open = staat.open.has(item.id);
-  const project = staat.overzicht.projecten.find((p) => p.id === item.project);
-  const opties = item.opties ?? [];
-  const adviesKeuze = item.advies ? (opties.find((o) => new RegExp(`^${o.keuze.replace(/-/g, "[ -]")}\\b`, "i").test(item.advies.normalize("NFD").replace(/[̀-ͯ]/g, ""))) ?? null) : null;
-  let uit = "";
-  if (open) {
-    uit += `<div class="itemuit">
-      ${item.toelichting ? `<div class="blok"><span class="eyebrow">Wat er speelt</span><p>${inlineMd(item.toelichting)}</p></div>` : ""}
-      ${item.waarom ? `<div class="blok"><span class="eyebrow">Waarom dit bij jou ligt</span><p>${inlineMd(item.waarom)}</p></div>` : ""}
-      ${item.stappen?.length ? `<div class="blok"><span class="eyebrow">Zo doe je het</span><ol class="stappen">${item.stappen.map((st) => `<li><span>${inlineMd(st)}</span></li>`).join("")}</ol>${item.controle ? `<div class="controle"><strong>Zo zie je dat het gelukt is:</strong> ${inlineMd(item.controle)}</div>` : ""}</div>` : ""}`;
-    if (antwoord) {
-      uit += antwoordStatusHtml(antwoord);
-    } else if (!staat.db) {
-      uit += `<div class="antwoordstatus"><span style="color:var(--gedempt)">Antwoorden kan alleen met verbinding met de Jarvis-gegevens.</span></div>`;
-    } else {
-      uit += `<div class="blok"><span class="eyebrow">Je keuzes, en wat er dan gebeurt</span>
-        <div class="opties">${opties.map((o) => `<button class="optie ${adviesKeuze && adviesKeuze.keuze === o.keuze ? "advies" : ""}" data-actie="antwoord" data-id="${esc(item.id)}" data-keuze="${esc(o.keuze)}" data-label="${esc(o.label)}" ${VRIJ_VERPLICHT.has(o.keuze) ? 'data-vereist="1"' : ""}>
-            <span class="lbl">${esc(o.label)}${adviesKeuze && adviesKeuze.keuze === o.keuze ? `<span class="adv">advies</span>` : ""}</span>
-            <span class="kies">kies</span>
-            <span class="gevolg">${inlineMd(o.gevolg)}</span>
-          </button>`).join("")}</div>
-        ${item.advies ? `<div class="adviestekst"><span class="eyebrow">Advies van Jarvis</span>${inlineMd(item.advies)}</div>` : ""}
-        <div class="antwoordvak"><textarea placeholder="${opties.some((o) => VRIJ_VERPLICHT.has(o.keuze)) ? "Je beslissing in je eigen woorden (verplicht bij 'Beslissing vastleggen')" : "Toelichting voor Jarvis (optioneel)"}" data-notitie="${esc(item.id)}" aria-label="Toelichting"></textarea></div>
-      </div>`;
-    }
-    uit += `<div class="bron">bron: ${esc(item.bron)}</div></div>`;
+  if (n.soort === "taak") {
+    const t = n.taak; const st = t.stappen ?? []; const gedaan = st.filter((s) => s.gedaan).length; const frac = st.length ? gedaan / st.length : 0;
+    const open = openItems(n); const r = 16; const C = 2 * Math.PI * (r + 4);
+    const urg = hoogsteUrg(n);
+    return `<g class="knoop ${actief ? "actief" : ""} ${urg === 0 ? "u-hoog" : urg === 1 ? "u-midden" : ""}" data-id="${esc(n.id)}" transform="translate(${x} ${y})" tabindex="0" role="button" aria-label="Taak ${esc(t.titel)}">
+      <circle class="voortgang-rest" r="${r + 4}"/>${st.length ? `<circle class="voortgang" r="${r + 4}" stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90)"/>` : ""}
+      <circle class="schijf" r="${r}"/>
+      <text class="sub" y="4" text-anchor="middle" style="font-size:9px">${st.length ? `${gedaan}/${st.length}` : "taak"}</text>
+      <text class="blad" y="${r + 16}" text-anchor="middle" style="font-size:10.5px">${esc(kort(t.titel, 26))}</text>
+      ${!uitgevouwen && n.kinderen.length ? `<text class="plus" x="${r}" y="${r + 4}">+${n.kinderen.length}</text>` : ""}
+      ${draad ? `<circle class="praat" cx="${-r - 2}" cy="${-r - 2}" r="3.5"/>` : ""}
+      ${open ? `<g class="badge"><circle cx="${r}" cy="${-r}" r="8"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9.5px">${open}</text></g>` : ""}
+    </g>`;
   }
-  return `<article class="item u-${esc(item.urgentie)} ${antwoord ? "beantwoord" : ""} ${open ? "open" : ""}" id="item-${esc(item.id)}">
-    <button class="kopknop" data-actie="toggle" data-id="${esc(item.id)}" aria-expanded="${open}">
-      <div class="itemmeta"><span class="chip soort-${esc(item.soort)}">${esc(SOORT[item.soort] ?? item.soort)}</span>${metProject && project ? `<span class="chip project">${esc(project.naam)}</span>` : ""}${antwoord ? `<span class="chip ${antwoord.status === "verwerkt" ? "ok" : "wacht"}">${antwoord.status === "verwerkt" ? "verwerkt" : "wacht op Jarvis"}</span>` : ""}</div>
-      <div class="itemtitel">${esc(item.titel)}</div>
-    </button>${uit}</article>`;
+  if (n.soort === "cluster") {
+    const open = openItems(n); const r = 13;
+    const urg = hoogsteUrg(n);
+    return `<g class="knoop ${actief ? "actief" : ""} ${urg === 0 ? "u-hoog" : urg === 1 ? "u-midden" : ""}" data-id="${esc(n.id)}" transform="translate(${x} ${y})" tabindex="0" role="button" aria-label="${esc(n.label)}">
+      <circle class="schijf" r="${r}"/><text class="sub" y="3.5" text-anchor="middle" style="font-size:9px">${n.kinderen.length}</text>
+      <text class="blad" y="${r + 14}" text-anchor="middle" style="font-size:10.5px">${esc(n.label)}</text>
+      ${!uitgevouwen ? `<text class="plus" x="${r}" y="${r + 2}">+</text>` : ""}
+      ${draad ? `<circle class="praat" cx="${-r}" cy="${-r}" r="3.5"/>` : ""}
+      ${open ? `<g class="badge ${urg > 1 ? "rustig" : ""}"><circle cx="${r}" cy="${-r}" r="7.5"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9px">${open}</text></g>` : ""}
+    </g>`;
+  }
+  // item
+  const a = n.item; const antwoord = staat.antwoorden.get(a.id); const r = 8;
+  const links = n.x < -20, rechts = n.x > 20;
+  const tx = links ? -r - 6 : rechts ? r + 6 : 0; const anchor = links ? "end" : rechts ? "start" : "middle"; const ty = links || rechts ? 4 : r + 13;
+  return `<g class="knoop ${actief ? "actief" : ""} ${antwoord ? "beantwoord" : `u-${esc(a.urgentie)}`}" data-id="${esc(n.id)}" transform="translate(${x} ${y})" tabindex="0" role="button" aria-label="${esc(a.titel)}">
+    <circle class="schijf" r="${r}"/>
+    ${a.soort === "beslissing" || a.soort === "conflict" ? `<text class="sub" y="3" text-anchor="middle" style="font-size:8px;fill:var(--inkt)">?</text>` : a.soort === "risico" ? `<text class="sub" y="3" text-anchor="middle" style="font-size:8px;fill:var(--inkt)">!</text>` : `<text class="sub" y="3" text-anchor="middle" style="font-size:8px;fill:var(--inkt)">→</text>`}
+    <text class="blad" x="${tx}" y="${ty}" text-anchor="${anchor}" style="font-size:10px">${esc(kort(a.titel, 34))}</text>
+    ${draad ? `<circle class="praat" cx="${-r}" cy="${-r}" r="3"/>` : ""}
+  </g>`;
 }
 
-function voorJouHtml(items, metProject) {
-  const openItems = items.filter((i) => !staat.antwoorden.has(i.id));
-  const klaar = items.filter((i) => staat.antwoorden.has(i.id));
-  let s = openItems.length
-    ? `<div class="lijst">${openItems.map((i) => itemHtml(i, metProject)).join("")}</div>`
-    : `<div class="paneel leeg"><strong>Niets open</strong>Er ligt op dit moment geen beslissing of actie bij jou.</div>`;
-  if (klaar.length) s += `<div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Beantwoord</h2><span class="tel">${klaar.filter((i) => staat.antwoorden.get(i.id).status !== "verwerkt").length} wachten · ${klaar.filter((i) => staat.antwoorden.get(i.id).status === "verwerkt").length} verwerkt</span></div><div class="lijst">${klaar.map((i) => itemHtml(i, metProject)).join("")}</div></div>`;
+/* ---------- pannen en zoomen ---------- */
+function pasZoomToe() { const w = document.getElementById("wereld"); if (w) w.setAttribute("transform", `translate(${staat.zoom.x} ${staat.zoom.y}) scale(${staat.zoom.k})`); }
+function centreer() {
+  const W = $canvas.clientWidth, H = $canvas.clientHeight;
+  const klein = W < 900;
+  // Op de telefoon staat de kaart boven de schuifkaart; iets naar boven en iets uitgezoomd.
+  const k = klein ? Math.min(1, (W - 24) / (2 * STRAAL[1] + 120)) : Math.min(1.1, (Math.min(W - 560, H) - 40) / (2 * STRAAL[1] + 140));
+  staat.zoom = { k, x: klein ? 0 : -(Math.min(520, W * 0.46) / 2), y: klein && !$paneel.hidden ? -H * 0.22 : 0 };
+  pasZoomToe();
+}
+let wijzers = new Map(), sleep = null, knijp = null;
+$canvas.addEventListener("pointerdown", (e) => {
+  if (e.target.closest(".knoop")) return;
+  wijzers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (wijzers.size === 1) { sleep = { x: e.clientX, y: e.clientY, zx: staat.zoom.x, zy: staat.zoom.y, bewogen: false }; $canvas.setPointerCapture(e.pointerId); }
+  if (wijzers.size === 2) { const [a, b] = [...wijzers.values()]; knijp = { d: Math.hypot(a.x - b.x, a.y - b.y), k: staat.zoom.k }; sleep = null; }
+});
+$canvas.addEventListener("pointermove", (e) => {
+  if (!wijzers.has(e.pointerId)) return;
+  wijzers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (knijp && wijzers.size === 2) { const [a, b] = [...wijzers.values()]; const d = Math.hypot(a.x - b.x, a.y - b.y); staat.zoom.k = Math.max(0.35, Math.min(2.5, knijp.k * (d / knijp.d))); pasZoomToe(); return; }
+  if (sleep) { const dx = e.clientX - sleep.x, dy = e.clientY - sleep.y; if (Math.abs(dx) + Math.abs(dy) > 3) { sleep.bewogen = true; $canvas.classList.add("sleept"); } staat.zoom.x = sleep.zx + dx; staat.zoom.y = sleep.zy + dy; pasZoomToe(); }
+});
+const eindWijzer = (e) => { wijzers.delete(e.pointerId); if (wijzers.size < 2) knijp = null; if (wijzers.size === 0) { const was = sleep; sleep = null; $canvas.classList.remove("sleept"); if (was && !was.bewogen && !e.target.closest(".knoop")) { /* tik op leeg: niets */ } } };
+$canvas.addEventListener("pointerup", eindWijzer); $canvas.addEventListener("pointercancel", eindWijzer);
+$canvas.addEventListener("wheel", (e) => { e.preventDefault(); const f = e.deltaY < 0 ? 1.12 : 1 / 1.12; zoomRond(f, e.clientX - $canvas.clientWidth / 2, e.clientY - $canvas.clientHeight / 2); }, { passive: false });
+function zoomRond(f, px = 0, py = 0) { const k2 = Math.max(0.35, Math.min(2.5, staat.zoom.k * f)); const s = k2 / staat.zoom.k; staat.zoom.x = px - (px - staat.zoom.x) * s; staat.zoom.y = py - (py - staat.zoom.y) * s; staat.zoom.k = k2; pasZoomToe(); }
+$svg.addEventListener("click", (e) => { const g = e.target.closest(".knoop"); if (g) kies(g.dataset.id); });
+$svg.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { const g = e.target.closest(".knoop"); if (g) { e.preventDefault(); kies(g.dataset.id); } } });
+window.addEventListener("resize", () => { if (staat.overzicht) { tekenKaart(); } });
+
+/* Tik op een knoop: uitvouwen (als hij takken heeft) en de schuifkaart openen.
+   Nog een tik op een uitgevouwen knoop vouwt hem dicht. */
+function kies(id) {
+  const n = vindKnoop(staat.boom, id); if (!n) return;
+  if (n.kinderen.length && n.soort !== "root") {
+    if (staat.open.has(id) && staat.gekozen === id) staat.open.delete(id); else staat.open.add(id);
+  }
+  staat.gekozen = id; bewaarZicht(); render();
+  focusOp(n);
+}
+/* Op de telefoon schuift de kaart over het onderste deel; de gekozen knoop
+   moet dan in het zichtbare bovendeel komen te staan. */
+function focusOp(n) {
+  const W = $canvas.clientWidth, H = $canvas.clientHeight;
+  if (W >= 900 || !n) return;
+  const k = staat.zoom.k;
+  staat.zoom.x = -n.x * k; staat.zoom.y = -H * 0.30 - n.y * k;
+  pasZoomToe();
+}
+
+/* ---------- schuifkaart ---------- */
+function padVan(n) { const delen = []; let p = n.ouder; while (p) { delen.unshift(p); p = p.ouder; } return delen; }
+function toonPaneel() {
+  const n = staat.gekozen ? vindKnoop(staat.boom, staat.gekozen) : null;
+  if (!n) { $paneel.hidden = true; return; }
+  $paneel.hidden = false;
+  $ppad.innerHTML = padVan(n).map((p) => `<button data-actie="kies" data-id="${esc(p.id)}">${esc(kort(p.label, 22))}</button>`).join(" › ") || "&nbsp;";
+  $ptitel.textContent = n.label;
+  let s = "";
+  if (staat.dbFout) s += `<div class="melding fout">${esc(staat.dbFout)}</div>`;
+  if (n.soort === "root") s += rootHtml(n);
+  else if (n.soort === "project") s += projectHtml(n);
+  else if (n.soort === "taak") s += taakHtml(n);
+  else if (n.soort === "cluster") s += clusterHtml(n);
+  else s += itemHtml(n);
+  s += draadHtml(n);
+  const scroll = $pinhoud.scrollTop;
+  $pinhoud.innerHTML = s;
+  const vak = $pinhoud.querySelector("textarea[data-draad]"); if (vak && staat.concept.get(n.id)) vak.value = staat.concept.get(n.id);
+  const nv = $pinhoud.querySelector("textarea[data-notitie]"); if (nv && staat.concept.get("notitie:" + nv.dataset.notitie)) nv.value = staat.concept.get("notitie:" + nv.dataset.notitie);
+  $pinhoud.scrollTop = scroll;
+}
+function lijstRegel(a) {
+  const antwoord = staat.antwoorden.get(a.id);
+  return `<button class="regel ${antwoord ? "beantwoord" : `u-${esc(a.urgentie)}`}" data-actie="kies" data-id="i:${esc(a.id)}"><span class="chip soort-${esc(a.soort)}">${esc(SOORT[a.soort] ?? a.soort)}</span><span class="t">${esc(a.titel)}</span>${antwoord ? `<span class="chip ${antwoord.status === "verwerkt" ? "ok" : "wacht"}">${antwoord.status === "verwerkt" ? "verwerkt" : "wacht"}</span>` : ""}</button>`;
+}
+function rootHtml(n) {
+  const o = staat.overzicht; const j = staat.jarvis; const live = jarvisLive();
+  const eigen = n.kinderen.filter((k) => k.soort !== "project");
+  const alles = o.voor_jou.filter(isOpen);
+  let s = `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${alles.length}<small>${alles.filter((a) => a.urgentie === "hoog").length} hoog</small></div></div><div class="tegel"><span class="eyebrow">Projecten</span><div class="n">${o.projecten.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${o.projecten.reduce((t, p) => t + p.recent.length, 0)}<small>/ ${RECENT_DAGEN} d</small></div></div></div>`;
+  s += `<div class="agent ${live.bezig ? "bezig" : live.live ? "actief" : ""}"><span class="naam"><span class="dot"></span>${esc(j?.sessie?.naam ?? "Jarvis")}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(j?.sessie?.rol ?? "orchestrator")}</span><span class="wat">${esc(live.tekst)}</span><span class="meta">${j?.sessie?.model ? esc(j.sessie.model) : ""}${j?.sessie?.laatste ? " · laatste update " + esc(tijd(j.sessie.laatste)) : ""}. Eén model, vijf rollen; geen andere AI.</span></div>`;
+  for (const a of j?.agenten ?? []) s += `<div class="agent ${a.status === "bezig" ? "bezig" : "actief"}"><span class="naam"><span class="dot"></span>${esc(a.naam)}</span><span class="mono" style="font-size:11px">${esc(a.rol ?? "")}</span><span class="wat">${esc(a.wat ?? "")}</span></div>`;
+  if (eigen.length) s += `<div class="blok"><span class="eyebrow">Wat Jarvis doet</span>${eigen.map((k) => `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" && k.taak.stappen?.length ? `<small>${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : ""}</span></button>`).join("")}</div>`;
+  const perProject = new Map(); for (const a of alles) { const l = perProject.get(a.project) ?? []; l.push(a); perProject.set(a.project, l); }
+  s += `<div class="blok"><span class="eyebrow">Alles wat bij jou ligt</span>${[...perProject.entries()].map(([pid, lijst]) => { const p = o.projecten.find((x) => x.id === pid); return `<div class="itemmeta"><span class="chip project">${esc(p?.naam ?? pid)}</span><span class="mono" style="font-size:11px;color:var(--zacht)">${lijst.length}</span></div>${lijst.sort((a, b) => URG[a.urgentie] - URG[b.urgentie]).map(lijstRegel).join("")}`; }).join("") || `<div class="leeg"><strong>Niets open</strong></div>`}</div>`;
   return s;
 }
-
-/* ---------- overzicht (Jarvis centraal) ---------- */
-function overzichtHtml() {
-  const o = staat.overzicht;
-  const open = o.voor_jou.filter((i) => !staat.antwoorden.has(i.id));
-  const hoog = open.filter((i) => i.urgentie === "hoog").length;
-  const totaalCommits = o.projecten.reduce((n, p) => n + p.recent.length, 0);
-  return `
-    <div class="sectie">
-      <div class="sectiekop"><h2>Voor jou</h2><span class="tel">${open.length} open${hoog ? ` · ${hoog} hoog` : ""}</span></div>
-      ${voorJouHtml(o.voor_jou, true)}
-    </div>
-    <div class="sectie">
-      <div class="sectiekop"><h2>Beweging</h2><span class="tel">${totaalCommits} commits · ${RECENT_DAGEN} dagen</span></div>
-      <div class="lijst">${o.projecten.map((p) => {
-        const laatste = p.recent[0];
-        const taken = p.taken.filter((t) => t.status !== "afgerond");
-        return `<article class="item">
-          <button class="kopknop" data-actie="project" data-id="${esc(p.id)}">
-            <div class="itemmeta"><span class="chip project">${esc(p.naam)}</span>${p.aangesloten ? "" : `<span class="chip">niet aangesloten</span>`}${taken.length ? `<span class="chip">${taken.length} ${taken.length === 1 ? "taak" : "taken"}</span>` : ""}</div>
-            <div class="itemtitel">${laatste ? esc(laatste.onderwerp) : "Geen beweging in de laatste 14 dagen"}</div>
-            ${laatste ? `<div class="bron">${esc(dagLabel(laatste.datum))} ${esc(tijd(laatste.datum))} · ${p.recent.length} commits · ${p.hoofdbranch ? esc(p.hoofdbranch.naam) + " @ " + esc(p.hoofdbranch.commit) : "geen hoofdbranch"}</div>` : ""}
-          </button></article>`;
-      }).join("")}</div>
-    </div>`;
+function projectHtml(n) {
+  const p = n.project; const open = p.aandacht.filter(isOpen);
+  let s = `<div class="itemmeta"><span class="chip project">${p.hoofdbranch ? esc(p.hoofdbranch.naam) + " @ " + esc(p.hoofdbranch.commit) : "geen hoofdbranch"}</span><span class="chip">${p.aangesloten ? "aangesloten" : "niet aangesloten"}</span></div>`;
+  s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${open.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${p.recent.length}<small>/ ${RECENT_DAGEN} d</small></div></div><div class="tegel"><span class="eyebrow">Taken</span><div class="n">${p.taken.filter((t) => t.status !== "afgerond").length}</div></div></div>`;
+  if (n.kinderen.length) s += `<div class="blok"><span class="eyebrow">Takken</span>${n.kinderen.map((k) => k.soort === "item" ? lijstRegel(k.item) : `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" && k.taak.stappen?.length ? `<small>${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : `${k.kinderen.length}`}</span></button>`).join("")}</div>`;
+  else s += `<div class="blok"><div class="leeg"><strong>Niets open</strong>${p.aangesloten ? "Geen taak en niets voor jou." : "Sluit dit project aan om hier meer te zien."}</div></div>`;
+  if (p.stand?.length) s += `<div class="blok"><span class="eyebrow">Stand</span>${p.stand.map((st, i) => `<details class="stand" ${i === 0 ? "open" : ""}><summary>${esc(st.kop)}</summary><div class="md">${md(st.tekst)}</div></details>`).join("")}</div>`;
+  if (p.recent.length) s += `<div class="blok"><span class="eyebrow">Recent</span>${p.recent.slice(0, 8).map((c) => `<div class="commit"><span class="hash">${esc(c.hash)}</span><span class="ond">${esc(c.onderwerp)} <span class="mono" style="font-size:10.5px;color:var(--zacht)">${esc(dagLabel(c.datum))}${c.rol ? " · " + esc(c.rol) : ""}</span></span></div>`).join("")}</div>`;
+  return s;
 }
+function taakHtml(n) {
+  const t = n.taak; const st = t.stappen ?? []; const gedaan = st.filter((x) => x.gedaan).length; const eersteOpen = st.findIndex((x) => !x.gedaan);
+  let s = `<div class="itemmeta"><span class="chip">${esc(t.status)}</span>${t.klasse ? `<span class="chip">klasse ${esc(t.klasse)}</span>` : ""}<span class="mono" style="font-size:11px;color:var(--zacht)">${esc(t.id)}</span></div>`;
+  if (st.length) s += `<div class="blok"><span class="eyebrow">Voortgang · ${gedaan} van ${st.length}</span><div class="balk"><i style="width:${Math.round((gedaan / st.length) * 100)}%"></i></div>${st.map((x, i) => `<div class="stap ${x.gedaan ? "gedaan" : i === eersteOpen ? "nu" : "open"}"><span class="vink">${x.gedaan ? "■" : i === eersteOpen ? "▶" : "□"}</span><span>${inlineMd(x.tekst)}</span></div>`).join("")}</div>`;
+  if (t.gastheer && t.gastheer !== n.project.id) s += `<div class="bron">dossier en commits in ${esc(t.gastheer)}</div>`;
+  s += `<div class="blok"><span class="eyebrow">Bij jou uit deze taak</span>${n.kinderen.length ? n.kinderen.map((k) => lijstRegel(k.item)).join("") : `<div class="leeg"><strong>Niets</strong>Jarvis is aan zet.</div>`}</div>`;
+  return s;
+}
+function clusterHtml(n) { return `<div class="blok"><span class="eyebrow">${esc(n.label)} · ${esc(n.project.naam)}</span>${n.kinderen.map((k) => lijstRegel(k.item)).join("")}</div>`; }
 
-/* ---------- projectpaneel ---------- */
-function projectHtml(p, tab) {
-  const open = p.aandacht.filter((a) => !staat.antwoorden.has(a.id)).length;
-  const stand = p.stand;
-  const taken = p.taken;
-  const kennis = Object.entries(p.kennis ?? {}).filter(([, n]) => n > 0);
-  const tabs = [["jou", "Voor jou", open], ["stand", "Stand", stand.length], ["recent", "Recent", p.recent.length], ["taken", "Taken", taken.length]];
-  let lichaam = "";
-  if (tab === "jou") lichaam = voorJouHtml(p.aandacht, false);
-  else if (tab === "stand") {
-    lichaam = stand.length
-      ? stand.map((s, i) => `<details class="stand" ${i === 0 ? "open" : ""}><summary>${esc(s.kop)}</summary><div class="md">${md(s.tekst)}</div></details>`).join("")
-      : `<div class="paneel leeg"><strong>Geen statusdocument</strong>${p.aangesloten ? "Dit project heeft nog geen CURRENT_STATE." : "Sluit dit project op Jarvis aan om hier de stand van zaken te zien."}</div>`;
-    if (p.feiten?.length) lichaam += `<div class="tegels" style="margin-top:12px">${p.feiten.filter((f) => f.feit !== "Hoofdbranch").map((f) => `<div class="paneel tegel"><span class="eyebrow">${esc(f.feit)}</span><div class="mono" style="font-size:13px;overflow-wrap:anywhere">${esc(f.waarde)}</div></div>`).join("")}</div>`;
-  } else if (tab === "recent") {
-    const alles = staat.toonAlles.has(p.id);
-    const lijst = alles ? p.recent : p.recent.slice(0, 30);
-    let dag = null;
-    lichaam = lijst.map((c) => {
-      const label = dagLabel(c.datum);
-      const kop = label !== dag ? `<div class="dag"><span class="eyebrow">${esc(label)}</span></div>` : "";
-      dag = label;
-      return `${kop}<div class="commit ${c.soort === "merge" ? "merge" : ""}"><span class="hash">${esc(c.hash)}</span><span class="ond">${esc(c.onderwerp)}</span>${c.rol || c.soort === "merge" ? `<span class="rol">${c.rol ? `<span class="chip">${esc(c.rol)}</span>` : ""}${c.soort === "merge" ? `<span class="chip">merge</span>` : ""}</span>` : ""}</div>`;
-    }).join("");
-    if (!lijst.length) lichaam = `<div class="paneel leeg"><strong>Geen beweging</strong>Niets in de laatste ${RECENT_DAGEN} dagen.</div>`;
-    else if (!alles && p.recent.length > 30) lichaam += `<button class="meer" data-actie="alles" data-id="${esc(p.id)}">Toon alle ${p.recent.length} commits</button>`;
-  } else if (tab === "taken") {
-    lichaam = taken.length
-      ? taken.map((t) => taakHtml(t, p.id)).join("")
-      : `<div class="paneel leeg"><strong>Geen taakdossiers</strong>${p.aangesloten ? "Er staat geen taak open." : "Taken bestaan pas als dit project op Jarvis is aangesloten."}</div>`;
+const VRIJ_VERPLICHT = new Set(["beslist"]);
+const KEUZE_LABEL = { beslist: "Beslist", later: "Later", gedaan: "Gedaan", geaccepteerd: "Geaccepteerd", aanpakken: "Aanpakken", opgelost: "Opgelost", gezien: "Gezien" };
+function itemHtml(n) {
+  const item = n.item; const antwoord = staat.antwoorden.get(item.id); const opties = item.opties ?? [];
+  const adviesKeuze = item.advies ? (opties.find((o) => new RegExp(`^${o.keuze.replace(/-/g, "[ -]")}\\b`, "i").test(item.advies.normalize("NFD").replace(/[̀-ͯ]/g, ""))) ?? null) : null;
+  let s = `<div class="itemmeta"><span class="chip soort-${esc(item.soort)}">${esc(SOORT[item.soort] ?? item.soort)}</span><span class="chip project">${esc(n.project.naam)}</span><span class="chip">${esc(item.urgentie)}</span>${antwoord ? `<span class="chip ${antwoord.status === "verwerkt" ? "ok" : "wacht"}">${antwoord.status === "verwerkt" ? "verwerkt" : "wacht op Jarvis"}</span>` : ""}</div>`;
+  if (item.toelichting) s += `<div class="blok"><span class="eyebrow">Wat er speelt</span><p>${inlineMd(item.toelichting)}</p></div>`;
+  if (item.waarom) s += `<div class="blok"><span class="eyebrow">Waarom dit bij jou ligt</span><p>${inlineMd(item.waarom)}</p></div>`;
+  if (item.stappen?.length) s += `<div class="blok"><span class="eyebrow">Zo doe je het</span><ol class="stappen">${item.stappen.map((st) => `<li><span>${inlineMd(st)}</span></li>`).join("")}</ol>${item.controle ? `<div class="controle"><strong>Zo zie je dat het gelukt is:</strong> ${inlineMd(item.controle)}</div>` : ""}</div>`;
+  if (antwoord) {
+    const verwerkt = antwoord.status === "verwerkt";
+    s += `<div class="antwoordstatus"><div class="rij"><span class="chip ${verwerkt ? "ok" : "wacht"}">${verwerkt ? "verwerkt" : "wacht op Jarvis"}</span><strong>${esc(antwoord.keuze_label ?? KEUZE_LABEL[antwoord.keuze] ?? antwoord.keuze)}</strong>${antwoord.notitie ? `<span>— ${esc(antwoord.notitie)}</span>` : ""}<span class="mono">${esc(datumKort(antwoord.op))} ${esc(tijd(antwoord.op))}</span></div>
+      ${verwerkt && antwoord.verwerking ? `<div class="verw">${inlineMd(antwoord.verwerking)}</div>` : !verwerkt ? `<div class="rij" style="color:var(--gedempt);font-size:13px">Opgeslagen. Jarvis pakt dit op zodra een sessie draait.</div>` : ""}
+      <div class="rij"><button class="knop stil" data-actie="ongedaan" data-id="${esc(item.id)}">${verwerkt ? "Verwijderen uit overzicht" : "Ongedaan maken"}</button></div></div>`;
+  } else if (staat.db) {
+    s += `<div class="blok"><span class="eyebrow">Je keuzes, en wat er dan gebeurt</span><div class="opties">${opties.map((o) => `<button class="optie ${adviesKeuze && adviesKeuze.keuze === o.keuze ? "advies" : ""}" data-actie="antwoord" data-id="${esc(item.id)}" data-keuze="${esc(o.keuze)}" data-label="${esc(o.label)}" ${VRIJ_VERPLICHT.has(o.keuze) ? 'data-vereist="1"' : ""}><span class="lbl">${esc(o.label)}${adviesKeuze && adviesKeuze.keuze === o.keuze ? `<span class="adv">advies</span>` : ""}</span><span class="kies">kies</span><span class="gevolg">${inlineMd(o.gevolg)}</span></button>`).join("")}</div>
+      ${item.advies ? `<div class="adviestekst"><span class="eyebrow">Advies van Jarvis</span>${inlineMd(item.advies)}</div>` : ""}
+      <div class="antwoordvak"><textarea placeholder="${opties.some((o) => VRIJ_VERPLICHT.has(o.keuze)) ? "Je beslissing in je eigen woorden (verplicht bij 'Beslissing vastleggen')" : "Toelichting bij je keuze (optioneel)"}" data-notitie="${esc(item.id)}" aria-label="Toelichting"></textarea></div></div>`;
   }
-  const lopend = taken.filter((t) => t.status !== "afgerond" && t.stappen?.length);
-  if (tab === "jou" && lopend.length) lichaam = `<div class="sectie" style="margin-top:0"><div class="sectiekop"><h2 style="font-size:15px">Wat Jarvis doet</h2><span class="tel">${lopend.length} ${lopend.length === 1 ? "taak" : "taken"}</span></div>${lopend.map((t) => taakHtml(t, p.id)).join("")}</div><div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Voor jou</h2><span class="tel">${open} open</span></div>${lichaam}</div>`;
-  return `
-    <button class="terug" data-actie="jou">← Alles</button>
-    <div class="projkop">
-      <h2>${esc(p.naam)}</h2>
-      <div class="sub">
-        ${p.hoofdbranch ? `<span>${esc(p.hoofdbranch.naam)} @ ${esc(p.hoofdbranch.commit)} · ${esc(datumKort(p.hoofdbranch.datum))}</span>` : `<span>geen hoofdbranch gevonden</span>`}
-        <span>${p.aangesloten ? "aangesloten op Jarvis" : "niet aangesloten op Jarvis"}</span>
-      </div>
-    </div>
-    <div class="tegels">
-      <div class="paneel tegel"><span class="eyebrow">Voor jou</span><div class="n">${open}</div></div>
-      <div class="paneel tegel"><span class="eyebrow">Beweging</span><div class="n">${p.recent.length}<small>/ ${RECENT_DAGEN} d</small></div></div>
-      <div class="paneel tegel"><span class="eyebrow">Taken</span><div class="n">${taken.filter((t) => t.status !== "afgerond").length}</div></div>
-      ${kennis.length ? `<div class="paneel tegel"><span class="eyebrow">Kennis</span><div class="n mono" style="font-size:13px;font-weight:500;line-height:1.5;font-family:var(--mono)">${kennis.map(([k, n]) => `${esc(k)} ${n}`).join(" · ")}</div></div>` : ""}
-    </div>
-    <div class="tabs" role="tablist">${tabs.map(([id, l, n]) => `<button class="tab" role="tab" aria-selected="${tab === id}" data-actie="tab" data-tab="${id}">${l}<span class="tel">${n}</span></button>`).join("")}</div>
-    <div>${lichaam}</div>`;
+  s += `<div class="bron">bron: ${esc(item.bron)}</div>`;
+  return s;
 }
-
-function taakHtml(t, projectId) {
-  const stappen = t.stappen ?? [];
-  const gedaan = stappen.filter((x) => x.gedaan).length;
-  const eersteOpen = stappen.findIndex((x) => !x.gedaan);
-  return `<div class="taak"><div class="kopregel"><div><div class="id">${esc(t.id)}</div><div class="t">${esc(t.titel)}</div></div><div class="r"><span class="chip">${esc(t.status)}</span>${t.klasse ? `<span class="chip">klasse ${esc(t.klasse)}</span>` : ""}</div></div>
-    ${stappen.length ? `<div class="voortgang"><div class="mono" style="font-size:11.5px;color:var(--gedempt)">${gedaan} van ${stappen.length} stappen</div><div class="balk"><i style="width:${Math.round((gedaan / stappen.length) * 100)}%"></i></div>${stappen.map((x, i) => `<div class="stap ${x.gedaan ? "gedaan" : i === eersteOpen ? "nu" : "open"}"><span class="vink">${x.gedaan ? "■" : i === eersteOpen ? "▶" : "□"}</span><span>${inlineMd(x.tekst)}</span></div>`).join("")}</div>` : ""}
-    ${t.gastheer && t.gastheer !== projectId ? `<div class="gast">dossier en commits in ${esc(t.gastheer)}</div>` : ""}</div>`;
+function draadHtml(n) {
+  const live = jarvisLive(); const draad = draadVan(n.id);
+  const hint = n.soort === "item" ? "Praat hier over dit punt — of beslis in tekst; Jarvis leest het als antwoord." : n.soort === "root" ? "Praat met Jarvis over het geheel." : `Praat hier over ${n.soort === "project" ? "dit project" : n.soort === "taak" ? "deze taak" : "deze tak"}.`;
+  let s = `<div class="draad"><span class="eyebrow">Gesprek · ${draad.length ? `${draad.length} berichten` : "nog leeg"}</span><div class="berichten">${draad.map((b) => `<div class="bericht ${b.van === "jarvis" ? "jarvis" : "eigenaar"} ${b.status === "nieuw" && b.van !== "jarvis" ? "wacht" : ""}"><span class="van">${b.van === "jarvis" ? "Jarvis" : "Jij"}<span class="tijd">${esc(datumKort(b.op))} ${esc(tijd(b.op))}${b.van !== "jarvis" && b.status === "nieuw" ? " · wacht op Jarvis" : ""}</span></span>${inlineMd(b.tekst)}</div>`).join("")}</div>`;
+  s += `<div class="invoer"><textarea data-draad="${esc(n.id)}" placeholder="${esc(hint)}${live.live ? "" : " (geen sessie actief; wacht tot de volgende)"}" aria-label="Bericht"></textarea><button class="knop" data-actie="verstuur" data-id="${esc(n.id)}">Verstuur</button></div>`;
+  const stemmen = ("speechSynthesis" in window) ? speechSynthesis.getVoices().filter((v) => /^nl/i.test(v.lang)) : [];
+  s += `<div class="stemregel"><label><input type="checkbox" data-actie="stem-aan" ${staat.stem.aan ? "checked" : ""}> voorlezen</label>${stemmen.length ? `<label>stem <select data-actie="stem-kies">${stemmen.map((v) => `<option value="${esc(v.name)}" ${v.name === staat.stem.naam ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></label>` : ""}<span>dicteren: microfoon van je toetsenbord (pc: Win+H)</span></div></div>`;
+  return s;
 }
-
-/* ---------- Jarvis zelf ---------- */
-function jarvisHtml(tab) {
-  const o = staat.overzicht;
-  const j = staat.jarvis;
-  const kern = o.projecten.find((p) => p.id === o.centraal) ?? null;
-  const openKern = kern ? kern.aandacht.filter((i) => !staat.antwoorden.has(i.id)).length : 0;
-  const openAlles = o.voor_jou.filter((i) => !staat.antwoorden.has(i.id)).length;
-  const tabs = kern
-    ? [["jou", "Voor jou", openKern], ["alles", "Alles", openAlles], ["activiteit", "Activiteit", (j?.agenten?.length ?? 0) + 1], ["gesprek", "Gesprek", staat.berichten.length], ["taken", "Taken", kern.taken.length], ["recent", "Recent", kern.recent.length]]
-    : [["alles", "Alles", openAlles], ["activiteit", "Activiteit", (j?.agenten?.length ?? 0) + 1], ["gesprek", "Gesprek", staat.berichten.length]];
-  if (!tabs.some((t) => t[0] === tab)) tab = tabs[0][0];
-  let lichaam = "";
-  if (tab === "alles") lichaam = overzichtHtml();
-  else if (tab === "activiteit") lichaam = activiteitHtml();
-  else if (tab === "gesprek") lichaam = gesprekHtml();
-  else if (tab === "jou" && kern) {
-    const lopend = kern.taken.filter((t) => t.status !== "afgerond" && t.stappen?.length);
-    lichaam = (lopend.length ? `<div class="sectie" style="margin-top:0"><div class="sectiekop"><h2 style="font-size:15px">Wat Jarvis doet</h2><span class="tel">${lopend.length} ${lopend.length === 1 ? "taak" : "taken"}</span></div>${lopend.map((t) => taakHtml(t, kern.id)).join("")}</div>` : "") +
-      `<div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Voor jou, over Jarvis</h2><span class="tel">${openKern} open</span></div>${voorJouHtml(kern.aandacht, false)}</div>`;
-  } else if (tab === "taken" && kern) {
-    lichaam = kern.taken.length ? kern.taken.map((t) => taakHtml(t, kern.id)).join("") : `<div class="paneel leeg"><strong>Geen taakdossiers</strong></div>`;
-  } else if (tab === "recent" && kern) {
-    let dag = null;
-    lichaam = kern.recent.slice(0, 40).map((c) => { const label = dagLabel(c.datum); const kop = label !== dag ? `<div class="dag"><span class="eyebrow">${esc(label)}</span></div>` : ""; dag = label; return `${kop}<div class="commit ${c.soort === "merge" ? "merge" : ""}"><span class="hash">${esc(c.hash)}</span><span class="ond">${esc(c.onderwerp)}</span>${c.rol ? `<span class="rol"><span class="chip">${esc(c.rol)}</span></span>` : ""}</div>`; }).join("") || `<div class="paneel leeg"><strong>Geen beweging</strong></div>`;
-  }
-  const live = jarvisLive();
-  return `
-    <div class="projkop">
-      <h2>Jarvis</h2>
-      <div class="sub"><span>${live.tekst}</span>${j?.sessie?.model ? `<span>${esc(j.sessie.model)}</span>` : ""}</div>
-    </div>
-    <div class="tabs" role="tablist">${tabs.map(([id, l, n]) => `<button class="tab" role="tab" aria-selected="${tab === id}" data-actie="tab" data-tab="${id}">${l}<span class="tel">${n}</span></button>`).join("")}</div>
-    <div>${lichaam}</div>`;
-}
-
-/* Is er nu een sessie? Alleen wat de sessie zelf de laatste tien minuten heeft geschreven telt. */
 function jarvisLive() {
   const j = staat.jarvis;
   const laatste = j?.sessie?.laatste ? Date.now() - new Date(j.sessie.laatste).getTime() : Infinity;
@@ -553,145 +597,56 @@ function jarvisLive() {
   if (j?.sessie?.laatste) return { live: false, bezig: false, tekst: `geen sessie actief · laatst gezien ${relatief(j.sessie.laatste)}` };
   return { live: false, bezig: false, tekst: "geen sessie gezien" };
 }
-
-function activiteitHtml() {
-  const j = staat.jarvis;
-  const live = jarvisLive();
-  const o = staat.overzicht;
-  let s = `<div class="sectie" style="margin-top:0"><div class="sectiekop"><h2 style="font-size:15px">Sessie en agents</h2><span class="tel">${live.live ? "live" : "offline"}</span></div>`;
-  s += `<div class="agent ${live.bezig ? "bezig" : live.live ? "actief" : ""}"><span class="naam"><span class="dot"></span>${esc(j?.sessie?.naam ?? "Jarvis")}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(j?.sessie?.rol ?? "orchestrator")}</span>
-    <span class="wat">${esc(live.tekst)}</span>
-    <span class="meta">${j?.sessie?.model ? esc(j.sessie.model) + " · " : ""}${j?.sessie?.sinds ? "sinds " + esc(datumKort(j.sessie.sinds)) + " " + esc(tijd(j.sessie.sinds)) : ""}${j?.sessie?.laatste ? " · laatste update " + esc(tijd(j.sessie.laatste)) : ""}</span></div>`;
-  for (const a of j?.agenten ?? []) {
-    s += `<div class="agent ${a.status === "bezig" ? "bezig" : a.status === "klaar" ? "" : "actief"}"><span class="naam"><span class="dot"></span>${esc(a.naam)}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(a.rol ?? "")}</span><span class="wat">${esc(a.wat ?? "")}</span><span class="meta">${esc(a.status ?? "")}${a.taak ? " · " + esc(a.taak) : ""}${a.op ? " · " + esc(datumKort(a.op)) + " " + esc(tijd(a.op)) : ""}</span></div>`;
-  }
-  if (!(j?.agenten ?? []).length) s += `<p style="color:var(--gedempt);font-size:13.5px;padding:0 4px">Geen losse agents actief. Jarvis start die alleen voor afgebakend werk (een onafhankelijke QA-ronde, een verkenning) en meldt ze hier zodra ze lopen.</p>`;
-  s += `<p style="color:var(--zacht);font-family:var(--mono);font-size:11px;padding:8px 4px 0">Eén model, vijf rollen. Alles wat Jarvis doet landt als commit onder één rol; er werkt geen andere AI mee.</p></div>`;
-  // Werk per rol, 14 dagen, over alle projecten
-  const perRol = new Map();
-  for (const p of o.projecten) for (const c of p.recent) { const r = c.rol ?? (c.soort === "merge" ? "merge" : "zonder rol"); const e = perRol.get(r) ?? { n: 0, laatste: null, project: p.naam }; e.n += 1; if (!e.laatste) { e.laatste = c; e.project = p.naam; } perRol.set(r, e); }
-  const rollen = [...perRol.entries()].sort((a, b) => b[1].n - a[1].n);
-  s += `<div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Werk per rol</h2><span class="tel">${RECENT_DAGEN} dagen</span></div>${rollen.map(([rol, e]) => `<div class="rolrij"><span class="rol">${esc(rol)}</span><span class="n">${e.n} commits</span><span class="n">${esc(e.project)}</span><span class="ond">laatste: ${esc(e.laatste.onderwerp)} <span class="mono">${esc(e.laatste.hash)} · ${esc(dagLabel(e.laatste.datum))}</span></span></div>`).join("")}</div>`;
-  if (staat.signaalInfo) s += `<div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Laatste signaal</h2></div><p class="mono" style="font-size:12px;color:var(--gedempt);padding:0 4px">${esc(staat.signaalInfo)}</p></div>`;
-  return s;
-}
-
-function gesprekHtml() {
-  const live = jarvisLive();
-  const berichten = [...staat.berichten].sort((a, b) => String(a.op).localeCompare(String(b.op))).slice(-60);
-  let s = `<div class="gesprek">${berichten.length ? berichten.map((b) => `<div class="bericht ${b.van === "jarvis" ? "jarvis" : "eigenaar"} ${b.status === "nieuw" && b.van !== "jarvis" ? "wacht" : ""}"><span class="van">${b.van === "jarvis" ? "Jarvis" : "Jij"}<span class="tijd">${esc(datumKort(b.op))} ${esc(tijd(b.op))}${b.van !== "jarvis" && b.status === "nieuw" ? " · wacht op Jarvis" : ""}</span></span>${inlineMd(b.tekst)}</div>`).join("") : `<div class="paneel leeg"><strong>Nog geen gesprek</strong>Stel een vraag of geef een opdracht. ${live.live ? "Er is een sessie actief; Jarvis antwoordt hier." : "Er is nu geen sessie actief; je bericht wacht tot de volgende."}</div>`}</div>`;
-  const mic = micStatus();
-  s += `<div class="invoer"><textarea id="bericht-invoer" placeholder="${live.live ? "Zeg het maar…" : "Bericht voor de volgende sessie…"}" aria-label="Bericht aan Jarvis"></textarea>${mic.kan ? `<button class="knop mic ${staat.luistert ? "aan" : ""}" data-actie="mic" aria-label="Spreek">${staat.luistert ? "● luistert" : "🎙 spreek"}</button>` : ""}<button class="knop" data-actie="verstuur">Verstuur</button></div>`;
-  if (!mic.kan || staat.micFout) s += `<div class="stemregel" style="margin-top:6px"><span>${esc(staat.micFout ?? mic.reden)}</span></div>`;
-  const stemmen = ("speechSynthesis" in window) ? speechSynthesis.getVoices().filter((v) => /^nl/i.test(v.lang)) : [];
-  s += `<div class="stemregel"><label><input type="checkbox" data-actie="stem-aan" ${staat.stem.aan ? "checked" : ""}> Jarvis leest antwoorden voor</label>${stemmen.length ? `<label>stem <select data-actie="stem-kies">${stemmen.map((v) => `<option value="${esc(v.name)}" ${v.name === staat.stem.naam ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></label>` : `<span>geen Nederlandse stem in deze browser</span>`}<span>bericht wekt de sessie zoals een antwoord</span></div>`;
-  return s;
-}
-
-/* De pagina draait in een frame van claude.ai. Of dat frame een microfoon
-   mag gebruiken bepaalt de host, niet de pagina; zonder die toestemming faalt
-   spraakherkenning stil. Dan is de eerlijke weg: de dicteerknop van het
-   toetsenbord, die werkt overal en typt gewoon in het vak. */
-function micStatus() {
-  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!R) return { kan: false, reden: "Dicteren: gebruik de microfoonknop van je toetsenbord; deze browser heeft geen spraakherkenning voor pagina's." };
-  const beleid = document.permissionsPolicy ?? document.featurePolicy;
-  if (beleid?.allowsFeature && !beleid.allowsFeature("microphone")) return { kan: false, reden: "Dicteren: gebruik de microfoonknop van je toetsenbord. Dit venster mag van claude.ai zelf geen microfoon gebruiken." };
-  return { kan: true, reden: "" };
-}
-
-/* ---------- stem ---------- */
 function spreek(tekst) {
   if (!staat.stem.aan || !("speechSynthesis" in window)) return;
-  const u = new SpeechSynthesisUtterance(String(tekst).replace(/[`*_#]/g, ""));
-  u.lang = "nl-NL"; u.rate = 0.98; u.pitch = 0.85;
-  const v = speechSynthesis.getVoices().find((x) => x.name === staat.stem.naam) ?? speechSynthesis.getVoices().find((x) => /^nl/i.test(x.lang));
-  if (v) u.voice = v;
+  const u = new SpeechSynthesisUtterance(String(tekst).replace(/[`*_#]/g, "")); u.lang = "nl-NL"; u.rate = 0.98; u.pitch = 0.85;
+  const v = speechSynthesis.getVoices().find((x) => x.name === staat.stem.naam) ?? speechSynthesis.getVoices().find((x) => /^nl/i.test(x.lang)); if (v) u.voice = v;
   speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
-let herkenner = null;
-function luister() {
-  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!R) return;
-  if (staat.luistert) { herkenner?.stop(); return; }
-  herkenner = new R(); herkenner.lang = "nl-NL"; herkenner.interimResults = true; herkenner.continuous = false;
-  const vak = document.getElementById("bericht-invoer");
-  const basis = vak ? vak.value : "";
-  herkenner.onresult = (e) => { let t = ""; for (const r of e.results) t += r[0].transcript; const v = document.getElementById("bericht-invoer"); if (v) v.value = (basis ? basis + " " : "") + t; };
-  herkenner.onend = () => { staat.luistert = false; render(); };
-  herkenner.onerror = (e) => {
-    staat.luistert = false;
-    const code = e?.error ?? "onbekend";
-    staat.micFout = code === "not-allowed" || code === "service-not-allowed"
-      ? "Microfoon geweigerd in dit venster. Gebruik de microfoonknop van je toetsenbord om te dicteren."
-      : code === "no-speech" ? "Niets gehoord. Probeer opnieuw, dichter bij de microfoon." : `Spraakherkenning mislukt (${code}). Gebruik de microfoonknop van je toetsenbord.`;
-    render();
-  };
-  staat.micFout = null;
-  staat.luistert = true;
-  try { herkenner.start(); } catch (err) { staat.luistert = false; staat.micFout = `Spraakherkenning kon niet starten (${err?.name ?? "onbekend"}).`; }
-  render();
-}
-if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => { if (staat.zicht.soort === "jarvis" && staat.zicht.tab === "gesprek") render(); };
 
 /* ---------- render ---------- */
 function render() {
-  const o = staat.overzicht;
-  if (!o) return;
-  tekenKaart();
-  let s = "";
-  if (staat.dbFout) s += `<div class="melding fout">${esc(staat.dbFout)}</div>`;
+  const o = staat.overzicht; if (!o) return;
+  tekenKaart(); toonPaneel();
   const leeftijdDagen = (Date.now() - new Date(o.gegenereerd_op).getTime()) / 864e5;
-  if (leeftijdDagen > 3) s += `<div class="melding">Deze stand is ${Math.floor(leeftijdDagen)} dagen oud. Laat Jarvis <span class="mono">jarvis overzicht</span> draaien voor een verse.</div>`;
-  if (staat.zicht.soort === "project") {
-    const p = o.projecten.find((x) => x.id === staat.zicht.id);
-    s += p ? projectHtml(p, staat.zicht.tab ?? "jou") : overzichtHtml();
-  } else if (staat.zicht.soort === "jarvis") s += jarvisHtml(staat.zicht.tab ?? "jou");
-  else s += overzichtHtml();
-  s += `<div class="voet">Alles hier is afgeleid uit de repositories; GitHub blijft de bron van waarheid. Een antwoord landt bij Jarvis en wordt door een sessie verwerkt langs de gewone weg — pull request, review, record. Stand gegenereerd ${esc(datumKort(o.gegenereerd_op))} ${esc(tijd(o.gegenereerd_op))}.</div>`;
-  $inhoud.innerHTML = s;
   const wachten = [...staat.antwoorden.values()].filter((a) => a.status !== "verwerkt").length + staat.berichten.filter((b) => b.van !== "jarvis" && b.status === "nieuw").length;
   const live = jarvisLive();
   $status.innerHTML = `<span class="dot ${live.bezig || wachten ? "bezig" : live.live ? "" : "uit"}"></span><b>${live.bezig ? esc(live.tekst) : wachten ? `${wachten} bij Jarvis` : live.live ? "sessie actief" : "geen sessie"}</b><br><span class="${leeftijdDagen > 3 ? "oud" : ""}">stand ${esc(relatief(o.gegenereerd_op))}</span>${staat.signaal ? `<br>${esc(staat.signaal)}` : ""}`;
-  const vak = document.getElementById("bericht-invoer");
-  if (vak && staat.concept) { vak.value = staat.concept; }
   document.getElementById("kop-versie").textContent = `v${o.versie ?? 1}`;
 }
 
-$inhoud.addEventListener("click", async (e) => {
+document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-actie]"); if (!el) return;
   const actie = el.dataset.actie, id = el.dataset.id;
-  if (actie === "toggle") { staat.open.has(id) ? staat.open.delete(id) : staat.open.add(id); render(); return; }
-  if (actie === "project") { staat.zicht = { soort: "project", id, tab: "jou" }; bewaarZicht(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
-  if (actie === "jou") { staat.zicht = { soort: "jou" }; bewaarZicht(); render(); return; }
-  if (actie === "verstuur") { const vak = document.getElementById("bericht-invoer"); const tekst = vak ? vak.value.trim() : ""; if (!tekst) { vak?.focus(); return; } el.disabled = true; staat.concept = ""; await verstuurBericht(tekst); return; }
-  if (actie === "mic") { luister(); return; }
-  if (actie === "tab") { staat.zicht.tab = el.dataset.tab; bewaarZicht(); render(); return; }
-  if (actie === "alles") { staat.toonAlles.add(id); render(); return; }
+  if (actie === "kies") { kies(id); return; }
+  if (actie === "sluit") { staat.gekozen = null; bewaarZicht(); render(); return; }
+  if (actie === "centreer") { centreer(); return; }
+  if (actie === "zoom-in") { zoomRond(1.25); return; }
+  if (actie === "zoom-uit") { zoomRond(0.8); return; }
   if (actie === "ongedaan") { await verwijderAntwoord(id); return; }
+  if (actie === "verstuur") { const vak = $pinhoud.querySelector(`textarea[data-draad="${CSS.escape(id)}"]`); const tekst = vak ? vak.value.trim() : ""; if (!tekst) { vak?.focus(); return; } el.disabled = true; staat.concept.delete(id); await verstuurBericht(id, tekst); return; }
   if (actie === "antwoord") {
-    const vak = $inhoud.querySelector(`textarea[data-notitie="${CSS.escape(id)}"]`);
-    const notitie = vak ? vak.value.trim() : "";
+    const vak = $pinhoud.querySelector(`textarea[data-notitie="${CSS.escape(id)}"]`); const notitie = vak ? vak.value.trim() : "";
     if (el.dataset.vereist && !notitie) { vak?.focus(); vak?.setAttribute("placeholder", "Schrijf eerst je beslissing op, dan kiezen"); return; }
-    for (const b of $inhoud.querySelectorAll(`.optie[data-id="${CSS.escape(id)}"]`)) b.disabled = true;
+    for (const b of $pinhoud.querySelectorAll(`.optie[data-id="${CSS.escape(id)}"]`)) b.disabled = true;
     await bewaarAntwoord(id, el.dataset.keuze, el.dataset.label, notitie);
   }
 });
-
-$inhoud.addEventListener("change", (e) => {
+document.addEventListener("change", (e) => {
   const el = e.target.closest("[data-actie]"); if (!el) return;
   if (el.dataset.actie === "stem-aan") { staat.stem.aan = el.checked; bewaarStem(); if (el.checked) spreek("Jarvis online."); }
   if (el.dataset.actie === "stem-kies") { staat.stem.naam = el.value; bewaarStem(); spreek("Zo klink ik."); }
 });
-$inhoud.addEventListener("input", (e) => { if (e.target.id === "bericht-invoer") staat.concept = e.target.value; });
+document.addEventListener("input", (e) => { const d = e.target.dataset?.draad; if (d) staat.concept.set(d, e.target.value); const nn = e.target.dataset?.notitie; if (nn) staat.concept.set("notitie:" + nn, e.target.value); });
+// Schuifkaart op de telefoon dichtvegen.
+let greep = null;
+document.getElementById("greep").addEventListener("pointerdown", (e) => { greep = e.clientY; });
+document.addEventListener("pointerup", (e) => { if (greep !== null && e.clientY - greep > 60) { staat.gekozen = null; bewaarZicht(); render(); } greep = null; });
+if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => { if (staat.gekozen) toonPaneel(); };
 
 /* ---------- gegevens ---------- */
 const docId = (itemId) => itemId.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
 const vindItem = (itemId) => staat.overzicht.voor_jou.find((i) => i.id === itemId) ?? staat.overzicht.projecten.flatMap((p) => p.aandacht).find((i) => i.id === itemId);
-
-/* Het signaal: één klein bestand naast de pagina, opnieuw gepubliceerd na een
-   antwoord. Dat is de enige weg waarlangs een lopende Jarvis-sessie wakker
-   wordt; de pagina zelf verandert er niet door en herlaadt niet. */
 let signaalTimer = null;
 function meldJarvis(reden) {
   if (!staat.artifact) return;
@@ -699,17 +654,11 @@ function meldJarvis(reden) {
   signaalTimer = setTimeout(async () => {
     const wachten = [...staat.antwoorden.values()].filter((a) => a.status !== "verwerkt").map((a) => a.item_id);
     const berichten = staat.berichten.filter((b) => b.van !== "jarvis" && b.status === "nieuw").length;
-    try {
-      await staat.artifact.publish({ "signaal.json": { content: JSON.stringify({ op: new Date().toISOString(), reden, wachten, berichten }, null, 2), contentType: "application/json" } });
-      staat.signaal = "Jarvis gewekt";
-    } catch (err) {
-      staat.signaal = err?.code === "capability_disabled" ? "wekken hier niet mogelijk" : `wekken mislukt (${err?.code ?? "onbekend"})`;
-    }
-    render();
-    setTimeout(() => { staat.signaal = ""; render(); }, 6000);
+    try { await staat.artifact.publish({ "signaal.json": { content: JSON.stringify({ op: new Date().toISOString(), reden, wachten, berichten }, null, 2), contentType: "application/json" } }); staat.signaal = "Jarvis gewekt"; }
+    catch (err) { staat.signaal = err?.code === "capability_disabled" ? "wekken hier niet mogelijk" : `wekken mislukt (${err?.code ?? "onbekend"})`; }
+    render(); setTimeout(() => { staat.signaal = ""; render(); }, 6000);
   }, 2500);
 }
-
 async function bewaarAntwoord(itemId, keuze, keuzeLabel, notitie) {
   const item = vindItem(itemId);
   const antwoord = { item_id: itemId, project: item?.project ?? null, soort: item?.soort ?? null, titel: item?.titel ?? null, bron: item?.bron ?? null, keuze, keuze_label: keuzeLabel, notitie, op: new Date().toISOString(), status: "nieuw", overzicht_van: staat.overzicht.gegenereerd_op };
@@ -717,10 +666,12 @@ async function bewaarAntwoord(itemId, keuze, keuzeLabel, notitie) {
   catch (err) { staat.dbFout = `Antwoord niet opgeslagen (${err?.code ?? "onbekend"}). Probeer het opnieuw.`; }
   render();
 }
-async function verstuurBericht(tekst) {
-  const bericht = { van: "eigenaar", tekst, op: new Date().toISOString(), status: "nieuw", zicht: staat.zicht };
+async function verstuurBericht(nodeId, tekst) {
+  const n = vindKnoop(staat.boom, nodeId);
+  const context = { node: nodeId, soort: n?.soort ?? "root", titel: n?.label ?? "Jarvis", project: n?.project?.id ?? null, item_id: n?.item?.id ?? null, taak: n?.taak?.id ?? null };
+  const bericht = { van: "eigenaar", tekst, op: new Date().toISOString(), status: "nieuw", context };
   try { await staat.db.collection("berichten").add(bericht); staat.dbFout = null; meldJarvis("bericht"); }
-  catch (err) { staat.dbFout = `Bericht niet verzonden (${err?.code ?? "onbekend"}).`; staat.concept = tekst; }
+  catch (err) { staat.dbFout = `Bericht niet verzonden (${err?.code ?? "onbekend"}).`; staat.concept.set(nodeId, tekst); }
   render();
 }
 async function verwijderAntwoord(itemId) {
@@ -728,27 +679,19 @@ async function verwijderAntwoord(itemId) {
   catch (err) { staat.dbFout = `Antwoord niet verwijderd (${err?.code ?? "onbekend"}).`; }
   render();
 }
-
 async function start() {
   let db = null;
   try { db = window.claude?.use ? await window.claude.use("db") : null; } catch { db = null; }
   staat.db = db;
-  if (!db) {
-    $inhoud.innerHTML = `<div class="paneel leeg" style="margin-top:18px"><strong>Geen verbinding</strong>Open deze pagina op claude.ai met je eigen account; daar staat het overzicht dat Jarvis vult.</div>`;
-    $status.innerHTML = `<span class="dot uit"></span>geen gegevens`;
-    return;
-  }
+  if (!db) { $status.innerHTML = `<span class="dot uit"></span>geen gegevens — open dit op claude.ai`; return; }
   window.claude.use("artifact").then((a) => { staat.artifact = a; }).catch(() => { staat.artifact = null; });
   db.doc("overzicht/huidig").onSnapshot((snap) => {
-    if (!snap.exists) {
-      $inhoud.innerHTML = `<div class="paneel leeg" style="margin-top:18px"><strong>Nog geen overzicht</strong>Jarvis heeft dit overzicht nog niet gevuld. Laat <span class="mono">jarvis overzicht</span> draaien en de uitkomst naar <span class="mono">overzicht/huidig</span> schrijven.</div>`;
-      $status.innerHTML = `<span class="dot uit"></span>leeg`; return;
-    }
+    if (!snap.exists) { $status.innerHTML = `<span class="dot uit"></span>nog geen overzicht`; return; }
     const data = snap.data();
     staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, centraal: data.centraal ?? null, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [] };
     render();
-  }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code}).`; if (staat.overzicht) render(); else $inhoud.innerHTML = `<div class="melding fout" style="margin-top:18px">${esc(staat.dbFout)}</div>`; });
-  db.doc("jarvis/status").onSnapshot((snap) => { staat.jarvis = snap.exists ? snap.data() : null; render(); }, () => { /* geen status: offline */ });
+  }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code}).`; render(); });
+  db.doc("jarvis/status").onSnapshot((snap) => { staat.jarvis = snap.exists ? snap.data() : null; render(); }, () => {});
   db.collection("berichten").onSnapshot((snap) => {
     staat.berichten = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((b) => b.tekst);
     const laatsteJarvis = [...staat.berichten].filter((b) => b.van === "jarvis").sort((a, b) => String(a.op).localeCompare(String(b.op))).pop();
