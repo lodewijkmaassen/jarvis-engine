@@ -1299,6 +1299,22 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
 
   if (wat === "wie") {
     console.log(`jarvis pr: bot ${botLogin}; token verloopt ${verloopt ?? "onbekend"}.`);
+    // Een fijnmazig token bereikt alleen repositories van zijn eigen
+    // resource owner; repositories van de eigenaar waar de bot collaborator
+    // is, ziet het niet (404). Daarvoor is een klassiek token nodig.
+    if (token.startsWith("github_pat_")) {
+      console.error(
+        "jarvis pr: dit is een fijnmazig token; dat bereikt geen repositories van een ander account. " +
+          "Gebruik een klassiek token (scopes repo en workflow).",
+      );
+    }
+    if (slug !== null) {
+      const repo = await github(token, "GET", `/repos/${slug}`);
+      const rechten = (repo.lading as { permissions?: { push?: boolean; admin?: boolean } } | null)?.permissions;
+      if (repo.status !== 200) console.error(`jarvis pr: ${slug} is met dit token niet bereikbaar (${foutTekst(repo)}).`);
+      else if (!rechten?.push) console.error(`jarvis pr: ${slug} is leesbaar maar de bot heeft er geen schrijfrecht; nodig hem uit.`);
+      else console.log(`jarvis pr: ${slug}: schrijfrecht ${rechten.admin ? "en admin (te veel!)" : "zonder admin"}.`);
+    }
     return 0;
   }
 
