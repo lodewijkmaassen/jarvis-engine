@@ -10,9 +10,9 @@ _Gegenereerd op 2026-09-11._
 
 | Feit | Waarde |
 |---|---|
-| Hoofdbranch | `main` op `onbekend` (onbekend) |
+| Hoofdbranch | `main` op `53621a2` (2026-09-11) |
 | Hoogste migratie | onbekend |
-| Testbestanden | 22 |
+| Testbestanden | 23 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
