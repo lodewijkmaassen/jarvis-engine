@@ -50,7 +50,7 @@ import {
   controleerGovernance,
   type BestandsFeiten,
 } from "./workflow";
-import { bepaalModus, beoordeelEngine, leesEngineStand, type HoofdbranchVergelijking } from "./engine";
+import { bepaalModus, beoordeelEngine, ENGINE_MAP, leesEngineStand, type HoofdbranchVergelijking } from "./engine";
 import { beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, type PullRequestFeiten } from "./pr";
 import { homedir } from "node:os";
 
@@ -78,12 +78,30 @@ export interface GelezenCommit {
   readonly bestanden: readonly string[];
 }
 
-export function leesCommitLog(uitvoer: string): readonly GelezenCommit[] {
-  return uitvoer
-    .split("\u001e")
-    .map((record) => record.split("\u001f"))
-    .filter((velden) => velden.length >= 4 && /^[0-9a-f]{40}$/.test(velden[0].trim()))
-    .map(([hash, onderwerp, bericht, bestanden]) => ({
+export type CommitLog = {
+  readonly commits: readonly GelezenCommit[];
+  /**
+   * Records die niet de verwachte vorm hadden: geen hash op de eerste plaats,
+   * of niet precies vier velden. Een commitbericht dat zelf een record- of
+   * veldscheidingsteken bevat, verstoort het parsen; dat mag nooit stil een
+   * commit uit de rolcontrole laten vallen, dus het wordt geteld en de poort
+   * weigert (fail-closed).
+   */
+  readonly ongeldig: number;
+};
+
+export function leesCommitLog(uitvoer: string): CommitLog {
+  const commits: GelezenCommit[] = [];
+  let ongeldig = 0;
+  for (const record of uitvoer.split("\u001e")) {
+    if (record.trim().length === 0) continue;
+    const velden = record.split("\u001f");
+    if (velden.length !== 4 || !/^[0-9a-f]{40}$/.test(velden[0].trim())) {
+      ongeldig += 1;
+      continue;
+    }
+    const [hash, onderwerp, bericht, bestanden] = velden;
+    commits.push({
       hash: hash.trim(),
       onderwerp: onderwerp.trim(),
       bericht: bericht.trim(),
@@ -91,7 +109,9 @@ export function leesCommitLog(uitvoer: string): readonly GelezenCommit[] {
         .split("\n")
         .map((r) => r.trim())
         .filter((r) => r.length > 0),
-    }));
+    });
+  }
+  return { commits, ongeldig };
 }
 
 async function gewijzigdeBestanden(wortel: string, basis: string): Promise<readonly string[]> {
@@ -193,7 +213,10 @@ export async function controleerWorkflow(wortel: string): Promise<number> {
   } catch {
     wortelEchtPad = wortel;
   }
-  const modus = bepaalModus(await leesOfNull(path.join(wortelEchtPad, "package.json")));
+  const modus = bepaalModus(
+    await leesOfNull(path.join(wortelEchtPad, "package.json")),
+    await engineMapIsWortel(wortelEchtPad),
+  );
   const canoniekPad = canoniekeWorkflowPad(modus);
   let workflowMapInhoud: readonly string[] | null = null;
   try {
@@ -235,6 +258,16 @@ export async function controleerWorkflow(wortel: string): Promise<number> {
   return 1;
 }
 
+/** Lost `node_modules/jarvis-engine` op naar de repositorywortel zelf? (de `file:.`-koppeling) */
+async function engineMapIsWortel(wortel: string): Promise<boolean> {
+  try {
+    const [a, b] = await Promise.all([realpath(path.join(wortel, ENGINE_MAP)), realpath(wortel)]);
+    return a === b;
+  } catch {
+    return false;
+  }
+}
+
 async function leesOfNull(pad: string): Promise<string | null> {
   try {
     return await readFile(pad, "utf8");
@@ -269,18 +302,25 @@ async function vergelijkMetHoofdbranch(slug: string, sha: string): Promise<Hoofd
  * staat die pin op de hoofdbranch van de engine-repository? Zie engine.ts.
  */
 export async function controleerEngine(wortel: string): Promise<number> {
+  const configResultaat = await laadConfig(wortel);
+  const verwachteSlug = configResultaat.ok ? configResultaat.config.engine_repository : "";
   const stand = leesEngineStand(
     await leesOfNull(path.join(wortel, "package.json")),
     await leesOfNull(path.join(wortel, "package-lock.json")),
     await leesOfNull(path.join(wortel, "node_modules", ".package-lock.json")),
+    await engineMapIsWortel(wortel),
   );
   if (stand.modus === "engine") {
     console.log("jarvis engine: deze repository is de engine zelf; er is niets te pinnen.");
     return 0;
   }
+  // De vergelijking loopt tegen de repository uit de configuratie, nooit
+  // tegen wat de lockfile toevallig noemt.
   const vergelijking =
-    stand.slug !== null && stand.shaLock !== null ? await vergelijkMetHoofdbranch(stand.slug, stand.shaLock) : null;
-  const redenen = beoordeelEngine(stand, vergelijking);
+    stand.shaLock !== null && verwachteSlug.trim().length > 0
+      ? await vergelijkMetHoofdbranch(verwachteSlug.trim(), stand.shaLock)
+      : null;
+  const redenen = beoordeelEngine(stand, vergelijking, verwachteSlug);
   if (redenen.length === 0) {
     console.log(
       `jarvis engine: ${stand.slug} op ${stand.shaLock?.slice(0, 7)}, geïnstalleerd en op de hoofdbranch.`,
@@ -774,8 +814,21 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   // valt wordt geteld en gemeld: stil afkappen ziet eruit als een volledige
   // toets.
   const COMMIT_LEESLIMIET = 500;
-  const alleCommits = leesCommitLog(await git(wortel, ["log", COMMIT_LOG_FORMAAT, "--name-only", `${basis}..HEAD`]));
+  const log = leesCommitLog(await git(wortel, ["log", COMMIT_LOG_FORMAAT, "--name-only", `${basis}..HEAD`]));
+  const alleCommits = log.commits;
   const gelezen = alleCommits.slice(0, COMMIT_LEESLIMIET);
+  // De lijst uit `rev-list` is de maat: elke commit die daar staat moet ook
+  // leesbaar uit de log zijn gekomen, in dezelfde volgorde. Elk verschil is
+  // een commit die de rolcontrole zou missen.
+  const verwacht = (await git(wortel, ["rev-list", `${basis}..HEAD`]))
+    .split("\n")
+    .map((h) => h.trim())
+    .filter((h) => h.length > 0);
+  const gelezenHashes = alleCommits.map((c) => c.hash);
+  const commitlogOnleesbaar =
+    log.ongeldig > 0 ||
+    verwacht.length !== gelezenHashes.length ||
+    verwacht.some((h, i) => h !== gelezenHashes[i]);
   // Commits van vóór het startpunt vallen buiten de rolcontrole. Zie
   // `rol_controle_vanaf` in jarvis.config.yml voor waarom dat startpunt bestaat.
   const voorStartpunt = config.rol_controle_vanaf
@@ -818,6 +871,7 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     nieuweDecs,
     rolControleVanafBasis: basisStartpunt,
     commitsAfgekapt: alleCommits.length - gelezen.length,
+    commitlogOnleesbaar,
     ackBronVertrouwd,
     ackBron,
   });

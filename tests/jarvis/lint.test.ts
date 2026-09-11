@@ -44,6 +44,7 @@ const CONFIG: JarvisConfig = {
   test_pad: "tests",
   branch_voorvoegsel: "jarvis/",
   rollen_map: "jarvis/roles",
+  engine_repository: "",
   overzicht_kern_id: "",
   overzicht_kern_naam: "",
   overzicht_kern_paden: [],
@@ -362,6 +363,14 @@ describe("rolmandaat — de gaten die de tweede QA-ronde vond", () => {
       rolControleVanafBasis: "deadbeef",
     });
     expect(resultaat.bevindingen.some((b) => b.code === "startpunt_verschoven")).toBe(false);
+  });
+
+  it("weigert wanneer de commitlog niet volledig en eenduidig gelezen is", async () => {
+    const l = await lading();
+    const resultaat = lint({ ...basis(l), commitlogOnleesbaar: true });
+    const b = resultaat.bevindingen.find((x) => x.code === "commitlog_onleesbaar");
+    expect(b?.severity).toBe("fout");
+    expect(resultaat.ok).toBe(false);
   });
 
   it("meldt het wanneer commits buiten de controle vielen", async () => {
