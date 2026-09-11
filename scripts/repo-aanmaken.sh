@@ -37,6 +37,17 @@ if [[ "$status" == "404" ]]; then
     exit 1
   fi
   echo "repo-aanmaken: privé repository $login/$naam aangemaakt."
+  # Standaard-ruleset, alleen op een zojuist aangemaakte repository (DEC-0038):
+  # geen verwijderen, geen force-push, pull request met één goedkeuring.
+  # Identiek aan wat tovas-flow en kasboek hebben. Bestaande repositories
+  # raakt dit script nooit.
+  ruleset='{"name":"main-protection","target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_approving_review_count":1,"dismiss_stale_reviews_on_push":true,"require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":false}}]}'
+  rs="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" "$api/repos/$login/$naam/rulesets" -d "$ruleset")"
+  if [[ "$rs" == "201" ]]; then
+    echo "repo-aanmaken: standaard-ruleset main-protection gezet."
+  else
+    echo "repo-aanmaken: WAARSCHUWING: ruleset niet gezet (HTTP $rs); zet hem met de hand of meld het aan de eigenaar." >&2
+  fi
 elif [[ "$status" == "200" ]]; then
   echo "repo-aanmaken: $login/$naam bestaat al; alleen de remote wordt gekoppeld."
 else
