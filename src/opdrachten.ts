@@ -63,6 +63,34 @@ async function git(wortel: string, args: readonly string[]): Promise<string> {
   }
 }
 
+// Formaat voor één `git log` over de hele branch: recordscheiding (0x1e) per
+// commit, veldscheiding (0x1f) tussen hash, onderwerp en volledig bericht; de
+// gewijzigde bestanden volgen door `--name-only` als losse regels.
+const COMMIT_LOG_FORMAAT = "--format=%x1e%H%x1f%s%x1f%B%x1f";
+
+export interface GelezenCommit {
+  readonly hash: string;
+  readonly onderwerp: string;
+  readonly bericht: string;
+  readonly bestanden: readonly string[];
+}
+
+export function leesCommitLog(uitvoer: string): readonly GelezenCommit[] {
+  return uitvoer
+    .split("\u001e")
+    .map((record) => record.split("\u001f"))
+    .filter((velden) => velden.length >= 4 && /^[0-9a-f]{40}$/.test(velden[0].trim()))
+    .map(([hash, onderwerp, bericht, bestanden]) => ({
+      hash: hash.trim(),
+      onderwerp: onderwerp.trim(),
+      bericht: bericht.trim(),
+      bestanden: bestanden
+        .split("\n")
+        .map((r) => r.trim())
+        .filter((r) => r.length > 0),
+    }));
+}
+
 async function gewijzigdeBestanden(wortel: string, basis: string): Promise<readonly string[]> {
   const samengevoegd = await git(wortel, ["merge-base", basis, "HEAD"]);
   const punt = samengevoegd.length > 0 ? samengevoegd : basis;
@@ -675,16 +703,14 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   ]);
 
   // Commits met hun rol-trailer en gewijzigde bestanden, zodat de poort kan
-  // toetsen of elke rol binnen zijn mandaat schreef.
-  const alleHashes = (await git(wortel, ["rev-list", `${basis}..HEAD`]))
-    .split("\n")
-    .map((h) => h.trim())
-    .filter((h) => h.length > 0);
-  // Een leeslimiet is nodig (elke commit kost drie git-aanroepen), maar wat
-  // erbuiten valt wordt geteld en gemeld. Stil afkappen ziet eruit als een
-  // volledige toets.
-  const COMMIT_LEESLIMIET = 50;
-  const hashes = alleHashes.slice(0, COMMIT_LEESLIMIET);
+  // toetsen of elke rol binnen zijn mandaat schreef. Eén git-aanroep voor de
+  // hele branch; de leeslimiet is een vangnet tegen een ontspoorde vergelijking
+  // (verkeerde basis, honderden commits), geen prestatiegrens. Wat erbuiten
+  // valt wordt geteld en gemeld: stil afkappen ziet eruit als een volledige
+  // toets.
+  const COMMIT_LEESLIMIET = 500;
+  const alleCommits = leesCommitLog(await git(wortel, ["log", COMMIT_LOG_FORMAAT, "--name-only", `${basis}..HEAD`]));
+  const gelezen = alleCommits.slice(0, COMMIT_LEESLIMIET);
   // Commits van vóór het startpunt vallen buiten de rolcontrole. Zie
   // `rol_controle_vanaf` in jarvis.config.yml voor waarom dat startpunt bestaat.
   const voorStartpunt = config.rol_controle_vanaf
@@ -706,22 +732,14 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   // controle precies op dat moment laten zwijgen.
   const basisStartpunt = leesStartpuntUitConfig(basisConfigTekst) ?? "";
 
-  const commits = [];
-  for (const hash of hashes) {
-    const bericht = await git(wortel, ["show", "-s", "--format=%B", hash]);
-    const onderwerp = await git(wortel, ["show", "-s", "--format=%s", hash]);
-    const gewijzigd = await git(wortel, ["show", "--name-only", "--format=", hash]);
-    const rol = /^Jarvis-Role:\s*(\S+)\s*$/im.exec(bericht)?.[1] ?? null;
-    const taak = /^Jarvis-Task:\s*(\S+)\s*$/im.exec(bericht)?.[1] ?? null;
-    commits.push({
-      hash: hash.slice(0, 7),
-      onderwerp,
-      rol,
-      taak,
-      bestanden: gewijzigd.split("\n").map((r) => r.trim()).filter((r) => r.length > 0),
-      voorStartpunt: voorStartpunt.has(hash),
-    });
-  }
+  const commits = gelezen.map((c) => ({
+    hash: c.hash.slice(0, 7),
+    onderwerp: c.onderwerp,
+    rol: /^Jarvis-Role:\s*(\S+)\s*$/im.exec(c.bericht)?.[1] ?? null,
+    taak: /^Jarvis-Task:\s*(\S+)\s*$/im.exec(c.bericht)?.[1] ?? null,
+    bestanden: c.bestanden,
+    voorStartpunt: voorStartpunt.has(c.hash),
+  }));
 
   const resultaat = lint({
     config,
@@ -734,7 +752,7 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     statusImpactVerklaard: statusImpact,
     nieuweDecs,
     rolControleVanafBasis: basisStartpunt,
-    commitsAfgekapt: alleHashes.length - hashes.length,
+    commitsAfgekapt: alleCommits.length - gelezen.length,
     ackBronVertrouwd,
     ackBron,
   });
