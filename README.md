@@ -23,5 +23,9 @@ npm test
 npm run poort
 ```
 
+`npm ci` koppelt `node_modules/jarvis-engine` aan deze repository zelf
+(`file:.`), zodat de canonieke workflow hier dezelfde opdracht draait als bij
+elke consumer: `node node_modules/jarvis-engine/bin/jarvis.mjs poort`.
+
 De poort (`.github/workflows/jarvis-lint.yml`) is byte-gelijk aan
 `jarvis/canonical/jarvis-lint.yml`; wijzig de canonieke bron, nooit de kopie.
