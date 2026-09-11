@@ -24,7 +24,7 @@ function pr(over: Partial<PullRequestFeiten> = {}): PullRequestFeiten {
     samenvoegbaar: true,
     samenvoegStaat: "clean",
     reviews: [{ gebruiker: "eigenaar", staat: "APPROVED", commit: KOP }],
-    checks: [{ naam: "jarvis-lint", status: "completed", conclusie: "success" }],
+    checks: [{ naam: "poort", status: "completed", conclusie: "success" }],
     ...over,
   };
 }
@@ -69,10 +69,25 @@ describe("beoordeelSamenvoegen", () => {
     expect(uit.join(" ")).toContain("vroeg wijzigingen");
   });
 
-  it("weigert zonder checks, met een lopende check en met een rode check", () => {
-    expect(beoordeelSamenvoegen(pr({ checks: [] }), "eigenaar").join(" ")).toContain("geen checks");
-    expect(beoordeelSamenvoegen(pr({ checks: [{ naam: "ci", status: "in_progress", conclusie: null }] }), "eigenaar").join(" ")).toContain("nog niet klaar");
-    expect(beoordeelSamenvoegen(pr({ checks: [{ naam: "ci", status: "completed", conclusie: "failure" }] }), "eigenaar").join(" ")).toContain("niet geslaagd");
+  it("eist de poort-check bij naam: ontbrekend, overgeslagen, lopend of rood is geen goedkeuring", () => {
+    // QA-bevinding H-2: elke check telde, ook een overgeslagen; de poort zelf
+    // werd niet bij naam geëist.
+    expect(beoordeelSamenvoegen(pr({ checks: [] }), "eigenaar").join(" ")).toContain('check "poort" ontbreekt');
+    expect(beoordeelSamenvoegen(pr({ checks: [{ naam: "ci", status: "completed", conclusie: "success" }] }), "eigenaar").join(" ")).toContain('"poort" ontbreekt');
+    expect(beoordeelSamenvoegen(pr({ checks: [{ naam: "poort", status: "completed", conclusie: "skipped" }] }), "eigenaar").join(" ")).toContain("poort is niet geslaagd");
+    expect(beoordeelSamenvoegen(pr({ checks: [{ naam: "poort", status: "in_progress", conclusie: null }] }), "eigenaar").join(" ")).toContain("poort is nog niet klaar");
+    expect(beoordeelSamenvoegen(pr({ checks: [{ naam: "poort", status: "completed", conclusie: "failure" }] }), "eigenaar").join(" ")).toContain("poort is niet geslaagd");
+  });
+
+  it("laat een andere check overgeslagen zijn, maar niet rood of lopend", () => {
+    const basis = [{ naam: "poort", status: "completed", conclusie: "success" }];
+    expect(beoordeelSamenvoegen(pr({ checks: [...basis, { naam: "ci", status: "completed", conclusie: "skipped" }] }), "eigenaar")).toEqual([]);
+    expect(beoordeelSamenvoegen(pr({ checks: [...basis, { naam: "ci", status: "in_progress", conclusie: null }] }), "eigenaar").join(" ")).toContain("nog niet klaar");
+    expect(beoordeelSamenvoegen(pr({ checks: [...basis, { naam: "ci", status: "completed", conclusie: "failure" }] }), "eigenaar").join(" ")).toContain("niet geslaagd");
+  });
+
+  it("weigert de staat unstable, ook als alle gemelde checks groen lijken", () => {
+    expect(beoordeelSamenvoegen(pr({ samenvoegStaat: "unstable" }), "eigenaar").join(" ")).toContain("unstable");
   });
 
   it("weigert een conflict, een onbepaalde samenvoegbaarheid, een concept en een gesloten PR", () => {

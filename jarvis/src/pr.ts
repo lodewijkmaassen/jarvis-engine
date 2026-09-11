@@ -87,6 +87,14 @@ export function beoordeelOpenen(
 const GOEDE_CONCLUSIES = new Set(["success", "skipped", "neutral"]);
 
 /**
+ * De check die de poort draagt: de job `poort` uit de canonieke workflow.
+ * Die moet er zijn én geslaagd zijn — niet overgeslagen, niet neutraal. Een
+ * PR zonder deze check (workflow niet gedraaid, actor-filter, verkeerde
+ * naam) wordt niet samengevoegd (QA-bevinding H-2).
+ */
+export const VERPLICHTE_CHECK = "poort";
+
+/**
  * Waarom deze PR nu niet samengevoegd mag worden. Leeg betekent: voeg samen.
  *
  * `eigenaar` is de login die de inhoudelijke autorisatie geeft: de eigenaar
@@ -115,10 +123,16 @@ export function beoordeelSamenvoegen(pr: PullRequestFeiten, eigenaar: string): r
   );
   if (latereWijziging) redenen.push(`${eigenaar} vroeg wijzigingen op de huidige kop`);
 
-  if (pr.checks.length === 0) {
-    redenen.push("er zijn geen checks gemeld; zonder poort wordt er niet samengevoegd");
+  const poort = pr.checks.filter((c) => c.naam === VERPLICHTE_CHECK);
+  if (poort.length === 0) {
+    redenen.push(`de check "${VERPLICHTE_CHECK}" ontbreekt op de huidige kop; zonder poort wordt er niet samengevoegd`);
+  }
+  for (const c of poort) {
+    if (c.status !== "completed") redenen.push(`de poort is nog niet klaar (${c.status})`);
+    else if (c.conclusie !== "success") redenen.push(`de poort is niet geslaagd (${c.conclusie ?? "onbekend"})`);
   }
   for (const c of pr.checks) {
+    if (c.naam === VERPLICHTE_CHECK) continue;
     if (c.status !== "completed") {
       redenen.push(`check ${c.naam} is nog niet klaar (${c.status})`);
     } else if (c.conclusie === null || !GOEDE_CONCLUSIES.has(c.conclusie)) {
@@ -128,7 +142,9 @@ export function beoordeelSamenvoegen(pr: PullRequestFeiten, eigenaar: string): r
 
   if (pr.samenvoegbaar === false) redenen.push("GitHub meldt een conflict met de basisbranch");
   if (pr.samenvoegbaar === null) redenen.push("GitHub heeft de samenvoegbaarheid nog niet bepaald; probeer zo opnieuw");
-  else if (pr.samenvoegbaar && !["clean", "unstable", "has_hooks"].includes(pr.samenvoegStaat)) {
+  else if (pr.samenvoegbaar && !["clean", "has_hooks"].includes(pr.samenvoegStaat)) {
+    // "unstable" betekent: een check is rood of ontbreekt. Ook als de checks
+    // hierboven allemaal groen lijken, is dat een reden om te wachten.
     redenen.push(`GitHub noemt de staat "${pr.samenvoegStaat}"; alleen een schone PR wordt samengevoegd`);
   }
   return redenen;
