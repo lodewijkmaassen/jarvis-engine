@@ -24,6 +24,14 @@ export type Urgentie = "hoog" | "midden" | "laag";
 
 export type AandachtSoort = "beslissing" | "actie" | "conflict" | "risico" | "blokkade";
 
+/** Eén keuze die de eigenaar kan maken, met wat er dan gebeurt. */
+export type Optie = {
+  /** Sleutel waaronder het antwoord wordt opgeslagen: kleine letters, streepjes. */
+  readonly keuze: string;
+  readonly label: string;
+  readonly gevolg: string;
+};
+
 /** Eén ding dat bij de eigenaar ligt. */
 export type AandachtItem = {
   /** Stabiel over runs heen, zodat een antwoord in de interface eraan te koppelen is. */
@@ -35,6 +43,12 @@ export type AandachtItem = {
   /** Waar het vandaan komt, als repo-relatief pad of record-id. */
   readonly bron: string;
   readonly urgentie: Urgentie;
+  /** Waarom dit bij de eigenaar ligt en niet bij Jarvis. */
+  readonly waarom: string;
+  /** De keuzes, elk met gevolg. Nooit leeg: "later" is er altijd. */
+  readonly opties: readonly Optie[];
+  /** Het advies van Jarvis, als dat in de bron staat. */
+  readonly advies: string | null;
 };
 
 export type RecentItem = {
@@ -212,7 +226,15 @@ function kortTitel(tekst: string, max = 90): string {
  * (`**Blokkerend voor merge**`) worden als context aan de items eronder
  * gehangen.
  */
-export function leesItemsOnder(document: string, kop: RegExp): readonly { titel: string; toelichting: string; context: string }[] {
+export type GelezenItem = {
+  readonly titel: string;
+  readonly toelichting: string;
+  readonly context: string;
+  /** De ingesprongen "- Label: tekst"-regels onder het punt. */
+  readonly regels: readonly { readonly label: string; readonly tekst: string }[];
+};
+
+export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenItem[] {
   const tekst = document.replace(/\r\n/g, "\n");
   const m = kop.exec(tekst);
   if (!m) return [];
@@ -220,14 +242,16 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly { titel:
   const volgende = /^## /m.exec(vanaf);
   const sectie = volgende ? vanaf.slice(0, volgende.index) : vanaf;
 
-  const items: { titel: string; toelichting: string; context: string }[] = [];
+  const items: GelezenItem[] = [];
   let context = "";
   let huidig: string[] | null = null;
+  let regels: { label: string; tekst: string }[] = [];
   const sluit = () => {
     if (!huidig) return;
     const geheel = huidig.join(" ").replace(/\s+/g, " ").trim();
-    items.push({ titel: kortTitel(geheel), toelichting: geheel.replace(/\*\*/g, ""), context });
+    items.push({ titel: kortTitel(geheel), toelichting: geheel.replace(/\*\*/g, ""), context, regels });
     huidig = null;
+    regels = [];
   };
   for (const regel of sectie.split("\n")) {
     const vet = /^\*\*(.+?)\*\*\s*$/.exec(regel.trim());
@@ -242,8 +266,17 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly { titel:
       huidig = [start[1]];
       continue;
     }
+    // Een ingesprongen "- Label: tekst" onder het punt is een optie, advies of
+    // toelichting; een ingesprongen regel zonder streepje loopt door in wat
+    // ervoor stond (het punt zelf, of de laatste optie).
+    const sub = huidig ? /^\s{2,}[-*]\s+\**([^:*]{1,40})\**:\s*(.*)$/.exec(regel) : null;
+    if (sub) {
+      regels.push({ label: sub[1].trim(), tekst: sub[2].trim() });
+      continue;
+    }
     if (huidig && /^\s{2,}\S/.test(regel)) {
-      huidig.push(regel.trim());
+      if (regels.length > 0) regels[regels.length - 1].tekst = `${regels[regels.length - 1].tekst} ${regel.trim()}`.trim();
+      else huidig.push(regel.trim());
       continue;
     }
     if (regel.trim().length === 0) sluit();
@@ -320,6 +353,107 @@ function sorteerAandacht(items: readonly AandachtItem[]): readonly AandachtItem[
   );
 }
 
+// ---------------------------------------------------------------------------
+// Opties: wat de eigenaar kan kiezen, en wat er dan gebeurt
+// ---------------------------------------------------------------------------
+
+/** "Later" bestaat bij elk item: uitstellen is altijd een geldig antwoord. */
+const OPTIE_LATER: Optie = {
+  keuze: "later",
+  label: "Later",
+  gevolg: "Blijft staan. Jarvis brengt het de volgende keer opnieuw onder je aandacht, zonder verdere actie.",
+};
+
+/** Sleutel uit een label: kleine letters, geen accenten, streepjes. */
+export function sleutelVan(label: string): string {
+  return label
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
+/** Regels "- Label: tekst" uit een tekstblok, zoals de sectie "## Opties" van een record. */
+export function leesOptieRegels(tekst: string | undefined | null): readonly { label: string; tekst: string }[] {
+  if (!tekst) return [];
+  const uit: { label: string; tekst: string }[] = [];
+  for (const regel of tekst.replace(/\r\n/g, "\n").split("\n")) {
+    const m = /^\s*[-*]\s+\**([^:*]{1,40})\**:\s*(.*)$/.exec(regel);
+    if (m) uit.push({ label: m[1].trim(), tekst: m[2].trim() });
+    else if (uit.length > 0 && /^\s+\S/.test(regel)) uit[uit.length - 1].tekst = `${uit[uit.length - 1].tekst} ${regel.trim()}`.trim();
+  }
+  return uit;
+}
+
+/**
+ * Van regels naar opties. "Advies" en "Waarom" zijn geen keuzes maar krijgen
+ * een eigen plek. Staan er geen keuzes in de bron, dan gelden de standaard-
+ * opties van het soort item; "later" is er altijd bij.
+ */
+export function bouwOpties(
+  regels: readonly { label: string; tekst: string }[],
+  standaard: readonly Optie[],
+): { opties: readonly Optie[]; advies: string | null; waarom: string | null } {
+  const opties: Optie[] = [];
+  let advies: string | null = null;
+  let waarom: string | null = null;
+  for (const r of regels) {
+    const l = r.label.toLowerCase();
+    if (l === "advies") advies = r.tekst;
+    else if (l === "waarom") waarom = r.tekst;
+    else if (r.tekst.length > 0) opties.push({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst });
+  }
+  const basis = opties.length > 0 ? opties : [...standaard];
+  if (!basis.some((o) => o.keuze === "later")) basis.push(OPTIE_LATER);
+  return { opties: basis, advies, waarom };
+}
+
+/** Vult "waarom" met de standaardtekst wanneer de bron er geen geeft. */
+function metWaarom(
+  gebouwd: ReturnType<typeof bouwOpties>,
+  standaard: string,
+): { opties: readonly Optie[]; advies: string | null; waarom: string } {
+  return { opties: gebouwd.opties, advies: gebouwd.advies, waarom: gebouwd.waarom ?? standaard };
+}
+
+const eersteZin = (tekst: string) => {
+  const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "").trim();
+  const m = /^(.+?[.!?])(\s|$)/.exec(plat);
+  return m ? m[1] : plat;
+};
+
+const STANDAARD_ACTIE: readonly Optie[] = [
+  { keuze: "gedaan", label: "Gedaan", gevolg: "Jarvis streept dit punt af in het taakdossier en legt vast dat jij het hebt gedaan." },
+];
+const STANDAARD_BESLISSING: readonly Optie[] = [
+  { keuze: "beslist", label: "Beslissing vastleggen", gevolg: "Jarvis legt je beslissing vast als besluit en voert de gevolgen ervan uit in de repository." },
+];
+const STANDAARD_BLOKKADE: readonly Optie[] = [
+  { keuze: "opgelost", label: "Opgelost", gevolg: "Jarvis haalt de blokkade uit het statusdocument en pakt het werk weer op." },
+];
+const STANDAARD_HUMAN: readonly Optie[] = [
+  { keuze: "gedaan", label: "Gedaan", gevolg: "Jarvis controleert bij de volgende ronde of de handeling effect heeft gehad en sluit de markering." },
+];
+
+function risicoOpties(r: { kans?: string; impact?: string; mitigatie?: string }): readonly Optie[] {
+  return [
+    {
+      keuze: "accepteren",
+      label: "Accepteren",
+      gevolg:
+        `Het risico blijft bestaan (kans ${r.kans ?? "onbekend"}, impact ${r.impact ?? "onbekend"}) en gaat op "geaccepteerd": ` +
+        `Jarvis meldt het niet meer als open punt en bouwt er geen mitigatie voor.` +
+        (r.mitigatie ? ` Wat er nu al tegenover staat: ${eersteZin(r.mitigatie)}` : ""),
+    },
+    {
+      keuze: "aanpakken",
+      label: "Aanpakken",
+      gevolg: "Jarvis maakt er een taak van en legt een plan voor voordat er iets verandert; het risico gaat pas dicht als de mitigatie er staat.",
+    },
+  ];
+}
+
 /**
  * Alles wat bij de eigenaar ligt, uit vier bronnen:
  *
@@ -346,6 +480,24 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         "een jarvis.config.yml en een statusdocument. Daarna verschijnen stand, taken en beslissingen hier.",
       bron: "git",
       urgentie: "midden",
+      waarom: "Een repository op GitHub zetten en Jarvis erin inrichten raakt jouw code en jouw account; dat doet Jarvis niet ongevraagd.",
+      opties: [
+        {
+          keuze: "aansluiten",
+          label: "Aansluiten",
+          gevolg:
+            "Jarvis scant eerst de volledige git-historie op secrets, zet de repository dan privé op GitHub en richt " +
+            "Jarvis erin in: configuratie, statusdocument, kennismap en CI-poort. Daarna staan stand, taken en " +
+            "beslissingen van dit project hier.",
+        },
+        {
+          keuze: "niet",
+          label: "Niet aansluiten",
+          gevolg: "Het project blijft als gestippelde bol op de kaart, met alleen de git-beweging; Jarvis kan er niets voor doen.",
+        },
+        OPTIE_LATER,
+      ],
+      advies: null,
     });
     return items;
   }
@@ -357,7 +509,8 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
     const sectie = m ? tekst.slice(m.index + m[0].length).split(/^## /m)[0].trim() : "";
     const nietsGeblokkeerd = /^(niets|geen|nvt|n\.v\.t\.)\b/i.test(sectie);
     if (sectie.length > 0 && !nietsGeblokkeerd) {
-      const bron = blok.length > 0 ? blok : [{ titel: kortTitel(sectie), toelichting: sectie, context: "" }];
+      const bron: readonly GelezenItem[] =
+        blok.length > 0 ? blok : [{ titel: kortTitel(sectie), toelichting: sectie, context: "", regels: [] }];
       for (const [i, b] of bron.entries()) {
         items.push({
           id: `${p}:blokkade:${i + 1}`,
@@ -367,6 +520,10 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
           toelichting: b.toelichting,
           bron: "docs/CURRENT_STATE.md",
           urgentie: "hoog",
+          ...metWaarom(
+            bouwOpties(b.regels, STANDAARD_BLOKKADE),
+            "Het werk staat stil tot dit is opgelost, en de oplossing ligt buiten wat Jarvis zelf kan doen.",
+          ),
         });
       }
     }
@@ -382,6 +539,11 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         toelichting: r.samenvatting,
         bron: r.id,
         urgentie: "hoog",
+        ...metWaarom(
+          bouwOpties(leesOptieRegels(r.opties), STANDAARD_BESLISSING),
+          `Twee lezingen zijn allebei verdedigbaar en de repository beslist het niet (${(r.tussen ?? []).join(" tegenover ")}). ` +
+            "Dit is een productkeuze die alleen jij kunt maken; tot die tijd bouwt Jarvis niets dat ervan afhangt.",
+        ),
       });
     }
     if (r.type === "RSK" && r.status === "open") {
@@ -393,6 +555,10 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         toelichting: r.samenvatting,
         bron: r.id,
         urgentie: r.impact === "hoog" ? "midden" : "laag",
+        ...metWaarom(
+          bouwOpties(leesOptieRegels(r.opties), risicoOpties(r)),
+          `Jij bent eigenaar van dit risico (${r.eigenaar}); open sinds ${r.datum}. Accepteren of laten aanpakken is jouw afweging, niet die van Jarvis.`,
+        ),
       });
     }
   }
@@ -415,6 +581,10 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         toelichting: item.context ? `${item.context}. ${item.toelichting}` : item.toelichting,
         bron: `tasks/${taak.id}/resultaat.md`,
         urgentie: blokkerend ? "hoog" : naMerge ? "laag" : "midden",
+        ...metWaarom(
+          bouwOpties(item.regels, beslissing ? STANDAARD_BESLISSING : STANDAARD_ACTIE),
+          `Staat in het resultaat van ${taak.id} als punt dat alleen de eigenaar kan doen.`,
+        ),
       });
     }
     const markeringen = taak.resultaat.match(/HUMAN_ACTION_REQUIRED[^\n]*/g) ?? [];
@@ -427,6 +597,9 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         toelichting: m,
         bron: `tasks/${taak.id}/resultaat.md`,
         urgentie: "hoog",
+        waarom: "Een agent kan dit niet zonder jouw toegang of toestemming; daarom staat er een markering in het taakdossier.",
+        opties: [...STANDAARD_HUMAN, OPTIE_LATER],
+        advies: null,
       });
     }
   }

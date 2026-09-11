@@ -61,8 +61,12 @@ const SECTIEVELDEN: Readonly<Record<RecordType, readonly SectieVeld[]>> = {
   RSK: [
     { kop: "beschrijving", veld: "beschrijving", lijst: false },
     { kop: "mitigatie", veld: "mitigatie", lijst: false },
+    { kop: "opties", veld: "opties", lijst: false },
   ],
-  CFL: [{ kop: "beschrijving", veld: "beschrijving", lijst: false }],
+  CFL: [
+    { kop: "beschrijving", veld: "beschrijving", lijst: false },
+    { kop: "opties", veld: "opties", lijst: false },
+  ],
 };
 
 export type GeladenRecord = {

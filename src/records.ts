@@ -116,6 +116,9 @@ export const riskSchema = z.strictObject({
   mitigatie: nonEmpty,
   eigenaar: nonEmpty,
   status: z.enum(["open", "beheerst", "geaccepteerd", "vervallen"]),
+  // Sectie "## Opties": per keuze wat er dan gebeurt, plus een advies. Vrij
+  // van vorm hier; de interface leest er regels "- Label: gevolg" uit.
+  opties: z.string().optional(),
 });
 
 export const conflictSchema = z.strictObject({
@@ -127,6 +130,7 @@ export const conflictSchema = z.strictObject({
   status: z.enum(["open", "opgelost"]),
   // Verplicht zodra status = opgelost (zie superRefine hieronder).
   opgelost_door: idField.optional(),
+  opties: z.string().optional(),
 });
 
 export const knowledgeRecordSchema = z
