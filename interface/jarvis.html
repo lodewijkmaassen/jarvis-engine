@@ -179,6 +179,49 @@ details.stand[open] summary::after{content:"–"}
 .meer{display:block;width:100%;text-align:center;min-height:44px;color:var(--cyaan);font-family:var(--display);letter-spacing:.12em;text-transform:uppercase;font-weight:600}
 .melding{background:var(--midden-zacht);color:var(--inkt);border:1px solid var(--midden);padding:12px 14px;margin:10px 0;font-size:14px}
 .melding.fout{background:var(--hoog-zacht);border-color:var(--hoog)}
+
+/* ---- taken met voortgang ---- */
+.taak{flex-wrap:wrap}
+.taak .kopregel{display:flex;gap:10px;align-items:center;width:100%}
+.voortgang{width:100%;margin-top:8px}
+.balk{height:4px;background:var(--lijn);position:relative;margin:6px 0 8px}
+.balk i{position:absolute;left:0;top:0;bottom:0;background:var(--cyaan);box-shadow:0 0 8px var(--cyaan)}
+.stap{display:grid;grid-template-columns:18px 1fr;gap:8px;padding:3px 0;font-size:13.5px;color:var(--gedempt);align-items:start}
+.stap.gedaan{color:var(--zacht);text-decoration:line-through;text-decoration-color:var(--zacht)}
+.stap .vink{font-family:var(--mono);color:var(--ok)}
+.stap.open .vink{color:var(--midden)}
+.stap.nu .vink{color:var(--cyaan)}
+.stap.nu{color:var(--inkt)}
+.taak .gast{font-family:var(--mono);font-size:11px;color:var(--zacht);width:100%}
+/* ---- Jarvis: activiteit ---- */
+.agent{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:10px 12px;background:var(--vlak);border:1px solid var(--lijn);margin-bottom:8px;align-items:center}
+.agent .naam{font-family:var(--display);font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#fff}
+.agent .naam .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:8px;background:var(--zacht);vertical-align:1px}
+.agent.actief .naam .dot{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.agent.bezig .naam .dot{background:var(--cyaan);box-shadow:0 0 8px var(--cyaan)}
+@media(prefers-reduced-motion:no-preference){.agent.bezig .naam .dot{animation:knip 1.2s ease-in-out infinite}}
+.agent .wat{grid-column:1/3;font-size:14px;color:var(--inkt)}
+.agent .meta{grid-column:1/3;font-family:var(--mono);font-size:11px;color:var(--zacht)}
+.rolrij{display:grid;grid-template-columns:auto 1fr auto;gap:8px 12px;padding:8px 12px;border:1px solid var(--lijn);background:var(--vlak);margin-bottom:6px;align-items:baseline}
+.rolrij .rol{font-family:var(--display);font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--cyaan)}
+.rolrij .n{font-family:var(--mono);font-size:12px;color:var(--gedempt)}
+.rolrij .ond{grid-column:1/4;font-size:13.5px;color:var(--gedempt)}
+/* ---- gesprek ---- */
+.gesprek{display:flex;flex-direction:column;gap:8px;margin-bottom:12px}
+.bericht{max-width:64ch;padding:10px 12px;border:1px solid var(--lijn);background:var(--vlak);font-size:14.5px;line-height:1.5}
+.bericht.jarvis{border-left:3px solid var(--cyaan);align-self:flex-start}
+.bericht.eigenaar{border-right:3px solid var(--midden);align-self:flex-end;background:var(--vlak2)}
+.bericht .van{font-family:var(--display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyaan);display:block;margin-bottom:2px}
+.bericht.eigenaar .van{color:var(--midden)}
+.bericht .tijd{font-family:var(--mono);font-size:10.5px;color:var(--zacht);margin-left:8px}
+.bericht.wacht{opacity:.7}
+.invoer{display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:end}
+.invoer textarea{min-height:48px;resize:vertical;padding:10px;border:1px solid var(--lijn2);background:rgba(6,10,16,.7);color:var(--inkt);font:inherit;font-size:14.5px}
+.invoer .knop{min-height:48px}
+.knop.mic.aan{border-color:var(--hoog);color:var(--hoog);box-shadow:0 0 10px rgba(255,92,108,.5)}
+.stemregel{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-top:10px;font-family:var(--mono);font-size:11.5px;color:var(--gedempt)}
+.stemregel label{display:inline-flex;gap:6px;align-items:center;min-height:32px;cursor:pointer}
+.stemregel select{background:var(--vlak2);color:var(--inkt);border:1px solid var(--lijn2);font:inherit;font-size:12px;padding:4px 6px;max-width:100%}
 .voet{margin-top:28px;padding:0 4px;font-family:var(--mono);font-size:11px;color:var(--zacht);line-height:1.7}
 </style>
 
@@ -206,7 +249,9 @@ const $kaart = document.getElementById("kaart");
 const $status = document.getElementById("status");
 const RECENT_DAGEN = 14;
 
-const staat = { overzicht: null, antwoorden: new Map(), db: null, artifact: null, zicht: { soort: "jou" }, open: new Set(), toonAlles: new Set(), dbFout: null, signaal: "" };
+const staat = { overzicht: null, antwoorden: new Map(), berichten: [], jarvis: null, db: null, artifact: null, zicht: { soort: "jou" }, open: new Set(), toonAlles: new Set(), dbFout: null, signaal: "", stem: { aan: false, naam: "" }, luistert: false, laatstVoorgelezen: "" };
+try { const st = localStorage.getItem("jarvis.stem"); if (st) staat.stem = JSON.parse(st); } catch { /* geen opslag */ }
+const bewaarStem = () => { try { localStorage.setItem("jarvis.stem", JSON.stringify(staat.stem)); } catch { /* geen opslag */ } };
 try { const z = sessionStorage.getItem("jarvis.zicht"); if (z) staat.zicht = JSON.parse(z); } catch { /* geen opslag */ }
 const bewaarZicht = () => { try { sessionStorage.setItem("jarvis.zicht", JSON.stringify(staat.zicht)); } catch { /* geen opslag */ } };
 
@@ -276,7 +321,7 @@ function tekenKaart() {
     const dikte = 0.8 + k.activiteit * 2.2;
     s += `<line x1="${cx}" y1="${cy}" x2="${k.x.toFixed(1)}" y2="${k.y.toFixed(1)}" stroke-width="${dikte.toFixed(1)}" class="${k.p.aangesloten ? "" : "los"}"/>`;
   }
-  const centrumActief = zicht.soort === "jou";
+  const centrumActief = zicht.soort === "jarvis";
   const openTotaal = o.voor_jou.filter((a) => !staat.antwoorden.has(a.id)).length;
   s += `<g class="centrum knoop ${centrumActief ? "actief" : ""}" data-doel="jou" tabindex="0" role="button" aria-label="Jarvis, alles wat bij jou ligt">
     <circle class="draai" cx="${cx}" cy="${cy}" r="44"/>
@@ -305,7 +350,7 @@ function tekenKaart() {
 $kaart.addEventListener("click", (e) => { const g = e.target.closest(".knoop"); if (g) navigeer(g); });
 $kaart.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { const g = e.target.closest(".knoop"); if (g) { e.preventDefault(); navigeer(g); } } });
 function navigeer(g) {
-  staat.zicht = g.dataset.doel === "jou" ? { soort: "jou" } : { soort: "project", id: g.dataset.id, tab: "jou" };
+  staat.zicht = g.dataset.doel === "jou" ? { soort: "jarvis", tab: "jou" } : { soort: "project", id: g.dataset.id, tab: "jou" };
   bewaarZicht(); render();
   if (window.innerWidth < 900) $inhoud.scrollIntoView({ behavior: "smooth", block: "start" });
 }
@@ -423,9 +468,11 @@ function projectHtml(p, tab) {
     else if (!alles && p.recent.length > 30) lichaam += `<button class="meer" data-actie="alles" data-id="${esc(p.id)}">Toon alle ${p.recent.length} commits</button>`;
   } else if (tab === "taken") {
     lichaam = taken.length
-      ? taken.map((t) => `<div class="taak"><div><div class="id">${esc(t.id)}</div><div class="t">${esc(t.titel)}</div></div><div class="r"><span class="chip">${esc(t.status)}</span>${t.klasse ? `<span class="chip">klasse ${esc(t.klasse)}</span>` : ""}</div></div>`).join("")
+      ? taken.map((t) => taakHtml(t, p.id)).join("")
       : `<div class="paneel leeg"><strong>Geen taakdossiers</strong>${p.aangesloten ? "Er staat geen taak open." : "Taken bestaan pas als dit project op Jarvis is aangesloten."}</div>`;
   }
+  const lopend = taken.filter((t) => t.status !== "afgerond" && t.stappen?.length);
+  if (tab === "jou" && lopend.length) lichaam = `<div class="sectie" style="margin-top:0"><div class="sectiekop"><h2 style="font-size:15px">Wat Jarvis doet</h2><span class="tel">${lopend.length} ${lopend.length === 1 ? "taak" : "taken"}</span></div>${lopend.map((t) => taakHtml(t, p.id)).join("")}</div><div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Voor jou</h2><span class="tel">${open} open</span></div>${lichaam}</div>`;
   return `
     <button class="terug" data-actie="jou">← Alles</button>
     <div class="projkop">
@@ -445,6 +492,99 @@ function projectHtml(p, tab) {
     <div>${lichaam}</div>`;
 }
 
+function taakHtml(t, projectId) {
+  const stappen = t.stappen ?? [];
+  const gedaan = stappen.filter((x) => x.gedaan).length;
+  const eersteOpen = stappen.findIndex((x) => !x.gedaan);
+  return `<div class="taak"><div class="kopregel"><div><div class="id">${esc(t.id)}</div><div class="t">${esc(t.titel)}</div></div><div class="r"><span class="chip">${esc(t.status)}</span>${t.klasse ? `<span class="chip">klasse ${esc(t.klasse)}</span>` : ""}</div></div>
+    ${stappen.length ? `<div class="voortgang"><div class="mono" style="font-size:11.5px;color:var(--gedempt)">${gedaan} van ${stappen.length} stappen</div><div class="balk"><i style="width:${Math.round((gedaan / stappen.length) * 100)}%"></i></div>${stappen.map((x, i) => `<div class="stap ${x.gedaan ? "gedaan" : i === eersteOpen ? "nu" : "open"}"><span class="vink">${x.gedaan ? "■" : i === eersteOpen ? "▶" : "□"}</span><span>${inlineMd(x.tekst)}</span></div>`).join("")}</div>` : ""}
+    ${t.gastheer && t.gastheer !== projectId ? `<div class="gast">dossier en commits in ${esc(t.gastheer)}</div>` : ""}</div>`;
+}
+
+/* ---------- Jarvis zelf ---------- */
+function jarvisHtml(tab) {
+  const o = staat.overzicht;
+  const j = staat.jarvis;
+  const tabs = [["jou", "Voor jou", o.voor_jou.filter((i) => !staat.antwoorden.has(i.id)).length], ["activiteit", "Activiteit", (j?.agenten?.length ?? 0) + 1], ["gesprek", "Gesprek", staat.berichten.length]];
+  let lichaam = "";
+  if (tab === "jou") lichaam = overzichtHtml();
+  else if (tab === "activiteit") lichaam = activiteitHtml();
+  else lichaam = gesprekHtml();
+  const live = jarvisLive();
+  return `
+    <div class="projkop">
+      <h2>Jarvis</h2>
+      <div class="sub"><span>${live.tekst}</span>${j?.sessie?.model ? `<span>${esc(j.sessie.model)}</span>` : ""}</div>
+    </div>
+    <div class="tabs" role="tablist">${tabs.map(([id, l, n]) => `<button class="tab" role="tab" aria-selected="${tab === id}" data-actie="tab" data-tab="${id}">${l}<span class="tel">${n}</span></button>`).join("")}</div>
+    <div>${lichaam}</div>`;
+}
+
+/* Is er nu een sessie? Alleen wat de sessie zelf de laatste tien minuten heeft geschreven telt. */
+function jarvisLive() {
+  const j = staat.jarvis;
+  const laatste = j?.sessie?.laatste ? Date.now() - new Date(j.sessie.laatste).getTime() : Infinity;
+  if (laatste < 10 * 6e4) return { live: true, bezig: !!j.sessie.bezig_met, tekst: j.sessie.bezig_met ? `bezig: ${j.sessie.bezig_met}` : "sessie actief, wacht op jou" };
+  if (j?.sessie?.laatste) return { live: false, bezig: false, tekst: `geen sessie actief · laatst gezien ${relatief(j.sessie.laatste)}` };
+  return { live: false, bezig: false, tekst: "geen sessie gezien" };
+}
+
+function activiteitHtml() {
+  const j = staat.jarvis;
+  const live = jarvisLive();
+  const o = staat.overzicht;
+  let s = `<div class="sectie" style="margin-top:0"><div class="sectiekop"><h2 style="font-size:15px">Sessie en agents</h2><span class="tel">${live.live ? "live" : "offline"}</span></div>`;
+  s += `<div class="agent ${live.bezig ? "bezig" : live.live ? "actief" : ""}"><span class="naam"><span class="dot"></span>${esc(j?.sessie?.naam ?? "Jarvis")}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(j?.sessie?.rol ?? "orchestrator")}</span>
+    <span class="wat">${esc(live.tekst)}</span>
+    <span class="meta">${j?.sessie?.model ? esc(j.sessie.model) + " · " : ""}${j?.sessie?.sinds ? "sinds " + esc(datumKort(j.sessie.sinds)) + " " + esc(tijd(j.sessie.sinds)) : ""}${j?.sessie?.laatste ? " · laatste update " + esc(tijd(j.sessie.laatste)) : ""}</span></div>`;
+  for (const a of j?.agenten ?? []) {
+    s += `<div class="agent ${a.status === "bezig" ? "bezig" : a.status === "klaar" ? "" : "actief"}"><span class="naam"><span class="dot"></span>${esc(a.naam)}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(a.rol ?? "")}</span><span class="wat">${esc(a.wat ?? "")}</span><span class="meta">${esc(a.status ?? "")}${a.taak ? " · " + esc(a.taak) : ""}${a.op ? " · " + esc(datumKort(a.op)) + " " + esc(tijd(a.op)) : ""}</span></div>`;
+  }
+  if (!(j?.agenten ?? []).length) s += `<p style="color:var(--gedempt);font-size:13.5px;padding:0 4px">Geen losse agents actief. Jarvis start die alleen voor afgebakend werk (een onafhankelijke QA-ronde, een verkenning) en meldt ze hier zodra ze lopen.</p>`;
+  s += `<p style="color:var(--zacht);font-family:var(--mono);font-size:11px;padding:8px 4px 0">Eén model, vijf rollen. Alles wat Jarvis doet landt als commit onder één rol; er werkt geen andere AI mee.</p></div>`;
+  // Werk per rol, 14 dagen, over alle projecten
+  const perRol = new Map();
+  for (const p of o.projecten) for (const c of p.recent) { const r = c.rol ?? (c.soort === "merge" ? "merge" : "zonder rol"); const e = perRol.get(r) ?? { n: 0, laatste: null, project: p.naam }; e.n += 1; if (!e.laatste) { e.laatste = c; e.project = p.naam; } perRol.set(r, e); }
+  const rollen = [...perRol.entries()].sort((a, b) => b[1].n - a[1].n);
+  s += `<div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Werk per rol</h2><span class="tel">${RECENT_DAGEN} dagen</span></div>${rollen.map(([rol, e]) => `<div class="rolrij"><span class="rol">${esc(rol)}</span><span class="n">${e.n} commits</span><span class="n">${esc(e.project)}</span><span class="ond">laatste: ${esc(e.laatste.onderwerp)} <span class="mono">${esc(e.laatste.hash)} · ${esc(dagLabel(e.laatste.datum))}</span></span></div>`).join("")}</div>`;
+  if (staat.signaalInfo) s += `<div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Laatste signaal</h2></div><p class="mono" style="font-size:12px;color:var(--gedempt);padding:0 4px">${esc(staat.signaalInfo)}</p></div>`;
+  return s;
+}
+
+function gesprekHtml() {
+  const live = jarvisLive();
+  const berichten = [...staat.berichten].sort((a, b) => String(a.op).localeCompare(String(b.op))).slice(-60);
+  let s = `<div class="gesprek">${berichten.length ? berichten.map((b) => `<div class="bericht ${b.van === "jarvis" ? "jarvis" : "eigenaar"} ${b.status === "nieuw" && b.van !== "jarvis" ? "wacht" : ""}"><span class="van">${b.van === "jarvis" ? "Jarvis" : "Jij"}<span class="tijd">${esc(datumKort(b.op))} ${esc(tijd(b.op))}${b.van !== "jarvis" && b.status === "nieuw" ? " · wacht op Jarvis" : ""}</span></span>${inlineMd(b.tekst)}</div>`).join("") : `<div class="paneel leeg"><strong>Nog geen gesprek</strong>Stel een vraag of geef een opdracht. ${live.live ? "Er is een sessie actief; Jarvis antwoordt hier." : "Er is nu geen sessie actief; je bericht wacht tot de volgende."}</div>`}</div>`;
+  s += `<div class="invoer"><textarea id="bericht-invoer" placeholder="${live.live ? "Zeg het maar…" : "Bericht voor de volgende sessie…"}" aria-label="Bericht aan Jarvis"></textarea>${"SpeechRecognition" in window || "webkitSpeechRecognition" in window ? `<button class="knop mic ${staat.luistert ? "aan" : ""}" data-actie="mic" aria-label="Spreek">${staat.luistert ? "● luistert" : "🎙 spreek"}</button>` : ""}<button class="knop" data-actie="verstuur">Verstuur</button></div>`;
+  const stemmen = ("speechSynthesis" in window) ? speechSynthesis.getVoices().filter((v) => /^nl/i.test(v.lang)) : [];
+  s += `<div class="stemregel"><label><input type="checkbox" data-actie="stem-aan" ${staat.stem.aan ? "checked" : ""}> Jarvis leest antwoorden voor</label>${stemmen.length ? `<label>stem <select data-actie="stem-kies">${stemmen.map((v) => `<option value="${esc(v.name)}" ${v.name === staat.stem.naam ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></label>` : `<span>geen Nederlandse stem in deze browser</span>`}<span>bericht wekt de sessie zoals een antwoord</span></div>`;
+  return s;
+}
+
+/* ---------- stem ---------- */
+function spreek(tekst) {
+  if (!staat.stem.aan || !("speechSynthesis" in window)) return;
+  const u = new SpeechSynthesisUtterance(String(tekst).replace(/[`*_#]/g, ""));
+  u.lang = "nl-NL"; u.rate = 0.98; u.pitch = 0.85;
+  const v = speechSynthesis.getVoices().find((x) => x.name === staat.stem.naam) ?? speechSynthesis.getVoices().find((x) => /^nl/i.test(x.lang));
+  if (v) u.voice = v;
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+let herkenner = null;
+function luister() {
+  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!R) return;
+  if (staat.luistert) { herkenner?.stop(); return; }
+  herkenner = new R(); herkenner.lang = "nl-NL"; herkenner.interimResults = true; herkenner.continuous = false;
+  const vak = document.getElementById("bericht-invoer");
+  const basis = vak ? vak.value : "";
+  herkenner.onresult = (e) => { let t = ""; for (const r of e.results) t += r[0].transcript; const v = document.getElementById("bericht-invoer"); if (v) v.value = (basis ? basis + " " : "") + t; };
+  herkenner.onend = () => { staat.luistert = false; render(); };
+  herkenner.onerror = () => { staat.luistert = false; render(); };
+  staat.luistert = true; herkenner.start(); render();
+}
+if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => { if (staat.zicht.soort === "jarvis" && staat.zicht.tab === "gesprek") render(); };
+
 /* ---------- render ---------- */
 function render() {
   const o = staat.overzicht;
@@ -457,11 +597,15 @@ function render() {
   if (staat.zicht.soort === "project") {
     const p = o.projecten.find((x) => x.id === staat.zicht.id);
     s += p ? projectHtml(p, staat.zicht.tab ?? "jou") : overzichtHtml();
-  } else s += overzichtHtml();
+  } else if (staat.zicht.soort === "jarvis") s += jarvisHtml(staat.zicht.tab ?? "jou");
+  else s += overzichtHtml();
   s += `<div class="voet">Alles hier is afgeleid uit de repositories; GitHub blijft de bron van waarheid. Een antwoord landt bij Jarvis en wordt door een sessie verwerkt langs de gewone weg — pull request, review, record. Stand gegenereerd ${esc(datumKort(o.gegenereerd_op))} ${esc(tijd(o.gegenereerd_op))}.</div>`;
   $inhoud.innerHTML = s;
-  const wachten = [...staat.antwoorden.values()].filter((a) => a.status !== "verwerkt").length;
-  $status.innerHTML = `<span class="dot ${wachten ? "bezig" : ""}"></span><b>${wachten ? `${wachten} antwoord${wachten === 1 ? "" : "en"} bij Jarvis` : "verbonden"}</b><br><span class="${leeftijdDagen > 3 ? "oud" : ""}">stand ${esc(relatief(o.gegenereerd_op))}</span>${staat.signaal ? `<br>${esc(staat.signaal)}` : ""}`;
+  const wachten = [...staat.antwoorden.values()].filter((a) => a.status !== "verwerkt").length + staat.berichten.filter((b) => b.van !== "jarvis" && b.status === "nieuw").length;
+  const live = jarvisLive();
+  $status.innerHTML = `<span class="dot ${live.bezig || wachten ? "bezig" : live.live ? "" : "uit"}"></span><b>${live.bezig ? esc(live.tekst) : wachten ? `${wachten} bij Jarvis` : live.live ? "sessie actief" : "geen sessie"}</b><br><span class="${leeftijdDagen > 3 ? "oud" : ""}">stand ${esc(relatief(o.gegenereerd_op))}</span>${staat.signaal ? `<br>${esc(staat.signaal)}` : ""}`;
+  const vak = document.getElementById("bericht-invoer");
+  if (vak && staat.concept) { vak.value = staat.concept; }
   document.getElementById("kop-versie").textContent = `v${o.versie ?? 1}`;
 }
 
@@ -471,6 +615,8 @@ $inhoud.addEventListener("click", async (e) => {
   if (actie === "toggle") { staat.open.has(id) ? staat.open.delete(id) : staat.open.add(id); render(); return; }
   if (actie === "project") { staat.zicht = { soort: "project", id, tab: "jou" }; bewaarZicht(); render(); window.scrollTo({ top: 0, behavior: "smooth" }); return; }
   if (actie === "jou") { staat.zicht = { soort: "jou" }; bewaarZicht(); render(); return; }
+  if (actie === "verstuur") { const vak = document.getElementById("bericht-invoer"); const tekst = vak ? vak.value.trim() : ""; if (!tekst) { vak?.focus(); return; } el.disabled = true; staat.concept = ""; await verstuurBericht(tekst); return; }
+  if (actie === "mic") { luister(); return; }
   if (actie === "tab") { staat.zicht.tab = el.dataset.tab; bewaarZicht(); render(); return; }
   if (actie === "alles") { staat.toonAlles.add(id); render(); return; }
   if (actie === "ongedaan") { await verwijderAntwoord(id); return; }
@@ -482,6 +628,13 @@ $inhoud.addEventListener("click", async (e) => {
     await bewaarAntwoord(id, el.dataset.keuze, el.dataset.label, notitie);
   }
 });
+
+$inhoud.addEventListener("change", (e) => {
+  const el = e.target.closest("[data-actie]"); if (!el) return;
+  if (el.dataset.actie === "stem-aan") { staat.stem.aan = el.checked; bewaarStem(); if (el.checked) spreek("Jarvis online."); }
+  if (el.dataset.actie === "stem-kies") { staat.stem.naam = el.value; bewaarStem(); spreek("Zo klink ik."); }
+});
+$inhoud.addEventListener("input", (e) => { if (e.target.id === "bericht-invoer") staat.concept = e.target.value; });
 
 /* ---------- gegevens ---------- */
 const docId = (itemId) => itemId.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
@@ -496,8 +649,9 @@ function meldJarvis(reden) {
   clearTimeout(signaalTimer);
   signaalTimer = setTimeout(async () => {
     const wachten = [...staat.antwoorden.values()].filter((a) => a.status !== "verwerkt").map((a) => a.item_id);
+    const berichten = staat.berichten.filter((b) => b.van !== "jarvis" && b.status === "nieuw").length;
     try {
-      await staat.artifact.publish({ "signaal.json": { content: JSON.stringify({ op: new Date().toISOString(), reden, wachten }, null, 2), contentType: "application/json" } });
+      await staat.artifact.publish({ "signaal.json": { content: JSON.stringify({ op: new Date().toISOString(), reden, wachten, berichten }, null, 2), contentType: "application/json" } });
       staat.signaal = "Jarvis gewekt";
     } catch (err) {
       staat.signaal = err?.code === "capability_disabled" ? "wekken hier niet mogelijk" : `wekken mislukt (${err?.code ?? "onbekend"})`;
@@ -512,6 +666,12 @@ async function bewaarAntwoord(itemId, keuze, keuzeLabel, notitie) {
   const antwoord = { item_id: itemId, project: item?.project ?? null, soort: item?.soort ?? null, titel: item?.titel ?? null, bron: item?.bron ?? null, keuze, keuze_label: keuzeLabel, notitie, op: new Date().toISOString(), status: "nieuw", overzicht_van: staat.overzicht.gegenereerd_op };
   try { await staat.db.doc(`antwoorden/${docId(itemId)}`).set(antwoord); staat.antwoorden.set(itemId, antwoord); staat.dbFout = null; meldJarvis(`antwoord ${itemId}`); }
   catch (err) { staat.dbFout = `Antwoord niet opgeslagen (${err?.code ?? "onbekend"}). Probeer het opnieuw.`; }
+  render();
+}
+async function verstuurBericht(tekst) {
+  const bericht = { van: "eigenaar", tekst, op: new Date().toISOString(), status: "nieuw", zicht: staat.zicht };
+  try { await staat.db.collection("berichten").add(bericht); staat.dbFout = null; meldJarvis("bericht"); }
+  catch (err) { staat.dbFout = `Bericht niet verzonden (${err?.code ?? "onbekend"}).`; staat.concept = tekst; }
   render();
 }
 async function verwijderAntwoord(itemId) {
@@ -539,6 +699,13 @@ async function start() {
     staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [] };
     render();
   }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code}).`; if (staat.overzicht) render(); else $inhoud.innerHTML = `<div class="melding fout" style="margin-top:18px">${esc(staat.dbFout)}</div>`; });
+  db.doc("jarvis/status").onSnapshot((snap) => { staat.jarvis = snap.exists ? snap.data() : null; render(); }, () => { /* geen status: offline */ });
+  db.collection("berichten").onSnapshot((snap) => {
+    staat.berichten = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((b) => b.tekst);
+    const laatsteJarvis = [...staat.berichten].filter((b) => b.van === "jarvis").sort((a, b) => String(a.op).localeCompare(String(b.op))).pop();
+    if (laatsteJarvis && laatsteJarvis.id !== staat.laatstVoorgelezen && !snap.metadata?.fromCache) { if (staat.laatstVoorgelezen) spreek(laatsteJarvis.tekst); staat.laatstVoorgelezen = laatsteJarvis.id; }
+    render();
+  }, (err) => { staat.dbFout = `Gesprek niet te lezen (${err.code}).`; render(); });
   db.collection("antwoorden").onSnapshot((snap) => {
     staat.antwoorden = new Map();
     for (const d of snap.docs) { const a = d.data(); if (a?.item_id) staat.antwoorden.set(a.item_id, a); }

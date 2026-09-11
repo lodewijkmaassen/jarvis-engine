@@ -460,7 +460,13 @@ async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<
     .split(",")
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
-  for (const pad of externPaden) externen.push(await leesExternProject(pad));
+  for (const pad of externPaden) {
+    const extern = await leesExternProject(pad);
+    // Loopt er in deze repository al een taak over dat project (front-matter
+    // `project:`), dan is "aansluiten" geen open vraag meer maar werk in uitvoering.
+    const loopt = eigen.taken.some((t) => t.opdracht["project"] === extern.id && t.opdracht["status"] !== "afgerond");
+    externen.push({ ...extern, aansluitingLoopt: loopt });
+  }
 
   const overzicht = bouwOverzicht([eigen, ...externen], nu);
   const json = `${JSON.stringify(overzicht, null, 2)}\n`;

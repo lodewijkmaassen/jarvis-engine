@@ -59,11 +59,22 @@ export type RecentItem = {
   readonly soort: "commit" | "merge";
 };
 
+/** Eén stap uit de voortgangslijst van een taak (`## Voortgang` in resultaat.md). */
+export type TaakStap = {
+  readonly tekst: string;
+  readonly gedaan: boolean;
+};
+
 export type TaakItem = {
   readonly id: string;
   readonly titel: string;
   readonly status: string;
   readonly klasse: string | null;
+  /** Het project waar de taak over gaat; standaard het project dat het dossier draagt. */
+  readonly project: string;
+  /** Het project dat het dossier draagt (waar de commits landen). */
+  readonly gastheer: string;
+  readonly stappen: readonly TaakStap[];
 };
 
 export type StandSectie = {
@@ -120,6 +131,8 @@ export type ProjectInvoer = {
   readonly hoofdbranch: ProjectOverzicht["hoofdbranch"];
   /** Volledige tekst van het statusdocument, of null bij een niet-aangesloten project. */
   readonly statusDocument: string | null;
+  /** Er loopt al een taak om dit project aan te sluiten; dan is "aansluiten" geen open vraag meer. */
+  readonly aansluitingLoopt?: boolean;
   readonly records: readonly KnowledgeRecord[];
   readonly taken: readonly TaakDossier[];
   readonly gitLog: readonly GitRegel[];
@@ -469,7 +482,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
   const items: AandachtItem[] = [];
   const p = invoer.id;
 
-  if (!invoer.aangesloten) {
+  if (!invoer.aangesloten && !invoer.aansluitingLoopt) {
     items.push({
       id: `${p}:aansluiten`,
       project: p,
@@ -575,7 +588,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       const beslissing = blokkerend || /^beslis/i.test(item.titel);
       items.push({
         id: `${p}:${taak.id}:${korteSleutel(item.titel)}`,
-        project: p,
+        project: taak.opdracht["project"] ?? p,
         soort: beslissing ? "beslissing" : "actie",
         titel: item.titel,
         toelichting: item.context ? `${item.context}. ${item.toelichting}` : item.toelichting,
@@ -591,7 +604,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
     for (const [i, m] of markeringen.entries()) {
       items.push({
         id: `${p}:${taak.id}:human-action:${i + 1}`,
-        project: p,
+        project: taak.opdracht["project"] ?? p,
         soort: "actie",
         titel: kortTitel(m.replace(/^HUMAN_ACTION_REQUIRED\W*/, "")),
         toelichting: m,
@@ -611,13 +624,39 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
 // Samenstellen
 // ---------------------------------------------------------------------------
 
-export function leesTaken(taken: readonly TaakDossier[]): readonly TaakItem[] {
+const KOP_VOORTGANG = /^## Voortgang\s*$/m;
+
+/**
+ * De checklist onder `## Voortgang` in resultaat.md: regels `- [x] ...` en
+ * `- [ ] ...`, in volgorde. Een ingesprongen vervolgregel hoort bij de stap.
+ */
+export function leesVoortgang(resultaat: string | null): readonly TaakStap[] {
+  if (!resultaat) return [];
+  const tekst = resultaat.replace(/\r\n/g, "\n");
+  const m = KOP_VOORTGANG.exec(tekst);
+  if (!m) return [];
+  const vanaf = tekst.slice(m.index + m[0].length);
+  const volgende = /^## /m.exec(vanaf);
+  const sectie = volgende ? vanaf.slice(0, volgende.index) : vanaf;
+  const stappen: { tekst: string; gedaan: boolean }[] = [];
+  for (const regel of sectie.split("\n")) {
+    const stap = /^\s*[-*]\s+\[([ xX])\]\s+(.*)$/.exec(regel);
+    if (stap) stappen.push({ tekst: stap[2].trim(), gedaan: stap[1] !== " " });
+    else if (stappen.length > 0 && /^\s{2,}\S/.test(regel)) stappen[stappen.length - 1].tekst += ` ${regel.trim()}`;
+  }
+  return stappen;
+}
+
+export function leesTaken(taken: readonly TaakDossier[], gastheer: string): readonly TaakItem[] {
   return taken
     .map((t) => ({
       id: t.id,
       titel: t.opdracht["titel"] ?? t.id,
       status: t.opdracht["status"] ?? "onbekend",
       klasse: t.opdracht["klasse"] ?? null,
+      project: t.opdracht["project"] ?? gastheer,
+      gastheer,
+      stappen: leesVoortgang(t.resultaat),
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
@@ -637,14 +676,36 @@ export function bouwProjectOverzicht(invoer: ProjectInvoer, nu: Date): ProjectOv
     stand: invoer.statusDocument ? leesStandSecties(invoer.statusDocument) : [],
     feiten: invoer.statusDocument ? leesFeiten(invoer.statusDocument) : [],
     recent: leesRecent(invoer.gitLog, nu),
-    taken: leesTaken(invoer.taken),
+    taken: leesTaken(invoer.taken, invoer.id),
     kennis: telKennis(invoer.records),
     aandacht: leesAandacht(invoer),
   };
 }
 
+/**
+ * Een taakdossier kan over een ander project gaan dan het project dat het
+ * draagt (`project:` in de front-matter): de aansluiting van een nieuw project
+ * leeft in de repository die Jarvis al heeft, maar hoort in het overzicht bij
+ * dat nieuwe project. Items en taken verhuizen dan; bestaat het doelproject
+ * niet in het overzicht, dan blijven ze staan waar ze zijn.
+ */
+function herverdeel(projecten: readonly ProjectOverzicht[]): readonly ProjectOverzicht[] {
+  const ids = new Set(projecten.map((p) => p.id));
+  return projecten.map((doel) => ({
+    ...doel,
+    aandacht: sorteerAandacht(
+      projecten.flatMap((bron) =>
+        bron.aandacht.filter((a) => (ids.has(a.project) ? a.project === doel.id : bron.id === doel.id)),
+      ),
+    ),
+    taken: projecten
+      .flatMap((bron) => bron.taken.filter((t) => (ids.has(t.project) ? t.project === doel.id : bron.id === doel.id)))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  }));
+}
+
 export function bouwOverzicht(projecten: readonly ProjectInvoer[], nu: Date): Overzicht {
-  const uitgewerkt = projecten.map((p) => bouwProjectOverzicht(p, nu));
+  const uitgewerkt = herverdeel(projecten.map((p) => bouwProjectOverzicht(p, nu)));
   return {
     versie: OVERZICHT_VERSIE,
     gegenereerd_op: nu.toISOString(),
