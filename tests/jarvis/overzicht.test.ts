@@ -201,6 +201,18 @@ describe("wat bij de eigenaar ligt", () => {
     ]);
   });
 
+  it("laat een open risico met een lopende aanpak uit de eigenaarslijst: dat werk is van Jarvis", () => {
+    const items = leesAandacht(
+      project({
+        records: [
+          record({ id: "RSK-0001", type: "RSK", status: "open", kans: "laag", impact: "hoog", aanpak: "T-20260912-opruimen" } as never),
+          record({ id: "RSK-0002", type: "RSK", status: "open", kans: "laag", impact: "laag" } as never),
+        ],
+      }),
+    );
+    expect(items.map((i) => i.bron)).toEqual(["RSK-0002"]);
+  });
+
   it("leest de eigenaarslijst uit een taakdossier, blokkerend als beslissing", () => {
     const resultaat = [
       "## Wat de eigenaar nog moet doen",
