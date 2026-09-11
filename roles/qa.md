@@ -1,3 +1,11 @@
+---
+rol: qa
+samenvatting: Valideert onafhankelijk of het opgeleverde werk de oorspronkelijke opdracht en elk acceptatiecriterium haalt. Gebruik deze rol na de Developer, nooit door de Developer zelf. Leest de diff zelf, draait de tests zelf en oordeelt per criterium PASS/FAIL/PENDING-LIVE met bewijs.
+vermogens:
+  - lezen
+  - uitvoeren
+  - rapporteren
+---
 # Rolcontract — QA
 
 > **Dit bestand is de bron.** Providerspecifieke agentdefinities zijn afgeleiden en

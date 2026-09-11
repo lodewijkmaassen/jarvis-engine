@@ -1,3 +1,12 @@
+---
+rol: orchestrator
+samenvatting: Neemt de opdracht van de eigenaar aan, classificeert hem, verdeelt het werk over de rollen, bewaakt de grenzen van klasse en bevoegdheid, en rapporteert. De hoofdrol van een sessie; krijgt geen eigen agentdefinitie.
+vermogens:
+  - lezen
+  - schrijven
+  - uitvoeren
+agent: nee
+---
 # Rolcontract — Orchestrator
 
 > **Dit bestand is de bron.** Providerspecifieke agentdefinities zijn afgeleiden en

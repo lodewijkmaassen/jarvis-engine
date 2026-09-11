@@ -40,6 +40,7 @@ import {
   type ProjectOverzicht,
   type TaakDossier,
 } from "./overzicht";
+import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
 import { laadKennis, type KennisLading } from "./store";
 import {
   ACTIEVE_WORKFLOW,
@@ -256,6 +257,9 @@ export function poortStappen(wortel: string, waarden: PoortInvoer): readonly Poo
   return [
     // Eerst, en met opzet: als de poort zelf gewijzigd is, zegt de rest niets.
     { naam: "workflow", draai: () => controleerWorkflow(wortel) },
+    // Direct daarna: een rolcontract waarvan de afgeleide drift, stuurt elke
+    // agent in deze omgeving met een ander contract op pad dan de bron zegt.
+    { naam: "rollen", draai: () => opdrachtRollen(new Map()) },
     { naam: "index", draai: () => opdrachtIndex(false) },
     { naam: "state", draai: () => opdrachtState(new Map([["controleer", "true"]])) },
     { naam: "sanitize", draai: () => opdrachtSanitize(new Map()) },
@@ -430,6 +434,72 @@ async function leesExternProject(pad: string): Promise<ProjectInvoer> {
     taken: [],
     gitLog: await leesGitLog(wortel),
   };
+}
+
+/**
+ * `jarvis rollen [--schrijf]`
+ *
+ * Genereert de providerafgeleiden van de rolcontracten, of controleert zonder
+ * `--schrijf` dat wat op schijf staat exact is wat de bron oplevert. Een
+ * afgeleide die met de hand is bijgewerkt drift; dat was bij de eerste QA van
+ * v1 al zo, en de poort ziet het nu.
+ */
+async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const { wortel, config } = await laadAlles();
+  const schrijf = vlaggen.has("schrijf");
+  const rollenMap = config.rollen_map;
+  let namen: string[] = [];
+  try {
+    namen = (await readdir(path.join(wortel, rollenMap))).filter((n) => /\.md$/i.test(n)).sort();
+  } catch {
+    console.error(`jarvis rollen: rollenmap ${rollenMap} niet gevonden.`);
+    return 1;
+  }
+  const contracten: Rolcontract[] = [];
+  for (const naam of namen) {
+    const gelezen = leesRolcontract(naam, await readFile(path.join(wortel, rollenMap, naam), "utf8"));
+    if (!gelezen.ok) {
+      console.error(`jarvis rollen: ${gelezen.fout}`);
+      return 1;
+    }
+    contracten.push(gelezen.contract);
+  }
+  const afgeleidenConfig = {
+    map: config.rol_afgeleiden_map,
+    voorvoegsel: config.rol_afgeleiden_voorvoegsel,
+    overzicht: config.rol_overzicht,
+    gereedschap: config.rol_gereedschap,
+  };
+  const bestaandOverzicht = config.rol_overzicht ? (await leesBestandOfLeeg(wortel, config.rol_overzicht, "instapdocument")) || null : null;
+  const afgeleiden = genereerAfgeleiden(contracten, afgeleidenConfig, rollenMap, bestaandOverzicht);
+  if (afgeleiden.length === 0) {
+    console.log(`jarvis rollen: ${contracten.length} contract(en), geen afgeleiden geconfigureerd.`);
+    return 0;
+  }
+  if (schrijf) {
+    for (const a of afgeleiden) {
+      await mkdir(path.dirname(path.join(wortel, a.pad)), { recursive: true });
+      await writeFile(path.join(wortel, a.pad), a.inhoud, "utf8");
+    }
+    console.log(`jarvis rollen: ${afgeleiden.length} afgeleide(n) geschreven uit ${contracten.length} contract(en).`);
+    return 0;
+  }
+  const opSchijf = new Map<string, string | null>();
+  for (const a of afgeleiden) {
+    try {
+      opSchijf.set(a.pad, await readFile(path.join(wortel, a.pad), "utf8"));
+    } catch {
+      opSchijf.set(a.pad, null);
+    }
+  }
+  const drift = vindDrift(afgeleiden, opSchijf);
+  if (drift.length === 0) {
+    console.log(`jarvis rollen: ${afgeleiden.length} afgeleide(n) gelijk aan de bron (${contracten.length} contracten).`);
+    return 0;
+  }
+  for (const d of drift) console.error(`jarvis rollen: ${d.pad} ${d.reden}.`);
+  console.error("jarvis rollen: afgeleiden wijken af van de rolcontracten. Draai `jarvis rollen --schrijf`; wijzig nooit een afgeleide met de hand.");
+  return 1;
 }
 
 /**
@@ -994,6 +1064,8 @@ function help(): number {
       "  state    [--controleer]           Genereert of controleert het feitenblok in CURRENT_STATE",
       "  plan     <bestand.md>             Kritiek pad en execution waves uit een plantabel",
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
+      "  rollen   [--schrijf]              Genereert de providerafgeleiden van de rolcontracten;",
+      "                                    zonder --schrijf een driftcontrole (zit in de poort)",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
@@ -1030,6 +1102,9 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
       break;
     case "overzicht":
       code = await opdrachtOverzicht(vlaggen);
+      break;
+    case "rollen":
+      code = await opdrachtRollen(vlaggen);
       break;
     case "context":
       code = await opdrachtContext(vlaggen);

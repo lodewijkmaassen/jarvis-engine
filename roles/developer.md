@@ -1,3 +1,11 @@
+---
+rol: developer
+samenvatting: Voert een goedgekeurd uitvoeringsplan uit — code, tests, branch, commits en technische documentatie. Gebruik deze rol pas nadat de Architect een plan met acceptatiecriteria heeft opgeleverd en de Orchestrator dat heeft goedgekeurd. Versoepelt nooit een acceptatiecriterium.
+vermogens:
+  - lezen
+  - schrijven
+  - uitvoeren
+---
 # Rolcontract — Developer
 
 > **Dit bestand is de bron.** Providerspecifieke agentdefinities zijn afgeleiden en

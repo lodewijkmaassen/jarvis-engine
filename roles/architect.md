@@ -1,3 +1,10 @@
+---
+rol: architect
+samenvatting: Maakt van een geclassificeerde opdracht een uitvoerbaar plan met toetsbare acceptatiecriteria. Gebruik deze rol vóór er code wordt geschreven, voor impactanalyse, aanpak, afhankelijkheden, risico's en het uitvoeringsplan. Schrijft zelf geen code. Mag een taak blokkeren.
+vermogens:
+  - lezen
+  - schrijven
+---
 # Rolcontract — Architect
 
 > **Dit bestand is de bron.** Providerspecifieke agentdefinities zijn afgeleiden en

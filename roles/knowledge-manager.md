@@ -1,3 +1,11 @@
+---
+rol: knowledge-manager
+samenvatting: Stelt vóór een taak het contextpakket samen, bewaakt tijdens de taak of nieuwe aannames botsen met bestaande kennis, en bepaalt achteraf wat duurzaam wordt vastgelegd. Gebruik deze rol aan het begin en aan het eind van elke taak. Werkt uitsluitend in de kennis- en takenmappen en lost een blokkerend conflict nooit zelf op.
+vermogens:
+  - lezen
+  - schrijven
+  - uitvoeren
+---
 # Rolcontract — Knowledge Manager
 
 > **Dit bestand is de bron.** Providerspecifieke agentdefinities zijn afgeleiden en

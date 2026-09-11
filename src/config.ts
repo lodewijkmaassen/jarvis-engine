@@ -62,6 +62,21 @@ export const configSchema = z.strictObject({
   // engine, omdat de rolcontrole erop steunt en niet elk project "tests" heet.
   test_pad: z.string().trim().default("tests"),
   branch_voorvoegsel: z.string().trim().min(1).default("jarvis/"),
+  // Providerafgeleiden van de rolcontracten. De engine kent geen werkomgeving
+  // bij naam; welke map, welk voorvoegsel en welke gereedschapsnamen bij
+  // "lezen", "schrijven" en "uitvoeren" horen, zegt de configuratie.
+  rollen_map: z.string().trim().default("jarvis/roles"),
+  rol_afgeleiden_map: z.string().trim().default(""),
+  rol_afgeleiden_voorvoegsel: z.string().trim().default(""),
+  rol_overzicht: z.string().trim().default(""),
+  rol_gereedschap: z
+    .strictObject({
+      lezen: z.string().trim().default(""),
+      schrijven: z.string().trim().default(""),
+      rapporteren: z.string().trim().default(""),
+      uitvoeren: z.string().trim().default(""),
+    })
+    .default({ lezen: "", schrijven: "", rapporteren: "", uitvoeren: "" }),
 });
 
 export type JarvisConfig = z.infer<typeof configSchema>;
