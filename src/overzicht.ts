@@ -60,6 +60,8 @@ export type RecentItem = {
   readonly hash: string;
   readonly onderwerp: string;
   readonly rol: string | null;
+  /** Uit de `Jarvis-Task:`-trailer: aan welke taak de commit is toegeschreven. */
+  readonly taak: string | null;
   readonly soort: "commit" | "merge";
 };
 
@@ -79,7 +81,18 @@ export type TaakItem = {
   /** Het project dat het dossier draagt (waar de commits landen). */
   readonly gastheer: string;
   readonly stappen: readonly TaakStap[];
+  /** Wie moet nu iets doen: Jarvis, de eigenaar, of niemand (taak niet actief). */
+  readonly aan_zet: "jarvis" | "eigenaar" | "niemand";
+  /** Waar de taak op wacht: het eerste open eigenaarspunt, of de volgende stap. */
+  readonly wacht_op: string | null;
+  /** Datum van de laatste commit met deze taak in de trailer, binnen het venster; null = geen. */
+  readonly laatste_beweging: string | null;
+  /** Jarvis is aan zet en er is al dagen geen beweging: iets om te bewaken. */
+  readonly stil: boolean;
 };
+
+/** Na hoeveel dagen zonder commit een taak waar Jarvis aan zet is als stil geldt. */
+export const STIL_NA_DAGEN = 2;
 
 export type StandSectie = {
   readonly kop: string;
@@ -222,6 +235,7 @@ export function leesRecent(gitLog: readonly GitRegel[], nu: Date): readonly Rece
       hash: r.hash.slice(0, 7),
       onderwerp: r.onderwerp.trim(),
       rol: /^Jarvis-Role:\s*(\S+)/im.exec(r.body)?.[1]?.toLowerCase() ?? null,
+      taak: /^Jarvis-Task:\s*(\S+)/im.exec(r.body)?.[1] ?? null,
       soort: /^Merge (pull request|branch)/i.test(r.onderwerp) ? "merge" : "commit",
     }))
     .sort((a, b) => b.datum.localeCompare(a.datum) || a.hash.localeCompare(b.hash));
@@ -676,17 +690,37 @@ export function leesVoortgang(resultaat: string | null): readonly TaakStap[] {
   return stappen;
 }
 
-export function leesTaken(taken: readonly TaakDossier[], gastheer: string): readonly TaakItem[] {
+export function leesTaken(
+  taken: readonly TaakDossier[],
+  gastheer: string,
+  recent: readonly RecentItem[] = [],
+  aandacht: readonly AandachtItem[] = [],
+  nu: Date = new Date(),
+): readonly TaakItem[] {
   return taken
-    .map((t) => ({
-      id: t.id,
-      titel: t.opdracht["titel"] ?? t.id,
-      status: t.opdracht["status"] ?? "onbekend",
-      klasse: t.opdracht["klasse"] ?? null,
-      project: t.opdracht["project"] ?? gastheer,
-      gastheer,
-      stappen: leesVoortgang(t.resultaat),
-    }))
+    .map((t): TaakItem => {
+      const status = t.opdracht["status"] ?? "onbekend";
+      const stappen = leesVoortgang(t.resultaat);
+      const openVoorEigenaar = aandacht.filter((a) => a.bron.startsWith(`tasks/${t.id}/`));
+      const laatste = recent.filter((r) => r.taak === t.id).map((r) => r.datum).sort().pop() ?? null;
+      const volgendeStap = stappen.find((s) => !s.gedaan)?.tekst ?? null;
+      const actief = status === "actief" || status === "review";
+      const aan_zet: TaakItem["aan_zet"] = !actief ? "niemand" : openVoorEigenaar.length > 0 ? "eigenaar" : "jarvis";
+      const dagenStil = laatste ? (nu.getTime() - new Date(laatste).getTime()) / 864e5 : Infinity;
+      return {
+        id: t.id,
+        titel: t.opdracht["titel"] ?? t.id,
+        status,
+        klasse: t.opdracht["klasse"] ?? null,
+        project: t.opdracht["project"] ?? gastheer,
+        gastheer,
+        stappen,
+        aan_zet,
+        wacht_op: aan_zet === "eigenaar" ? openVoorEigenaar[0].titel : volgendeStap,
+        laatste_beweging: laatste,
+        stil: aan_zet === "jarvis" && dagenStil >= STIL_NA_DAGEN,
+      };
+    })
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
@@ -705,7 +739,7 @@ export function bouwProjectOverzicht(invoer: ProjectInvoer, nu: Date): ProjectOv
     stand: invoer.statusDocument ? leesStandSecties(invoer.statusDocument) : [],
     feiten: invoer.statusDocument ? leesFeiten(invoer.statusDocument) : [],
     recent: leesRecent(invoer.gitLog, nu),
-    taken: leesTaken(invoer.taken, invoer.id),
+    taken: leesTaken(invoer.taken, invoer.id, leesRecent(invoer.gitLog, nu), leesAandacht(invoer), nu),
     kennis: telKennis(invoer.records),
     aandacht: leesAandacht(invoer),
   };
@@ -733,8 +767,35 @@ function herverdeel(projecten: readonly ProjectOverzicht[]): readonly ProjectOve
   }));
 }
 
+/**
+ * Een stap "wacht op T-…" maakt een taak afhankelijk van een andere: wie daar
+ * aan zet is, is het hier ook, en de taak is dan niet "stil" maar "wacht".
+ * Pas na de verdeling over projecten, want de andere taak kan elders hangen.
+ */
+const WACHT_OP = /wacht op\s+(T-\d{8}-[a-z0-9-]+)/i;
+export function verbindAfhankelijkheden(projecten: readonly ProjectOverzicht[]): readonly ProjectOverzicht[] {
+  const alle = new Map(projecten.flatMap((p) => p.taken.map((t) => [t.id, t] as const)));
+  const opgelost = new Map<string, TaakItem>();
+  const los = (t: TaakItem, diepte = 0): TaakItem => {
+    const klaar = opgelost.get(t.id);
+    if (klaar) return klaar;
+    const stap = t.stappen.find((s) => !s.gedaan)?.tekst ?? "";
+    const m = WACHT_OP.exec(stap);
+    const dep = m && m[1] !== t.id && diepte < 5 ? alle.get(m[1]) : undefined;
+    const uit: TaakItem = dep
+      ? (() => {
+          const d = los(dep, diepte + 1);
+          return { ...t, aan_zet: d.aan_zet === "eigenaar" ? "eigenaar" : "jarvis", wacht_op: `${d.id}: ${d.wacht_op ?? d.titel}`, stil: false };
+        })()
+      : t;
+    opgelost.set(t.id, uit);
+    return uit;
+  };
+  return projecten.map((p) => ({ ...p, taken: p.taken.map((t) => los(t)) }));
+}
+
 export function bouwOverzicht(projecten: readonly ProjectInvoer[], nu: Date, centraal: string | null = null): Overzicht {
-  const uitgewerkt = herverdeel(projecten.map((p) => bouwProjectOverzicht(p, nu)));
+  const uitgewerkt = verbindAfhankelijkheden(herverdeel(projecten.map((p) => bouwProjectOverzicht(p, nu))));
   return {
     versie: OVERZICHT_VERSIE,
     gegenereerd_op: nu.toISOString(),

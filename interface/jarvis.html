@@ -41,6 +41,11 @@ p{margin:0}
 .knoop.u-hoog .schijf{stroke:var(--hoog)}
 .knoop.u-midden .schijf{stroke:var(--midden)}
 .knoop.beantwoord .schijf{stroke:var(--ok)}
+.knoop.stil .schijf{stroke:var(--hoog);stroke-dasharray:2 3}
+.zet{display:inline-flex;gap:6px;align-items:center;font-family:var(--mono);font-size:11.5px;color:var(--gedempt);margin-top:6px}
+.zet b{font-weight:500;color:var(--cyaan)}
+.zet.eigenaar b{color:var(--midden)}
+.zet.stil b{color:var(--hoog)}
 .knoop.beantwoord text{fill:var(--zacht)}
 .knoop text{font-family:var(--display);font-weight:600;letter-spacing:.06em;text-transform:uppercase;fill:var(--inkt);pointer-events:none}
 .knoop text.sub{font-family:var(--mono);font-weight:400;letter-spacing:0;text-transform:none;fill:var(--gedempt)}
@@ -417,11 +422,12 @@ function knoopSvg(n) {
     const t = n.taak; const st = t.stappen ?? []; const gedaan = st.filter((s) => s.gedaan).length; const frac = st.length ? gedaan / st.length : 0;
     const open = openItems(n); const r = 16; const C = 2 * Math.PI * (r + 4);
     const urg = hoogsteUrg(n);
-    return `<g class="knoop ${actief ? "actief" : ""} ${urg === 0 ? "u-hoog" : urg === 1 ? "u-midden" : ""}" data-id="${esc(n.id)}" transform="translate(${x} ${y})" tabindex="0" role="button" aria-label="Taak ${esc(t.titel)}">
+    return `<g class="knoop ${actief ? "actief" : ""} ${t.stil ? "stil" : urg === 0 ? "u-hoog" : urg === 1 ? "u-midden" : ""}" data-id="${esc(n.id)}" transform="translate(${x} ${y})" tabindex="0" role="button" aria-label="Taak ${esc(t.titel)}">
       <circle class="voortgang-rest" r="${r + 4}"/>${st.length ? `<circle class="voortgang" r="${r + 4}" stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90)"/>` : ""}
       <circle class="schijf" r="${r}"/>
       <text class="sub" y="4" text-anchor="middle" style="font-size:9px">${st.length ? `${gedaan}/${st.length}` : "taak"}</text>
       <text class="blad" y="${r + 16}" text-anchor="middle" style="font-size:10.5px">${esc(kort(t.titel, 26))}</text>
+      <text class="sub" y="${r + 27}" text-anchor="middle" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${t.aan_zet === "eigenaar" ? "wacht op jou" : t.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>
       ${!uitgevouwen && n.kinderen.length ? `<text class="plus" x="${r}" y="${r + 4}">+${n.kinderen.length}</text>` : ""}
       ${draad ? `<circle class="praat" cx="${-r - 2}" cy="${-r - 2}" r="3.5"/>` : ""}
       ${open ? `<g class="badge"><circle cx="${r}" cy="${-r}" r="8"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9.5px">${open}</text></g>` : ""}
@@ -543,7 +549,7 @@ function projectHtml(n) {
   const p = n.project; const open = p.aandacht.filter(isOpen);
   let s = `<div class="itemmeta"><span class="chip project">${p.hoofdbranch ? esc(p.hoofdbranch.naam) + " @ " + esc(p.hoofdbranch.commit) : "geen hoofdbranch"}</span><span class="chip">${p.aangesloten ? "aangesloten" : "niet aangesloten"}</span></div>`;
   s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${open.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${p.recent.length}<small>/ ${RECENT_DAGEN} d</small></div></div><div class="tegel"><span class="eyebrow">Taken</span><div class="n">${p.taken.filter((t) => t.status !== "afgerond").length}</div></div></div>`;
-  if (n.kinderen.length) s += `<div class="blok"><span class="eyebrow">Takken</span>${n.kinderen.map((k) => k.soort === "item" ? lijstRegel(k.item) : `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" && k.taak.stappen?.length ? `<small>${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : `${k.kinderen.length}`}</span></button>`).join("")}</div>`;
+  if (n.kinderen.length) s += `<div class="blok"><span class="eyebrow">Takken</span>${n.kinderen.map((k) => k.soort === "item" ? lijstRegel(k.item) : `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" ? `<small>${k.taak.stappen?.length ? `${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen · ` : ""}${k.taak.stil ? "stil" : k.taak.aan_zet === "eigenaar" ? "wacht op jou" : k.taak.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${k.taak.laatste_beweging ? " · " + esc(relatief(k.taak.laatste_beweging)) : ""}</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : `${k.kinderen.length}`}</span></button>`).join("")}</div>`;
   else s += `<div class="blok"><div class="leeg"><strong>Niets open</strong>${p.aangesloten ? "Geen taak en niets voor jou." : "Sluit dit project aan om hier meer te zien."}</div></div>`;
   if (p.stand?.length) s += `<div class="blok"><span class="eyebrow">Stand</span>${p.stand.map((st, i) => `<details class="stand" ${i === 0 ? "open" : ""}><summary>${esc(st.kop)}</summary><div class="md">${md(st.tekst)}</div></details>`).join("")}</div>`;
   if (p.recent.length) s += `<div class="blok"><span class="eyebrow">Recent</span>${p.recent.slice(0, 8).map((c) => `<div class="commit"><span class="hash">${esc(c.hash)}</span><span class="ond">${esc(c.onderwerp)} <span class="mono" style="font-size:10.5px;color:var(--zacht)">${esc(dagLabel(c.datum))}${c.rol ? " · " + esc(c.rol) : ""}</span></span></div>`).join("")}</div>`;
@@ -552,6 +558,7 @@ function projectHtml(n) {
 function taakHtml(n) {
   const t = n.taak; const st = t.stappen ?? []; const gedaan = st.filter((x) => x.gedaan).length; const eersteOpen = st.findIndex((x) => !x.gedaan);
   let s = `<div class="itemmeta"><span class="chip">${esc(t.status)}</span>${t.klasse ? `<span class="chip">klasse ${esc(t.klasse)}</span>` : ""}<span class="mono" style="font-size:11px;color:var(--zacht)">${esc(t.id)}</span></div>`;
+  s += `<div class="zet ${t.stil ? "stil" : esc(t.aan_zet)}"><b>${t.stil ? "STIL" : t.aan_zet === "eigenaar" ? "WACHT OP JOU" : t.aan_zet === "jarvis" ? "JARVIS AAN ZET" : "NIET ACTIEF"}</b>${t.wacht_op ? `<span>· ${esc(t.wacht_op)}</span>` : ""}</div><div class="zet"><span>laatste beweging: ${t.laatste_beweging ? esc(relatief(t.laatste_beweging)) + " (" + esc(datumKort(t.laatste_beweging)) + " " + esc(tijd(t.laatste_beweging)) + ")" : "geen commit in " + RECENT_DAGEN + " dagen"}</span></div>`;
   if (st.length) s += `<div class="blok"><span class="eyebrow">Voortgang · ${gedaan} van ${st.length}</span><div class="balk"><i style="width:${Math.round((gedaan / st.length) * 100)}%"></i></div>${st.map((x, i) => `<div class="stap ${x.gedaan ? "gedaan" : i === eersteOpen ? "nu" : "open"}"><span class="vink">${x.gedaan ? "■" : i === eersteOpen ? "▶" : "□"}</span><span>${inlineMd(x.tekst)}</span></div>`).join("")}</div>`;
   if (t.gastheer && t.gastheer !== n.project.id) s += `<div class="bron">dossier en commits in ${esc(t.gastheer)}</div>`;
   s += `<div class="blok"><span class="eyebrow">Bij jou uit deze taak</span>${n.kinderen.length ? n.kinderen.map((k) => lijstRegel(k.item)).join("") : `<div class="leeg"><strong>Niets</strong>Jarvis is aan zet.</div>`}</div>`;
