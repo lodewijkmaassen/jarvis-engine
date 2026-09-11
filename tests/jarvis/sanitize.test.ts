@@ -12,6 +12,7 @@ import {
   laadAllowlist,
   maskeerFragment,
   normaliseerTelefoon,
+  isVerdachtBase64,
   ontleedTokenRegel,
   sanitizeBestanden,
   sanitizeTekst,
@@ -150,6 +151,13 @@ describe("vals-positieven", () => {
 // ---------------------------------------------------------------------------
 // Allowlist
 // ---------------------------------------------------------------------------
+
+describe("isVerdachtBase64 en Jarvis-ids", () => {
+  it("ziet een taak- of record-id nooit als sleutel, ook niet op een credentialregel", () => {
+    expect(isVerdachtBase64("T-20260911-engine-repository", 'wacht_op: "T-20260911-engine-repository: het token van de bot"')).toBe(false);
+    expect(isVerdachtBase64("DEC-0038", "de secret key staat in DEC-0038")).toBe(false);
+  });
+});
 
 describe("laadAllowlist", () => {
   it("leest de allowlist van een project uit een bestand", () => {
