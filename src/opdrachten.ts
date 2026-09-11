@@ -17,6 +17,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { bouwContextPakket, rendereerPakket } from "./context";
 import { leesArgumenten } from "./args";
+import { parseFrontMatter } from "./frontmatter";
 import { laadConfig, leesStartpuntUitConfig, vindWortel, type JarvisConfig, type TaakKlasse } from "./config";
 import { ackBronIsVertrouwd, formatteerLint, lint, parseerAcks } from "./lint";
 import { analyseerPlan, parseerPlanTabel, rendereerPlan } from "./plan";
@@ -30,6 +31,15 @@ import {
   vervangFeitenblok,
   type StateFeiten,
 } from "./state";
+import { ALLOWLIST_BESTANDSNAAM, LEGE_ALLOWLIST, laadAllowlist, scanTekst, type Allowlist } from "./sanitize";
+import {
+  RECENT_DAGEN,
+  bouwOverzicht,
+  type GitRegel,
+  type ProjectInvoer,
+  type ProjectOverzicht,
+  type TaakDossier,
+} from "./overzicht";
 import { laadKennis, type KennisLading } from "./store";
 import {
   ACTIEVE_WORKFLOW,
@@ -297,6 +307,186 @@ ${lees("PR_BODY")}`,
       ackRelatie: lees("REVIEW_RELATIE"),
     }),
   );
+}
+
+/**
+ * De allowlist van schijf, of een lege lijst als die er niet is.
+ *
+ * Gedeeld door sanitize en overzicht: allebei laten ze tekst de repository
+ * verlaten, en allebei horen ze dezelfde uitzonderingen te kennen. Een
+ * onleesbare allowlist is een fout, geen stille terugval - een lege lijst is
+ * strenger, maar een lijst met een tikfout hoort niet ongemerkt te blijven.
+ */
+async function laadAllowlistVanSchijf(wortel: string): Promise<Allowlist> {
+  const pad = path.join(wortel, "jarvis", ALLOWLIST_BESTANDSNAAM);
+  let ruw: string;
+  try {
+    ruw = await readFile(pad, "utf8");
+  } catch {
+    return LEGE_ALLOWLIST;
+  }
+  const geladen = laadAllowlist(ruw);
+  if (!geladen.ok) throw new AfbrekenFout(1, geladen.fouten.map((f) => `jarvis: allowlist: ${f}`).join("\n"));
+  return geladen.allowlist;
+}
+
+// ---------------------------------------------------------------------------
+// jarvis overzicht
+// ---------------------------------------------------------------------------
+
+/** `git log` van de laatste twee weken, uit elkaar gehaald per commit. */
+async function leesGitLog(wortel: string): Promise<readonly GitRegel[]> {
+  // Recordscheider \x1e tussen commits, veldscheider \x1f binnen een commit.
+  // Een commitbericht kan elke gewone tekst bevatten; deze twee tekens niet.
+  const ruw = await git(wortel, [
+    "log",
+    `--since=${RECENT_DAGEN}.days`,
+    "--date=iso-strict",
+    "--format=%h%x1f%cI%x1f%s%x1f%b%x1e",
+  ]);
+  return ruw
+    .split("\x1e")
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0)
+    .map((r) => {
+      const [hash = "", datum = "", onderwerp = "", body = ""] = r.split("\x1f");
+      return { hash, datum, onderwerp, body };
+    });
+}
+
+async function leesHoofdbranch(wortel: string): Promise<ProjectOverzicht["hoofdbranch"]> {
+  const naam = "main";
+  const commit = await git(wortel, ["rev-parse", "--short", `origin/${naam}`]);
+  if (!commit) return null;
+  const datum = await git(wortel, ["log", "-1", "--format=%cs", `origin/${naam}`]);
+  return { naam, commit, datum };
+}
+
+/** Front-matter van een taakdossier als platte sleutel-waarde-paren. */
+async function leesTaakDossiers(wortel: string, takenMap: string): Promise<readonly TaakDossier[]> {
+  let mappen: string[] = [];
+  try {
+    mappen = (await readdir(path.join(wortel, takenMap), { withFileTypes: true }))
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name)
+      .sort();
+  } catch {
+    return [];
+  }
+  const dossiers: TaakDossier[] = [];
+  for (const id of mappen) {
+    // Geen opdracht.md, geen taak: een map met alleen een QA-proef of een
+    // losse notitie hoort niet in het overzicht, en verdient ook geen melding.
+    let opdracht: string;
+    try {
+      opdracht = await readFile(path.join(wortel, takenMap, id, "opdracht.md"), "utf8");
+    } catch {
+      continue;
+    }
+    const fm = parseFrontMatter(opdracht.replace(/\r\n/g, "\n"));
+    const platte: Record<string, string> = {};
+    if (fm.ok) {
+      for (const [k, v] of Object.entries(fm.data)) if (typeof v === "string") platte[k] = v;
+    }
+    let resultaat: string | null = null;
+    try {
+      resultaat = await readFile(path.join(wortel, takenMap, id, "resultaat.md"), "utf8");
+    } catch {
+      resultaat = null;
+    }
+    dossiers.push({ id, opdracht: platte, resultaat });
+  }
+  return dossiers;
+}
+
+/**
+ * De naam waaronder een project in het overzicht verschijnt: de titel van de
+ * README, zonder een eventuele toelichting achter een gedachtestreepje. Valt
+ * terug op de technische naam wanneer er geen README is.
+ */
+async function leesWeergavenaam(wortel: string, terugval: string): Promise<string> {
+  const readme = await leesBestandOfLeeg(wortel, "README.md", "README");
+  const kop = /^#\s+(.+)$/m.exec(readme.replace(/\r\n/g, "\n"))?.[1]?.trim();
+  if (!kop) return terugval;
+  return kop.split(/\s+[—–-]\s+/)[0].trim() || terugval;
+}
+
+/**
+ * Een repository die niet op Jarvis is aangesloten. Jarvis ziet dan alleen de
+ * git-historie en een naam. Dat is bewust mager: het overzicht mag niets
+ * suggereren wat er niet is.
+ */
+async function leesExternProject(pad: string): Promise<ProjectInvoer> {
+  const wortel = path.resolve(pad);
+  const mapnaam = path.basename(wortel);
+  const naam = await leesWeergavenaam(wortel, mapnaam);
+  return {
+    id: mapnaam.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    naam,
+    aangesloten: false,
+    hoofdbranch: await leesHoofdbranch(wortel),
+    statusDocument: null,
+    records: [],
+    taken: [],
+    gitLog: await leesGitLog(wortel),
+  };
+}
+
+/**
+ * `jarvis overzicht [--extern <pad,pad>] [--uit <bestand>]`
+ *
+ * Bouwt het overzicht dat de interface toont: deze repository als aangesloten
+ * project, plus eventuele andere repositories als niet-aangesloten. De uitvoer
+ * gaat door de sanitizer voordat hij ergens terechtkomt. Dit is persistente
+ * Jarvis-data die de repository verlaat, en daar geldt CON-0008 dubbel.
+ */
+async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const { wortel, config, lading } = await laadAlles();
+  const nu = new Date();
+
+  const eigen: ProjectInvoer = {
+    id: config.project.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    naam: await leesWeergavenaam(wortel, config.project),
+    aangesloten: true,
+    hoofdbranch: await leesHoofdbranch(wortel),
+    statusDocument: (await leesBestandOfLeeg(wortel, config.current_state, "statusdocument")) || null,
+    records: lading.records,
+    taken: await leesTaakDossiers(wortel, config.taken_map),
+    gitLog: await leesGitLog(wortel),
+  };
+
+  const externen: ProjectInvoer[] = [];
+  const externPaden = (vlaggen.get("extern") ?? "")
+    .split(",")
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+  for (const pad of externPaden) externen.push(await leesExternProject(pad));
+
+  const overzicht = bouwOverzicht([eigen, ...externen], nu);
+  const json = `${JSON.stringify(overzicht, null, 2)}\n`;
+
+  // De poort voor alles wat de repository verlaat. Geen uitzonderingen: een
+  // overzicht met een tenant-UUID of een adres erin is erger dan geen overzicht.
+  const allowlist = await laadAllowlistVanSchijf(wortel);
+  const bevindingen = scanTekst(json, allowlist, "overzicht.json");
+  if (bevindingen.length > 0) {
+    console.error(`jarvis overzicht: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);
+    for (const b of bevindingen) console.error(`  ${b.severity.toUpperCase()} regel ${b.regel} [${b.patroon}] ${b.fragment}`);
+    return 1;
+  }
+
+  const uit = vlaggen.get("uit");
+  if (uit) {
+    await mkdir(path.dirname(path.resolve(wortel, uit)), { recursive: true });
+    await writeFile(path.resolve(wortel, uit), json, "utf8");
+    const n = overzicht.voor_jou.length;
+    console.log(
+      `jarvis overzicht: ${overzicht.projecten.length} project(en), ${n} item(s) voor de eigenaar, geschreven naar ${uit}`,
+    );
+    return 0;
+  }
+  process.stdout.write(json);
+  return 0;
 }
 
 /** knowledge/INDEX.json — zodat een agent kan selecteren zonder de CLI te draaien. */
@@ -676,7 +866,9 @@ async function verzamelTekstbestanden(wortel: string, ingang: string): Promise<r
   } catch {
     return [];
   }
-  const isTekst = (naam: string) => /\.(md|json|ya?ml|txt)$/i.test(naam);
+  // html: de interfacepagina onder jarvis/interface is persistente Jarvis-data
+  // die de repository verlaat, en valt dus onder dezelfde scan.
+  const isTekst = (naam: string) => /\.(md|json|ya?ml|txt|html)$/i.test(naam);
   if (info.isFile()) return isTekst(absoluut) ? [ingang] : [];
 
   const gevonden: string[] = [];
@@ -796,6 +988,9 @@ function help(): number {
       "  state    [--controleer]           Genereert of controleert het feitenblok in CURRENT_STATE",
       "  plan     <bestand.md>             Kritiek pad en execution waves uit een plantabel",
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
+      "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
+      "                                    Bouwt het overzicht voor de interface: stand, beweging en",
+      "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
       "",
       "Exitcodes: 0 ok · 1 bevindingen · 2 gebruiksfout · 3 uitgeschakeld",
     ].join("\n"),
@@ -826,6 +1021,9 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
       break;
     case "poort":
       code = await opdrachtPoort();
+      break;
+    case "overzicht":
+      code = await opdrachtOverzicht(vlaggen);
       break;
     case "context":
       code = await opdrachtContext(vlaggen);
