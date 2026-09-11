@@ -3,14 +3,20 @@
 # koppelt de huidige map eraan. Klasse A (CON-0015): Jarvis mag dit zelf,
 # binnen de toestemmingslijst van de eigenaar.
 #
-# Gebruik: bash jarvis/scripts/repo-aanmaken.sh <naam> [beschrijving]
+# Gebruik: bash jarvis/scripts/repo-aanmaken.sh <naam> [beschrijving] [--publiek]
 #   - draai vanuit de map die de repository wordt (bestaande git-historie)
 #   - het token komt uit de credential manager; het wordt nooit getoond
 #   - bestaat de repository al, dan alleen de remote koppelen
+#   - standaard privé; --publiek alleen op besluit van de eigenaar
 set -euo pipefail
 
-naam="${1:-}"
-beschrijving="${2:-}"
+publiek=false
+args=()
+for a in "$@"; do
+  if [[ "$a" == "--publiek" ]]; then publiek=true; else args+=("$a"); fi
+done
+naam="${args[0]:-}"
+beschrijving="${args[1]:-}"
 if [[ -z "$naam" || ! "$naam" =~ ^[a-z0-9][a-z0-9-]{0,99}$ ]]; then
   echo "gebruik: repo-aanmaken.sh <naam in kleine letters, cijfers en streepjes> [beschrijving]" >&2
   exit 2
@@ -30,13 +36,13 @@ fi
 api="https://api.github.com"
 status="$(curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $token" "$api/repos/$login/$naam")"
 if [[ "$status" == "404" ]]; then
-  body="$(python -c 'import json,sys;print(json.dumps({"name":sys.argv[1],"description":sys.argv[2],"private":True,"has_wiki":False,"has_projects":False,"auto_init":False}))' "$naam" "$beschrijving")"
+  body="$(python -c 'import json,sys;print(json.dumps({"name":sys.argv[1],"description":sys.argv[2],"private":sys.argv[3]!="true","has_wiki":False,"has_projects":False,"auto_init":False}))' "$naam" "$beschrijving" "$publiek")"
   antwoord="$(curl -s -X POST -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" "$api/user/repos" -d "$body")"
-  if ! printf '%s' "$antwoord" | python -c 'import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get("private") is True else 1)'; then
+  if ! printf '%s' "$antwoord" | python -c 'import json,sys;d=json.load(sys.stdin);sys.exit(0 if d.get("private")==(sys.argv[1]!="true") else 1)' "$publiek"; then
     echo "repo-aanmaken: aanmaken mislukt: $(printf '%s' "$antwoord" | python -c 'import json,sys;print(json.load(sys.stdin).get("message","onbekend"))')" >&2
     exit 1
   fi
-  echo "repo-aanmaken: privé repository $login/$naam aangemaakt."
+  if $publiek; then echo "repo-aanmaken: publieke repository $login/$naam aangemaakt."; else echo "repo-aanmaken: privé repository $login/$naam aangemaakt."; fi
   # Standaard-ruleset, alleen op een zojuist aangemaakte repository (DEC-0038):
   # geen verwijderen, geen force-push, pull request met één goedkeuring.
   # Identiek aan wat tovas-flow en kasboek hebben. Bestaande repositories
