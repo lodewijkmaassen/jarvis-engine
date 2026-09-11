@@ -558,6 +558,25 @@ async function leesWeergavenaam(wortel: string, terugval: string): Promise<strin
 async function leesExternProject(pad: string): Promise<ProjectInvoer> {
   const wortel = path.resolve(pad);
   const mapnaam = path.basename(wortel);
+  // Draagt de repository een eigen jarvis.config.yml, dan is ze aangesloten:
+  // dan lezen we haar zoals de eigen repository, met haar eigen statusdocument,
+  // records en taakdossiers. Een onleesbare of uitgeschakelde configuratie
+  // telt als niet aangesloten; het overzicht suggereert dan niets.
+  const configResultaat = await laadConfig(wortel);
+  if (configResultaat.ok && configResultaat.config.enabled) {
+    const config = configResultaat.config;
+    const lading = await laadKennis(wortel, config.knowledge_map);
+    return {
+      id: config.project.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      naam: await leesWeergavenaam(wortel, config.project),
+      aangesloten: true,
+      hoofdbranch: await leesHoofdbranch(wortel),
+      statusDocument: (await leesBestandOfLeeg(wortel, config.current_state, "statusdocument")) || null,
+      records: lading.records,
+      taken: await leesTaakDossiers(wortel, config.taken_map),
+      gitLog: await leesGitLog(wortel),
+    };
+  }
   const naam = await leesWeergavenaam(wortel, mapnaam);
   return {
     id: mapnaam.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
