@@ -308,8 +308,9 @@ const inlineMd = (t) => md(t).replace(/^<p>|<\/p>$/g, "").replace(/<\/p><p>/g, "
 function tekenKaart() {
   const o = staat.overzicht; if (!o) return;
   const W = 360, H = 200, cx = W / 2, cy = H / 2 - 4;
-  const projecten = o.projecten;
-  const n = projecten.length;
+  const kern = o.projecten.find((p) => p.id === o.centraal) ?? null;
+  const projecten = o.projecten.filter((p) => p.id !== o.centraal);
+  const n = Math.max(1, projecten.length);
   const R = n <= 2 ? 120 : 104;
   const start = n <= 2 ? 180 : -90;
   const maxRecent = Math.max(1, ...projecten.map((p) => p.recent.length));
@@ -328,13 +329,15 @@ function tekenKaart() {
   }
   const centrumActief = zicht.soort === "jarvis";
   const openTotaal = o.voor_jou.filter((a) => !staat.antwoorden.has(a.id)).length;
-  s += `<g class="centrum knoop ${centrumActief ? "actief" : ""}" data-doel="jou" tabindex="0" role="button" aria-label="Jarvis, alles wat bij jou ligt">
+  const openKern = kern ? kern.aandacht.filter((a) => !staat.antwoorden.has(a.id)).length : 0;
+  s += `<g class="centrum knoop ${centrumActief ? "actief" : ""}" data-doel="jou" tabindex="0" role="button" aria-label="${esc(kern?.naam ?? "Jarvis")}, ${openKern} voor jou, ${openTotaal} in totaal">
     <circle class="draai" cx="${cx}" cy="${cy}" r="44"/>
     <circle class="draai terug" cx="${cx}" cy="${cy}" r="50" style="stroke-dasharray:14 30;opacity:.35"/>
     <circle class="kern2" cx="${cx}" cy="${cy}" r="38"/>
     <circle class="kern" cx="${cx}" cy="${cy}" r="32"/>
-    <text x="${cx}" y="${cy - 2}" text-anchor="middle">Jarvis</text>
-    <text class="sub" x="${cx}" y="${cy + 12}" text-anchor="middle">${openTotaal} voor jou</text>
+    <text x="${cx}" y="${cy - 2}" text-anchor="middle">${esc(kern?.naam ?? "Jarvis")}</text>
+    <text class="sub" x="${cx}" y="${cy + 12}" text-anchor="middle">${kern ? `${openKern} · alles ${openTotaal}` : `${openTotaal} voor jou`}</text>
+    ${openKern ? `<g class="badge"><circle cx="${(cx + 26).toFixed(1)}" cy="${(cy - 26).toFixed(1)}" r="9.5"/><text x="${(cx + 26).toFixed(1)}" y="${(cy - 22.5).toFixed(1)}" text-anchor="middle">${openKern}</text></g>` : ""}
   </g>`;
   for (const k of knopen) {
     const actief = zicht.soort === "project" && zicht.id === k.p.id;
@@ -511,11 +514,27 @@ function taakHtml(t, projectId) {
 function jarvisHtml(tab) {
   const o = staat.overzicht;
   const j = staat.jarvis;
-  const tabs = [["jou", "Voor jou", o.voor_jou.filter((i) => !staat.antwoorden.has(i.id)).length], ["activiteit", "Activiteit", (j?.agenten?.length ?? 0) + 1], ["gesprek", "Gesprek", staat.berichten.length]];
+  const kern = o.projecten.find((p) => p.id === o.centraal) ?? null;
+  const openKern = kern ? kern.aandacht.filter((i) => !staat.antwoorden.has(i.id)).length : 0;
+  const openAlles = o.voor_jou.filter((i) => !staat.antwoorden.has(i.id)).length;
+  const tabs = kern
+    ? [["jou", "Voor jou", openKern], ["alles", "Alles", openAlles], ["activiteit", "Activiteit", (j?.agenten?.length ?? 0) + 1], ["gesprek", "Gesprek", staat.berichten.length], ["taken", "Taken", kern.taken.length], ["recent", "Recent", kern.recent.length]]
+    : [["alles", "Alles", openAlles], ["activiteit", "Activiteit", (j?.agenten?.length ?? 0) + 1], ["gesprek", "Gesprek", staat.berichten.length]];
+  if (!tabs.some((t) => t[0] === tab)) tab = tabs[0][0];
   let lichaam = "";
-  if (tab === "jou") lichaam = overzichtHtml();
+  if (tab === "alles") lichaam = overzichtHtml();
   else if (tab === "activiteit") lichaam = activiteitHtml();
-  else lichaam = gesprekHtml();
+  else if (tab === "gesprek") lichaam = gesprekHtml();
+  else if (tab === "jou" && kern) {
+    const lopend = kern.taken.filter((t) => t.status !== "afgerond" && t.stappen?.length);
+    lichaam = (lopend.length ? `<div class="sectie" style="margin-top:0"><div class="sectiekop"><h2 style="font-size:15px">Wat Jarvis doet</h2><span class="tel">${lopend.length} ${lopend.length === 1 ? "taak" : "taken"}</span></div>${lopend.map((t) => taakHtml(t, kern.id)).join("")}</div>` : "") +
+      `<div class="sectie"><div class="sectiekop"><h2 style="font-size:15px">Voor jou, over Jarvis</h2><span class="tel">${openKern} open</span></div>${voorJouHtml(kern.aandacht, false)}</div>`;
+  } else if (tab === "taken" && kern) {
+    lichaam = kern.taken.length ? kern.taken.map((t) => taakHtml(t, kern.id)).join("") : `<div class="paneel leeg"><strong>Geen taakdossiers</strong></div>`;
+  } else if (tab === "recent" && kern) {
+    let dag = null;
+    lichaam = kern.recent.slice(0, 40).map((c) => { const label = dagLabel(c.datum); const kop = label !== dag ? `<div class="dag"><span class="eyebrow">${esc(label)}</span></div>` : ""; dag = label; return `${kop}<div class="commit ${c.soort === "merge" ? "merge" : ""}"><span class="hash">${esc(c.hash)}</span><span class="ond">${esc(c.onderwerp)}</span>${c.rol ? `<span class="rol"><span class="chip">${esc(c.rol)}</span></span>` : ""}</div>`; }).join("") || `<div class="paneel leeg"><strong>Geen beweging</strong></div>`;
+  }
   const live = jarvisLive();
   return `
     <div class="projkop">

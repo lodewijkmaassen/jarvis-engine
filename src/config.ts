@@ -66,6 +66,14 @@ export const configSchema = z.strictObject({
   // bij naam; welke map, welk voorvoegsel en welke gereedschapsnamen bij
   // "lezen", "schrijven" en "uitvoeren" horen, zegt de configuratie.
   rollen_map: z.string().trim().default("jarvis/roles"),
+  // Jarvis als eigen project in het overzicht: de kern op de kaart. Wat in
+  // deze repository bij Jarvis hoort (paden voor de beweging) en welke tag op
+  // een record "dit gaat over Jarvis" betekent, zegt de configuratie; leeg =
+  // geen apart project.
+  overzicht_kern_id: z.string().trim().default(""),
+  overzicht_kern_naam: z.string().trim().default(""),
+  overzicht_kern_paden: z.array(z.string().min(1)).default([]),
+  overzicht_kern_tag: z.string().trim().default(""),
   rol_afgeleiden_map: z.string().trim().default(""),
   rol_afgeleiden_voorvoegsel: z.string().trim().default(""),
   rol_overzicht: z.string().trim().default(""),

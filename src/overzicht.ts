@@ -103,6 +103,8 @@ export type ProjectOverzicht = {
 export type Overzicht = {
   readonly versie: typeof OVERZICHT_VERSIE;
   readonly gegenereerd_op: string;
+  /** Het project dat in het midden van de kaart staat (Jarvis zelf), of null. */
+  readonly centraal: string | null;
   readonly projecten: readonly ProjectOverzicht[];
   /** Alles wat bij de eigenaar ligt, over alle projecten heen, urgentste eerst. */
   readonly voor_jou: readonly AandachtItem[];
@@ -137,6 +139,12 @@ export type ProjectInvoer = {
   readonly statusDocument: string | null;
   /** Er loopt al een taak om dit project aan te sluiten; dan is "aansluiten" geen open vraag meer. */
   readonly aansluitingLoopt?: boolean;
+  /**
+   * Tag op een kennisrecord -> project-id. Een record dat over een ander
+   * project gaat dan de repository waarin het staat (tag `jarvis` in de
+   * repository van een product) hoort in het overzicht bij dat project.
+   */
+  readonly tagProjecten?: Readonly<Record<string, string>>;
   readonly records: readonly KnowledgeRecord[];
   readonly taken: readonly TaakDossier[];
   readonly gitLog: readonly GitRegel[];
@@ -553,11 +561,19 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
     }
   }
 
+  const projectVoorRecord = (r: KnowledgeRecord): string => {
+    for (const tag of r.tags ?? []) {
+      const doel = invoer.tagProjecten?.[tag];
+      if (doel) return doel;
+    }
+    return p;
+  };
+
   for (const r of invoer.records) {
     if (r.type === "CFL" && r.status === "open") {
       items.push({
         id: `${p}:${r.id}`,
-        project: p,
+        project: projectVoorRecord(r),
         soort: "conflict",
         titel: r.titel,
         toelichting: r.samenvatting,
@@ -573,7 +589,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
     if (r.type === "RSK" && r.status === "open") {
       items.push({
         id: `${p}:${r.id}`,
-        project: p,
+        project: projectVoorRecord(r),
         soort: "risico",
         titel: r.titel,
         toelichting: r.samenvatting,
@@ -717,11 +733,12 @@ function herverdeel(projecten: readonly ProjectOverzicht[]): readonly ProjectOve
   }));
 }
 
-export function bouwOverzicht(projecten: readonly ProjectInvoer[], nu: Date): Overzicht {
+export function bouwOverzicht(projecten: readonly ProjectInvoer[], nu: Date, centraal: string | null = null): Overzicht {
   const uitgewerkt = herverdeel(projecten.map((p) => bouwProjectOverzicht(p, nu)));
   return {
     versie: OVERZICHT_VERSIE,
     gegenereerd_op: nu.toISOString(),
+    centraal: centraal && uitgewerkt.some((p) => p.id === centraal) ? centraal : null,
     projecten: uitgewerkt,
     voor_jou: sorteerAandacht(uitgewerkt.flatMap((p) => p.aandacht)),
   };

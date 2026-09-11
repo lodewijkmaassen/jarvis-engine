@@ -339,14 +339,16 @@ async function laadAllowlistVanSchijf(wortel: string): Promise<Allowlist> {
 // ---------------------------------------------------------------------------
 
 /** `git log` van de laatste twee weken, uit elkaar gehaald per commit. */
-async function leesGitLog(wortel: string): Promise<readonly GitRegel[]> {
+async function leesGitLog(wortel: string, paden: readonly string[] = []): Promise<readonly GitRegel[]> {
   // Recordscheider \x1e tussen commits, veldscheider \x1f binnen een commit.
   // Een commitbericht kan elke gewone tekst bevatten; deze twee tekens niet.
+  // Met paden: alleen commits die een van die paden raken.
   const ruw = await git(wortel, [
     "log",
     `--since=${RECENT_DAGEN}.days`,
     "--date=iso-strict",
     "--format=%h%x1f%cI%x1f%s%x1f%b%x1e",
+    ...(paden.length > 0 ? ["--", ...paden] : []),
   ]);
   return ruw
     .split("\x1e")
@@ -514,6 +516,8 @@ async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<
   const { wortel, config, lading } = await laadAlles();
   const nu = new Date();
 
+  const kernId = config.overzicht_kern_id || null;
+  const tagProjecten = kernId && config.overzicht_kern_tag ? { [config.overzicht_kern_tag]: kernId } : undefined;
   const eigen: ProjectInvoer = {
     id: config.project.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
     naam: await leesWeergavenaam(wortel, config.project),
@@ -523,7 +527,26 @@ async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<
     records: lading.records,
     taken: await leesTaakDossiers(wortel, config.taken_map),
     gitLog: await leesGitLog(wortel),
+    tagProjecten,
   };
+
+  // Jarvis zelf als project: geen eigen statusdocument of records (die staan
+  // in de repository die hem draagt en verhuizen via tag en `project:`), wel
+  // eigen beweging uit de kernpaden.
+  const kern: ProjectInvoer[] = kernId
+    ? [
+        {
+          id: kernId,
+          naam: config.overzicht_kern_naam || kernId,
+          aangesloten: true,
+          hoofdbranch: eigen.hoofdbranch,
+          statusDocument: null,
+          records: [],
+          taken: [],
+          gitLog: await leesGitLog(wortel, config.overzicht_kern_paden),
+        },
+      ]
+    : [];
 
   const externen: ProjectInvoer[] = [];
   const externPaden = (vlaggen.get("extern") ?? "")
@@ -538,7 +561,7 @@ async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
-  const overzicht = bouwOverzicht([eigen, ...externen], nu);
+  const overzicht = bouwOverzicht([...kern, eigen, ...externen], nu, kernId);
   const json = `${JSON.stringify(overzicht, null, 2)}\n`;
 
   // De poort voor alles wat de repository verlaat. Geen uitzonderingen: een
