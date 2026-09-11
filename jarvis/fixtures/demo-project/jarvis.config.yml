@@ -1,0 +1,30 @@
+# Fictief project voor de portabiliteitstest. Bewust een ander domein, andere
+# mapnamen en andere drempels dan het project waarin deze engine is gebouwd:
+# als de engine hier draait, zit er geen aanname van dat project in.
+project: bibliotheek
+enabled: true
+knowledge_map: kennis
+taken_map: taken
+current_state: docs/STAND.md
+project_kaart: project/OVER.md
+budget:
+  S: 1200
+  M: 4000
+  L: 9000
+limieten:
+  qa_rondes: 2
+  subagenten: 4
+  besluiten_per_taak: 1
+  nieuwe_dec_per_taak: 2
+  wallclock_minuten: 30
+context_nooit:
+  - "**/*.bak"
+context_symbolen:
+  - bron/schema.ts
+context_fragment_regels: 25
+sanitize_paden:
+  - kennis
+  - taken
+status_paden:
+  - bron/migraties
+branch_voorvoegsel: robot/

@@ -1,0 +1,45 @@
+{
+  "gegenereerdDoor": "jarvis index",
+  "project": "bibliotheek",
+  "aantal": 3,
+  "records": [
+    {
+      "id": "CON-0001",
+      "type": "CON",
+      "titel": "Een lid ziet nooit de leengeschiedenis van een ander lid",
+      "datum": "2026-04-01",
+      "tags": [
+        "privacy",
+        "uitleen"
+      ],
+      "bestand": "kennis/REGELS/CON-0001.md",
+      "bronnen": [
+        "bron/schema.ts"
+      ]
+    },
+    {
+      "id": "DEC-0001",
+      "type": "DEC",
+      "titel": "Herinneringen per medium instelbaar",
+      "datum": "2026-05-12",
+      "tags": [
+        "herinneringen"
+      ],
+      "bestand": "kennis/BESLUITEN/DEC-0001.md",
+      "bronnen": [
+        "bron/schema.ts"
+      ]
+    },
+    {
+      "id": "RSK-0001",
+      "type": "RSK",
+      "titel": "Herinneringen kunnen dubbel verzonden worden bij herstart",
+      "datum": "2026-06-02",
+      "tags": [
+        "herinneringen"
+      ],
+      "bestand": "kennis/RISICOS/RSK-0001.md",
+      "bronnen": []
+    }
+  ]
+}
