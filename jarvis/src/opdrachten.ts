@@ -51,6 +51,8 @@ import {
   type BestandsFeiten,
 } from "./workflow";
 import { bepaalModus, beoordeelEngine, ENGINE_MAP, leesEngineStand, type HoofdbranchVergelijking } from "./engine";
+import { berichtId, BERICHT_VAN_JARVIS_SQL, claimSql, DOCUMENT_SQL, isTabel, NIEUWE_ANTWOORDEN_SQL, NIEUWE_BERICHTEN_SQL, verbindingsBron, verwerktSql } from "./db";
+import { randomBytes } from "node:crypto";
 import { beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, type PullRequestFeiten } from "./pr";
 import { homedir } from "node:os";
 
@@ -1245,6 +1247,9 @@ function help(): number {
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
       "  rollen   [--schrijf]              Genereert de providerafgeleiden van de rolcontracten;",
       "                                    zonder --schrijf een driftcontrole (zit in de poort)",
+      "  db <nieuw|claim|verwerkt|bericht|document|wie> [opties]",
+      "                                    De eigen database van Jarvis (schema jarvis): nieuwe",
+      "                                    antwoorden en berichten lezen, claimen, verwerken, documenten zetten.",
       "  pr <wie|openen|status|mergen|uitnodigingen> [opties]",
       "                                    Pull requests als de bot: openen, volgen, en samenvoegen",
       "                                    na goedkeuring van de eigenaar op de huidige kop.",
@@ -1505,6 +1510,123 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
   return 2;
 }
 
+// ---------------------------------------------------------------------------
+// De eigen database van Jarvis (schema jarvis). Zie db.ts.
+// ---------------------------------------------------------------------------
+
+const DB_URL_BESTAND = process.env.JARVIS_DB_URL_BESTAND ?? path.join(homedir(), ".jarvis-db-url");
+
+async function leesDbUrl(): Promise<string | null> {
+  const uitOmgeving = (process.env.JARVIS_DB_URL ?? "").trim();
+  if (uitOmgeving.length > 0) return uitOmgeving;
+  try {
+    const inhoud = (await readFile(DB_URL_BESTAND, "utf8")).trim();
+    return inhoud.length > 0 ? inhoud : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `jarvis db <nieuw|claim|verwerkt|bericht|document|wie> …`
+ *
+ *   nieuw                                  Nieuwe antwoorden en berichten van de eigenaar, als JSON.
+ *   claim <tabel> <id> --door <naam>       Zet een item op "in behandeling"; slaagt alleen als het nog nieuw was.
+ *   verwerkt <tabel> <id> --verwerking <t> Zet een item op "verwerkt" met de toelichting.
+ *   bericht --tekst <t> [--context <json>] Schrijft een bericht van Jarvis.
+ *   document <id> --bestand <json>         Zet een document (overzicht/huidig, jarvis/status).
+ *   wie                                    Toont waar de verbinding vandaan komt en of ze werkt; nooit de reeks zelf.
+ */
+async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const wat = losse[0] ?? "";
+  const url = await leesDbUrl();
+  const bron = verbindingsBron(process.env.JARVIS_DB_URL, url !== null && !(process.env.JARVIS_DB_URL ?? "").trim());
+  if (url === null) {
+    console.error(`jarvis db: geen verbindingsreeks: niet in JARVIS_DB_URL en niet in ${DB_URL_BESTAND}.`);
+    return 1;
+  }
+  const { default: postgres } = await import("postgres");
+  const sql = postgres(url, { prepare: false, max: 1, connect_timeout: 15 });
+  try {
+    if (wat === "wie") {
+      const rij = await sql`select current_user as gebruiker, current_setting('server_version') as versie`;
+      console.log(`jarvis db: verbonden als ${rij[0]?.gebruiker} (bron: ${bron}; PostgreSQL ${rij[0]?.versie}).`);
+      return 0;
+    }
+    if (wat === "nieuw") {
+      const antwoorden = await sql.unsafe(NIEUWE_ANTWOORDEN_SQL);
+      const berichten = await sql.unsafe(NIEUWE_BERICHTEN_SQL);
+      console.log(JSON.stringify({ antwoorden, berichten }, null, 2));
+      return 0;
+    }
+    if (wat === "claim" || wat === "verwerkt") {
+      const tabel = losse[1] ?? "";
+      const id = losse[2] ?? "";
+      if (!isTabel(tabel) || !id) {
+        console.error(`jarvis db ${wat}: gebruik: jarvis db ${wat} <antwoorden|berichten> <id> ${wat === "claim" ? "--door <naam>" : "--verwerking <tekst>"}`);
+        return 2;
+      }
+      if (wat === "claim") {
+        const door = vlaggen.get("door") ?? "";
+        if (!door) {
+          console.error("jarvis db claim: --door <naam> is verplicht (laptop, cloud, …).");
+          return 2;
+        }
+        const rijen = await sql.unsafe(claimSql(tabel), [id, door]);
+        if (rijen.length === 0) {
+          console.log(`jarvis db: ${tabel}/${id} is al in behandeling of verwerkt; overgeslagen.`);
+          return 3;
+        }
+        console.log(`jarvis db: ${tabel}/${id} geclaimd door ${door}.`);
+        return 0;
+      }
+      const verwerking = vlaggen.get("verwerking") ?? "";
+      if (!verwerking) {
+        console.error("jarvis db verwerkt: --verwerking <tekst> is verplicht.");
+        return 2;
+      }
+      const rijen = await sql.unsafe(verwerktSql(tabel), [id, verwerking]);
+      console.log(rijen.length === 0 ? `jarvis db: ${tabel}/${id} niet gevonden.` : `jarvis db: ${tabel}/${id} verwerkt.`);
+      return rijen.length === 0 ? 1 : 0;
+    }
+    if (wat === "bericht") {
+      const tekst = vlaggen.get("tekst") ?? "";
+      if (!tekst) {
+        console.error("jarvis db bericht: --tekst <tekst> is verplicht.");
+        return 2;
+      }
+      const context = vlaggen.get("context") ?? "{}";
+      JSON.parse(context);
+      const id = berichtId(new Date(), randomBytes(4).toString("hex"));
+      await sql.unsafe(BERICHT_VAN_JARVIS_SQL, [id, tekst, context]);
+      console.log(`jarvis db: bericht ${id} geschreven.`);
+      return 0;
+    }
+    if (wat === "document") {
+      const id = losse[1] ?? "";
+      const bestand = vlaggen.get("bestand") ?? "";
+      if (!id || !bestand) {
+        console.error("jarvis db document: gebruik: jarvis db document <id> --bestand <json-bestand>");
+        return 2;
+      }
+      const inhoud = await readFile(path.resolve(bestand), "utf8");
+      JSON.parse(inhoud);
+      await sql.unsafe(DOCUMENT_SQL, [id, inhoud]);
+      console.log(`jarvis db: document ${id} gezet.`);
+      return 0;
+    }
+    console.error(`jarvis db: onbekende deelopdracht "${wat}". Gebruik nieuw, claim, verwerkt, bericht, document of wie.`);
+    return 2;
+  } catch (fout) {
+    // Nooit de verbindingsreeks of het wachtwoord in een foutmelding.
+    const tekst = fout instanceof Error ? fout.message : String(fout);
+    console.error(`jarvis db: mislukt: ${tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
+    return 1;
+  } finally {
+    await sql.end({ timeout: 2 });
+  }
+}
+
 export async function voerUit(argv: readonly string[]): Promise<number> {
   const { opdracht, vlaggen, losse, dubbel } = leesArgumenten(argv);
   if (dubbel.length > 0) {
@@ -1552,6 +1674,9 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
       break;
     case "pr":
       code = await opdrachtPr(losse, vlaggen);
+      break;
+    case "db":
+      code = await opdrachtDb(losse, vlaggen);
       break;
     case "help":
     case "--help":

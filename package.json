@@ -17,14 +17,15 @@
     "poort": "node bin/jarvis.mjs poort"
   },
   "dependencies": {
+    "postgres": "^3.4.9",
     "tsx": "^4.23.13",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20",
+    "jarvis-engine": "file:.",
     "typescript": "^5",
-    "vitest": "^4.1.11",
-    "jarvis-engine": "file:."
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=22"
