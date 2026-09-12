@@ -1245,11 +1245,27 @@ function help(): number {
 
 const BOT_TOKEN_BESTAND = process.env.JARVIS_BOT_TOKEN_BESTAND ?? path.join(homedir(), ".jarvis-bot-token");
 
-/** Leest het token van de bot. Het komt nergens in uitvoer, logs of fouten. */
+/**
+ * Leest het token van de bot. Drie bronnen, in deze volgorde: de
+ * omgevingsvariabele JARVIS_BOT_TOKEN (cloud-omgevingen), het tokenbestand
+ * op de laptop, en als laatste de GitHub-CLI (`gh auth token`) wanneer die
+ * als de bot is aangemeld — zo werkt `jarvis pr` in een cloud-sessie zonder
+ * dat het token ergens anders hoeft te staan. Het komt nergens in uitvoer,
+ * logs of fouten.
+ */
 async function leesBotToken(): Promise<string | null> {
+  const uitOmgeving = (process.env.JARVIS_BOT_TOKEN ?? "").trim();
+  if (uitOmgeving.length > 0) return uitOmgeving;
   try {
     const inhoud = (await readFile(BOT_TOKEN_BESTAND, "utf8")).trim();
-    return inhoud.length > 0 ? inhoud : null;
+    if (inhoud.length > 0) return inhoud;
+  } catch {
+    // Geen bestand; probeer de CLI.
+  }
+  try {
+    const { stdout } = await uitvoeren("gh", ["auth", "token"], { maxBuffer: 1024 * 1024 });
+    const token = stdout.trim();
+    return token.length > 0 ? token : null;
   } catch {
     return null;
   }
@@ -1337,7 +1353,7 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
   const wat = losse[0] ?? "";
   const token = await leesBotToken();
   if (token === null) {
-    console.error(`jarvis pr: geen bottoken gevonden in ${BOT_TOKEN_BESTAND}. Zie docs: de eigenaar zet daar het token van de bot.`);
+    console.error(`jarvis pr: geen bottoken: niet in JARVIS_BOT_TOKEN, niet in ${BOT_TOKEN_BESTAND}, en de GitHub-CLI is niet aangemeld.`);
     return 1;
   }
   const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
