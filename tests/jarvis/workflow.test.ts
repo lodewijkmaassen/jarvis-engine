@@ -285,6 +285,12 @@ describe("de gehardde governancecontrole", () => {
     expect(uit.join(" ")).toContain(CANONIEKE_WORKFLOW_CONSUMER);
   });
 
+  it("pint elke action op een commit-SHA, niet op een verplaatsbare tag (RSK-0020)", () => {
+    const uses = [...CANONIEK.toString("utf8").matchAll(/uses:\s*(\S+)/g)].map((m) => m[1]);
+    expect(uses.length).toBeGreaterThanOrEqual(2);
+    for (const u of uses) expect(u).toMatch(/@[0-9a-f]{40}$/);
+  });
+
   it("noemt elk van de verplichte testbestanden", () => {
     // Deze lijst is de dekking. Hij hoort niet stilletjes te krimpen.
     expect(VERPLICHTE_GOVERNANCE_TESTS).toContain("tests/jarvis/workflow.test.ts");
