@@ -230,6 +230,7 @@ details.stand .md{padding:0 12px 10px}
   <div class="inhoud" id="paneel-inhoud"></div>
 </div>
 
+<script src="config.js" onerror="void 0"></script>
 <script>
 (() => {
 "use strict";
@@ -577,10 +578,11 @@ function itemHtml(n) {
   if (item.stappen?.length) s += `<div class="blok"><span class="eyebrow">Zo doe je het</span><ol class="stappen">${item.stappen.map((st) => `<li><span>${inlineMd(st)}</span></li>`).join("")}</ol>${item.controle ? `<div class="controle"><strong>Zo zie je dat het gelukt is:</strong> ${inlineMd(item.controle)}</div>` : ""}</div>`;
   if (antwoord) {
     const verwerkt = antwoord.status === "verwerkt";
-    s += `<div class="antwoordstatus"><div class="rij"><span class="chip ${verwerkt ? "ok" : "wacht"}">${verwerkt ? "verwerkt" : "wacht op Jarvis"}</span><strong>${esc(antwoord.keuze_label ?? KEUZE_LABEL[antwoord.keuze] ?? antwoord.keuze)}</strong>${antwoord.notitie ? `<span>— ${esc(antwoord.notitie)}</span>` : ""}<span class="mono">${esc(datumKort(antwoord.op))} ${esc(tijd(antwoord.op))}</span></div>
+    const bezig = antwoord.status === "in behandeling";
+    s += `<div class="antwoordstatus"><div class="rij"><span class="chip ${verwerkt ? "ok" : "wacht"}">${verwerkt ? "verwerkt" : bezig ? `Jarvis is ermee bezig (${esc(antwoord.behandeld_door ?? "sessie")})` : "wacht op Jarvis"}</span><strong>${esc(antwoord.keuze_label ?? KEUZE_LABEL[antwoord.keuze] ?? antwoord.keuze)}</strong>${antwoord.notitie ? `<span>— ${esc(antwoord.notitie)}</span>` : ""}<span class="mono">${esc(datumKort(antwoord.op))} ${esc(tijd(antwoord.op))}</span></div>
       ${verwerkt && antwoord.verwerking ? `<div class="verw">${inlineMd(antwoord.verwerking)}</div>` : !verwerkt ? `<div class="rij" style="color:var(--gedempt);font-size:13px">Opgeslagen. Jarvis pakt dit op zodra een sessie draait.</div>` : ""}
       <div class="rij"><button class="knop stil" data-actie="ongedaan" data-id="${esc(item.id)}">${verwerkt ? "Verwijderen uit overzicht" : "Ongedaan maken"}</button></div></div>`;
-  } else if (staat.db) {
+  } else if (staat.bron) {
     s += `<div class="blok"><span class="eyebrow">Je keuzes, en wat er dan gebeurt</span><div class="opties">${opties.map((o) => `<button class="optie ${adviesKeuze && adviesKeuze.keuze === o.keuze ? "advies" : ""}" data-actie="antwoord" data-id="${esc(item.id)}" data-keuze="${esc(o.keuze)}" data-label="${esc(o.label)}" ${VRIJ_VERPLICHT.has(o.keuze) ? 'data-vereist="1"' : ""}><span class="lbl">${esc(o.label)}${adviesKeuze && adviesKeuze.keuze === o.keuze ? `<span class="adv">advies</span>` : ""}</span><span class="kies">kies</span><span class="gevolg">${inlineMd(o.gevolg)}</span></button>`).join("")}</div>
       ${item.advies ? `<div class="adviestekst"><span class="eyebrow">Advies van Jarvis</span>${inlineMd(item.advies)}</div>` : ""}
       <div class="antwoordvak"><textarea placeholder="${opties.some((o) => VRIJ_VERPLICHT.has(o.keuze)) ? "Je beslissing in je eigen woorden (verplicht bij 'Beslissing vastleggen')" : "Toelichting bij je keuze (optioneel)"}" data-notitie="${esc(item.id)}" aria-label="Toelichting"></textarea></div></div>`;
@@ -653,15 +655,64 @@ if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => { if (s
 
 /* ---------- gegevens ---------- */
 const docId = (itemId) => itemId.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
+
+/* ---------- gegevensbron: de artifact-database (claude.ai) of de eigen database (Supabase, DEC-0042) ----------
+   Dezelfde pagina, twee bronnen. Op claude.ai leeft ze in de artifact-database en wekt ze de laptopsessie met een
+   signaalbestand; als eigen app (config.js met JARVIS_SUPABASE) schrijft ze in schema jarvis en geeft de database
+   zelf de gebeurtenis af die de cloud-uitvoerder start. */
+function bronArtifact(db, artifact) {
+  return {
+    soort: "artifact",
+    overzicht(cb, fout) { db.doc("overzicht/huidig").onSnapshot((snap) => cb(snap.exists ? snap.data() : null), fout); },
+    status(cb) { db.doc("jarvis/status").onSnapshot((snap) => cb(snap.exists ? snap.data() : null), () => {}); },
+    berichten(cb, fout) { db.collection("berichten").onSnapshot((snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })), !!snap.metadata?.fromCache), fout); },
+    antwoorden(cb, fout) { db.collection("antwoorden").onSnapshot((snap) => cb(snap.docs.map((d) => d.data())), fout); },
+    async antwoord(itemId, a) { await db.doc(`antwoorden/${docId(itemId)}`).set(a); },
+    async bericht(b) { await db.collection("berichten").add(b); },
+    async intrekken(itemId) { await db.doc(`antwoorden/${docId(itemId)}`).delete(); },
+    async wek(reden, lading) { if (!artifact()) throw Object.assign(new Error("geen artifact"), { code: "capability_disabled" }); await artifact().publish({ "signaal.json": { content: JSON.stringify({ op: new Date().toISOString(), reden, ...lading }, null, 2), contentType: "application/json" } }); },
+  };
+}
+function bronSupabase(client) {
+  const tabel = (naam) => client.schema("jarvis").from(naam);
+  const luister = (naam, laad) => {
+    client.channel(`jarvis-${naam}`).on("postgres_changes", { event: "*", schema: "jarvis", table: naam }, () => laad()).subscribe();
+  };
+  return {
+    soort: "supabase",
+    overzicht(cb, fout) {
+      const laad = async () => { const { data, error } = await tabel("documenten").select("inhoud").eq("id", "overzicht/huidig").maybeSingle(); if (error) fout(error); else cb(data?.inhoud ?? null); };
+      laad(); luister("documenten", laad);
+    },
+    status(cb) {
+      const laad = async () => { const { data } = await tabel("documenten").select("inhoud").eq("id", "jarvis/status").maybeSingle(); cb(data?.inhoud ?? null); };
+      laad();
+    },
+    berichten(cb, fout) {
+      let eerste = true;
+      const laad = async () => { const { data, error } = await tabel("berichten").select("*").order("op"); if (error) fout(error); else { cb(data ?? [], eerste); eerste = false; } };
+      laad(); luister("berichten", laad);
+    },
+    antwoorden(cb, fout) {
+      const laad = async () => { const { data, error } = await tabel("antwoorden").select("*").order("op"); if (error) fout(error); else cb(data ?? []); };
+      laad(); luister("antwoorden", laad);
+    },
+    async antwoord(itemId, a) { const { error } = await tabel("antwoorden").insert({ id: `${docId(itemId)}:${Date.now().toString(36)}`, ...a }); if (error) throw Object.assign(new Error(error.message), { code: error.code }); },
+    async bericht(b) { const { error } = await tabel("berichten").insert(b); if (error) throw Object.assign(new Error(error.message), { code: error.code }); },
+    async intrekken(itemId) { const { error } = await tabel("antwoorden").delete().eq("item_id", itemId).eq("status", "nieuw"); if (error) throw Object.assign(new Error(error.message), { code: error.code }); },
+    async wek() { /* de database geeft de gebeurtenis zelf af */ },
+  };
+}
 const vindItem = (itemId) => staat.overzicht.voor_jou.find((i) => i.id === itemId) ?? staat.overzicht.projecten.flatMap((p) => p.aandacht).find((i) => i.id === itemId);
 let signaalTimer = null;
 function meldJarvis(reden) {
-  if (!staat.artifact) return;
+  if (!staat.bron) return;
+  if (staat.bron.soort !== "artifact") { staat.signaal = "Jarvis gewekt"; render(); setTimeout(() => { staat.signaal = ""; render(); }, 6000); return; }
   clearTimeout(signaalTimer);
   signaalTimer = setTimeout(async () => {
     const wachten = [...staat.antwoorden.values()].filter((a) => a.status !== "verwerkt").map((a) => a.item_id);
     const berichten = staat.berichten.filter((b) => b.van !== "jarvis" && b.status === "nieuw").length;
-    try { await staat.artifact.publish({ "signaal.json": { content: JSON.stringify({ op: new Date().toISOString(), reden, wachten, berichten }, null, 2), contentType: "application/json" } }); staat.signaal = "Jarvis gewekt"; }
+    try { await staat.bron.wek(reden, { wachten, berichten }); staat.signaal = "Jarvis gewekt"; }
     catch (err) { staat.signaal = err?.code === "capability_disabled" ? "wekken hier niet mogelijk" : `wekken mislukt (${err?.code ?? "onbekend"})`; }
     render(); setTimeout(() => { staat.signaal = ""; render(); }, 6000);
   }, 2500);
@@ -669,7 +720,7 @@ function meldJarvis(reden) {
 async function bewaarAntwoord(itemId, keuze, keuzeLabel, notitie) {
   const item = vindItem(itemId);
   const antwoord = { item_id: itemId, project: item?.project ?? null, soort: item?.soort ?? null, titel: item?.titel ?? null, bron: item?.bron ?? null, keuze, keuze_label: keuzeLabel, notitie, op: new Date().toISOString(), status: "nieuw", overzicht_van: staat.overzicht.gegenereerd_op };
-  try { await staat.db.doc(`antwoorden/${docId(itemId)}`).set(antwoord); staat.antwoorden.set(itemId, antwoord); staat.dbFout = null; meldJarvis(`antwoord ${itemId}`); }
+  try { await staat.bron.antwoord(itemId, antwoord); staat.antwoorden.set(itemId, antwoord); staat.dbFout = null; meldJarvis(`antwoord ${itemId}`); }
   catch (err) { staat.dbFout = `Antwoord niet opgeslagen (${err?.code ?? "onbekend"}). Probeer het opnieuw.`; }
   render();
 }
@@ -677,39 +728,67 @@ async function verstuurBericht(nodeId, tekst) {
   const n = vindKnoop(staat.boom, nodeId);
   const context = { node: nodeId, soort: n?.soort ?? "root", titel: n?.label ?? "Jarvis", project: n?.project?.id ?? null, item_id: n?.item?.id ?? null, taak: n?.taak?.id ?? null };
   const bericht = { van: "eigenaar", tekst, op: new Date().toISOString(), status: "nieuw", context };
-  try { await staat.db.collection("berichten").add(bericht); staat.dbFout = null; meldJarvis("bericht"); }
+  try { await staat.bron.bericht(bericht); staat.dbFout = null; meldJarvis("bericht"); }
   catch (err) { staat.dbFout = `Bericht niet verzonden (${err?.code ?? "onbekend"}).`; staat.concept.set(nodeId, tekst); }
   render();
 }
 async function verwijderAntwoord(itemId) {
-  try { await staat.db.doc(`antwoorden/${docId(itemId)}`).delete(); staat.antwoorden.delete(itemId); staat.dbFout = null; meldJarvis(`ingetrokken ${itemId}`); }
+  try { await staat.bron.intrekken(itemId); staat.antwoorden.delete(itemId); staat.dbFout = null; meldJarvis(`ingetrokken ${itemId}`); }
   catch (err) { staat.dbFout = `Antwoord niet verwijderd (${err?.code ?? "onbekend"}).`; }
   render();
 }
-async function start() {
+function toonLogin(client, melding) {
+  $status.innerHTML = `<span class="dot uit"></span>inloggen`;
+  $pinhoud.innerHTML = `<div class="blok"><span class="eyebrow">Jarvis — eigen app</span><p>Log in met je Kasboek-account; alleen de eigenaar ziet iets.</p>${melding ? `<div class="melding fout">${esc(melding)}</div>` : ""}
+    <form id="login" class="antwoordvak"><input name="email" type="email" placeholder="e-mail" autocomplete="username" required><input name="wachtwoord" type="password" placeholder="wachtwoord" autocomplete="current-password" required><button class="knop" type="submit">Inloggen</button></form></div>`;
+  $paneel.hidden = false;
+  document.getElementById("login").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    const { error } = await client.auth.signInWithPassword({ email: String(f.get("email")), password: String(f.get("wachtwoord")) });
+    if (error) toonLogin(client, "Inloggen mislukt: " + error.message);
+  });
+}
+async function maakBron() {
+  const cfg = window.JARVIS_SUPABASE;
+  if (cfg?.url && cfg?.key) {
+    await new Promise((ok, nee) => { const sc = document.createElement("script"); sc.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.js"; sc.onload = ok; sc.onerror = nee; document.head.appendChild(sc); });
+    const client = window.supabase.createClient(cfg.url, cfg.key, { db: { schema: "jarvis" } });
+    const { data: { session } } = await client.auth.getSession();
+    if (!session) {
+      toonLogin(client, "");
+      await new Promise((ok) => { client.auth.onAuthStateChange((_ev, s) => { if (s) ok(); }); });
+    }
+    client.auth.onAuthStateChange((_ev, s) => { if (!s) location.reload(); });
+    return bronSupabase(client);
+  }
   let db = null;
   try { db = window.claude?.use ? await window.claude.use("db") : null; } catch { db = null; }
-  staat.db = db;
-  if (!db) { $status.innerHTML = `<span class="dot uit"></span>geen gegevens — open dit op claude.ai`; return; }
+  if (!db) return null;
   window.claude.use("artifact").then((a) => { staat.artifact = a; }).catch(() => { staat.artifact = null; });
-  db.doc("overzicht/huidig").onSnapshot((snap) => {
-    if (!snap.exists) { $status.innerHTML = `<span class="dot uit"></span>nog geen overzicht`; return; }
-    const data = snap.data();
+  return bronArtifact(db, () => staat.artifact);
+}
+async function start() {
+  const bron = await maakBron();
+  staat.bron = bron; staat.db = bron;
+  if (!bron) { $status.innerHTML = `<span class="dot uit"></span>geen gegevens — open dit op claude.ai of als eigen app`; return; }
+  bron.overzicht((data) => {
+    if (!data) { $status.innerHTML = `<span class="dot uit"></span>nog geen overzicht`; return; }
     staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, centraal: data.centraal ?? null, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [] };
     render();
-  }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code}).`; render(); });
-  db.doc("jarvis/status").onSnapshot((snap) => { staat.jarvis = snap.exists ? snap.data() : null; render(); }, () => {});
-  db.collection("berichten").onSnapshot((snap) => {
-    staat.berichten = snap.docs.map((d) => ({ id: d.id, ...d.data() })).filter((b) => b.tekst);
+  }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code ?? err.message}).`; render(); });
+  bron.status((data) => { staat.jarvis = data; render(); });
+  bron.berichten((rijen, uitCache) => {
+    staat.berichten = rijen.filter((b) => b.tekst);
     const laatsteJarvis = [...staat.berichten].filter((b) => b.van === "jarvis").sort((a, b) => String(a.op).localeCompare(String(b.op))).pop();
-    if (laatsteJarvis && laatsteJarvis.id !== staat.laatstVoorgelezen && !snap.metadata?.fromCache) { if (staat.laatstVoorgelezen) spreek(laatsteJarvis.tekst); staat.laatstVoorgelezen = laatsteJarvis.id; }
+    if (laatsteJarvis && laatsteJarvis.id !== staat.laatstVoorgelezen && !uitCache) { if (staat.laatstVoorgelezen) spreek(laatsteJarvis.tekst); staat.laatstVoorgelezen = laatsteJarvis.id; }
     render();
-  }, (err) => { staat.dbFout = `Gesprek niet te lezen (${err.code}).`; render(); });
-  db.collection("antwoorden").onSnapshot((snap) => {
+  }, (err) => { staat.dbFout = `Gesprek niet te lezen (${err.code ?? err.message}).`; render(); });
+  bron.antwoorden((rijen) => {
     staat.antwoorden = new Map();
-    for (const d of snap.docs) { const a = d.data(); if (a?.item_id) staat.antwoorden.set(a.item_id, a); }
+    for (const a of rijen) if (a?.item_id) staat.antwoorden.set(a.item_id, a);
     render();
-  }, (err) => { staat.dbFout = `Antwoorden niet te lezen (${err.code}).`; render(); });
+  }, (err) => { staat.dbFout = `Antwoorden niet te lezen (${err.code ?? err.message}).`; render(); });
 }
 start();
 })();
