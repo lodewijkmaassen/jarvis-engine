@@ -1,0 +1,18 @@
+[
+  "select current_user as gebruiker, current_setting('server_version') as versie",
+  "update jarvis.antwoorden set status = 'in behandeling', behandeld_door = $2, behandeld_sinds = now() where id = $1 and status = 'nieuw' returning id",
+  "update jarvis.berichten set status = 'in behandeling', behandeld_door = $2, behandeld_sinds = now() where id = $1 and status = 'nieuw' returning id",
+  "update jarvis.antwoorden set status = 'verwerkt', verwerkt_op = now(), verwerking = $2 where id = $1 returning id",
+  "update jarvis.berichten set status = 'verwerkt', verwerkt_op = now(), verwerking = $2 where id = $1 returning id",
+  "select id, item_id, project, soort, titel, bron, keuze, keuze_label, notitie, op, status from jarvis.antwoorden where status = 'nieuw' order by op",
+  "select id, van, tekst, op, status, context from jarvis.berichten where van = 'eigenaar' and status = 'nieuw' order by op",
+  "insert into jarvis.berichten (id, van, tekst, status, context, verwerkt_op) values ($1, 'jarvis', $2, 'verwerkt', $3::jsonb, now()) returning id",
+  "insert into jarvis.documenten (id, inhoud, bijgewerkt) values ($1, $2::jsonb, now()) on conflict (id) do update set inhoud = excluded.inhoud, bijgewerkt = now() returning id",
+  "select id, soort, project, taak, scope_hash, pr_repo, pr_nummer, commit_sha, op from jarvis.autorisaties where soort = 'taak' and taak = $1 order by op desc limit 1",
+  "select id, soort, project, taak, scope_hash, pr_repo, pr_nummer, commit_sha, op from jarvis.autorisaties where soort = 'pr' and pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 order by op desc limit 1",
+  "select id, soort, project, taak, scope_hash, pr_repo, pr_nummer, commit_sha, op from jarvis.autorisaties where id = $1",
+  "select id, soort, project, taak, scope_hash, pr_repo, pr_nummer, commit_sha, op from jarvis.autorisaties order by op desc limit 200",
+  "insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel, rapport, door) values ($1, $2, $3, $4, $5, $6) returning id",
+  "select id, pr_repo, pr_nummer, commit_sha, oordeel, rapport, door, op from jarvis.toetsingen where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and oordeel = 'GO' order by op desc limit 1",
+  "select id, pr_repo, pr_nummer, commit_sha, oordeel, rapport, door, op from jarvis.toetsingen where id = $1"
+]

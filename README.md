@@ -78,3 +78,23 @@ GitHub telt de goedkeuring van de workflow alleen mee als de eigenaar per
 repository *Allow GitHub Actions to create and approve pull requests* heeft
 aangezet. Zonder configuratie of zonder workflow blijft de review van de
 eigenaar de enige autorisatie.
+
+## De eigen database vanuit de cloud
+
+Een cloud-sessie van het platform kan geen Postgres-verbinding maken (ruwe
+TCP is geblokkeerd; gemeten 2026-09-13) en environment variables zijn daar
+leesbaar voor elke opdracht. `jarvis db` kiest daarom zelf zijn weg:
+
+1. een verbindingsreeks (`JARVIS_DB_URL` of `~/.jarvis-db-url`) — de laptop;
+2. anders de Edge Function `jarvis-db` (`JARVIS_DB_API`, of afgeleid van
+   `attestatie.url` in `jarvis.config.yml`) — de cloud. De aanroep draagt
+   geen token: de *API credential* van de cloud-omgeving voegt de
+   `Authorization`-header toe voor de host van de functie, buiten de VM.
+
+De functie staat in `jarvis/edge/jarvis-db/` en voert uitsluitend de
+statements uit die letterlijk in `toegestaan.json` staan (gegenereerd uit
+`db.ts` met `npx tsx jarvis/scripts/toegestane-sql.ts`; een test bewaakt de
+gelijkheid). Ze verbindt als `jarvis_werker` via het function-secret
+`JARVIS_DB_URL` en vergelijkt het token uit `JARVIS_API_TOKEN` in constante
+tijd. Uitrollen: `supabase functions deploy jarvis-db --no-verify-jwt` vanuit
+die map, of via de Supabase-MCP.

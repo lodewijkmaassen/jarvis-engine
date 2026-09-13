@@ -85,6 +85,7 @@ import {
   TOETSING_SQL,
   verbindingsBron,
   verwerktSql,
+  WIE_SQL,
 } from "./db";
 import { randomBytes } from "node:crypto";
 import { ATTESTATIE_GEBRUIKER, beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
@@ -1321,6 +1322,11 @@ const BOT_TOKEN_BESTAND = process.env.JARVIS_BOT_TOKEN_BESTAND ?? path.join(home
 async function leesBotToken(): Promise<string | null> {
   const uitOmgeving = (process.env.JARVIS_BOT_TOKEN ?? "").trim();
   if (uitOmgeving.length > 0) return uitOmgeving;
+  // In een cloud-sessie van het platform staat er soms een plaatshouder in
+  // GH_TOKEN/GITHUB_TOKEN die de GitHub-proxy buiten de VM vervangt door de
+  // echte identiteit; die is per definitie geen geheim en werkt alleen daar.
+  const plaatshouder = (process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "").trim();
+  if (plaatshouder.length > 0) return plaatshouder;
   try {
     const inhoud = (await readFile(BOT_TOKEN_BESTAND, "utf8")).trim();
     if (inhoud.length > 0) return inhoud;
@@ -1590,6 +1596,74 @@ async function leesDbUrl(): Promise<string | null> {
   }
 }
 
+/** De kleinste gemene deler van een postgres-verbinding en de HTTPS-client. */
+type DbClient = {
+  unsafe: (sql: string, params?: readonly unknown[]) => Promise<readonly Record<string, unknown>[]>;
+  end: (o: { timeout: number }) => Promise<void>;
+};
+
+/**
+ * De eigen database over HTTPS, voor een omgeving zonder Postgres-bereik (de
+ * cloud, gemeten 2026-09-13): elk statement gaat als POST naar de Edge
+ * Function `jarvis-db`. De aanroep draagt zelf GEEN token: de proxy van het
+ * platform voegt de Authorization-header toe voor de host van de functie
+ * (API credential); het geheim komt deze code nooit in. Buiten zo'n proxy
+ * antwoordt de functie 401 en meldt de engine dat.
+ */
+function apiClient(url: string): DbClient {
+  return {
+    async unsafe(sql, params = []) {
+      let antwoord: Response;
+      try {
+        antwoord = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "User-Agent": "jarvis-db", Connection: "close" },
+          body: JSON.stringify({ sql, params }),
+        });
+      } catch (fout) {
+        throw new Error(`jarvis-db niet bereikbaar: ${fout instanceof Error ? fout.message : String(fout)}`);
+      }
+      const lading = (await antwoord.json().catch(() => ({}))) as { rows?: unknown; fout?: unknown };
+      if (!antwoord.ok) {
+        throw new Error(
+          antwoord.status === 401
+            ? "jarvis-db weigert (401): geen API credential voor deze host in deze omgeving"
+            : `jarvis-db: HTTP ${antwoord.status}${typeof lading.fout === "string" ? ` — ${lading.fout}` : ""}`,
+        );
+      }
+      return Array.isArray(lading.rows) ? (lading.rows as Record<string, unknown>[]) : [];
+    },
+    async end() {
+      /* niets open */
+    },
+  };
+}
+
+/**
+ * Verbindt met de eigen database langs de eerste weg die er is:
+ *   1. een verbindingsreeks (JARVIS_DB_URL of het bestand) — de laptop;
+ *   2. de Edge Function jarvis-db (JARVIS_DB_API, of afgeleid van
+ *      attestatie.url in jarvis.config.yml) — de cloud.
+ * Geen van beide: null.
+ */
+async function verbindDb(): Promise<{ readonly sql: DbClient; readonly bron: string } | null> {
+  const url = await leesDbUrl();
+  if (url !== null) {
+    const { default: postgres } = await import("postgres");
+    const bron = verbindingsBron(process.env.JARVIS_DB_URL, true) ?? "bestand";
+    return { sql: postgres(url, { prepare: false, max: 1, connect_timeout: 15 }) as unknown as DbClient, bron };
+  }
+  let api = (process.env.JARVIS_DB_API ?? "").trim();
+  if (!api) {
+    const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+    const config = await laadConfig(wortel);
+    const basis = config.ok ? config.config.attestatie.url.replace(/\/$/, "") : "";
+    if (basis) api = `${basis}/functions/v1/jarvis-db`;
+  }
+  if (!api) return null;
+  return { sql: apiClient(api), bron: "api (Edge Function jarvis-db, header via de proxy van het platform)" };
+}
+
 /**
  * `jarvis db <nieuw|claim|verwerkt|bericht|document|wie> …`
  *
@@ -1602,17 +1676,18 @@ async function leesDbUrl(): Promise<string | null> {
  */
 async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
   const wat = losse[0] ?? "";
-  const url = await leesDbUrl();
-  const bron = verbindingsBron(process.env.JARVIS_DB_URL, url !== null && !(process.env.JARVIS_DB_URL ?? "").trim());
-  if (url === null) {
-    console.error(`jarvis db: geen verbindingsreeks: niet in JARVIS_DB_URL en niet in ${DB_URL_BESTAND}.`);
+  const verbinding = await verbindDb();
+  if (verbinding === null) {
+    console.error(
+      `jarvis db: geen weg naar de database: geen verbindingsreeks (JARVIS_DB_URL, ${DB_URL_BESTAND}) en geen ` +
+        "Edge Function (JARVIS_DB_API of attestatie.url in jarvis.config.yml).",
+    );
     return 1;
   }
-  const { default: postgres } = await import("postgres");
-  const sql = postgres(url, { prepare: false, max: 1, connect_timeout: 15 });
+  const { sql, bron } = verbinding;
   try {
     if (wat === "wie") {
-      const rij = await sql`select current_user as gebruiker, current_setting('server_version') as versie`;
+      const rij = await sql.unsafe(WIE_SQL);
       console.log(`jarvis db: verbonden als ${rij[0]?.gebruiker} (bron: ${bron}; PostgreSQL ${rij[0]?.versie}).`);
       return 0;
     }
@@ -1727,10 +1802,7 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
 // een andere ref) haalt het daarmee niet.
 // ---------------------------------------------------------------------------
 
-type PgClient = {
-  unsafe: (sql: string, params?: readonly unknown[]) => Promise<readonly Record<string, unknown>[]>;
-  end: (o: { timeout: number }) => Promise<void>;
-};
+type PgClient = DbClient;
 
 /** Waar akkoorden en toetsingen vandaan komen: de leesbeelden (REST) of de rol (SQL). */
 type AttestatieBron = {
@@ -1924,16 +1996,15 @@ async function geverifieerdeAttestaties(
     (r) => r.staat === "APPROVED" && r.gebruiker.toLowerCase() === ATTESTATIE_GEBRUIKER && leesAttestatie(r.tekst ?? "") !== null,
   );
   if (kandidaten.length === 0) return { koppen: [], opmerkingen: [] };
-  const url = await leesDbUrl();
-  if (url === null) {
+  const verbinding = await verbindDb();
+  if (verbinding === null) {
     return { koppen: [], opmerkingen: [`${kandidaten.length} attestatie(s) gevonden maar geen databaseverbinding om ze te verifiëren`] };
   }
   const opmerkingen: string[] = [];
   const koppen: string[] = [];
   const config = await leesConfigVanRepo(token, slug);
   if (typeof config === "string") return { koppen, opmerkingen: [config] };
-  const { default: postgres } = await import("postgres");
-  const sql = postgres(url, { prepare: false, max: 1, connect_timeout: 15 }) as unknown as PgClient;
+  const sql = verbinding.sql;
   try {
     const bron = sqlBron(sql);
     for (const r of kandidaten) {
