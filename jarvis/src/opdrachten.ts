@@ -1852,13 +1852,23 @@ async function verzamelAttestatieFeiten(
 ): Promise<AttestatieFeiten | string> {
   const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
   if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
-  const prTekst = String((pr.lading as { body?: string | null }).body ?? "");
+  const prLading = pr.lading as { body?: string | null; commits?: number; changed_files?: number };
+  const prTekst = String(prLading.body ?? "");
   const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string } }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10);
   if (typeof commitsRuw === "string") return commitsRuw;
   const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message }));
   const bestandenRuw = await leesAllePaginas<{ filename: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10);
   if (typeof bestandenRuw === "string") return bestandenRuw;
   const bestanden = bestandenRuw.map((f) => f.filename);
+  // Het commits-eindpunt geeft hoogstens 250 commits en de lijsten kunnen
+  // afwijken van wat GitHub over de PR zegt; dan is er iets ongelezen, en
+  // ongelezen is ongecontroleerd (QA-bevinding 14).
+  if (typeof prLading.commits === "number" && prLading.commits !== commits.length) {
+    return `de pull request telt ${prLading.commits} commits maar er zijn er ${commits.length} gelezen; zo'n pull request wordt niet geattesteerd`;
+  }
+  if (typeof prLading.changed_files === "number" && prLading.changed_files !== bestanden.length) {
+    return `de pull request telt ${prLading.changed_files} bestanden maar er zijn er ${bestanden.length} gelezen; zo'n pull request wordt niet geattesteerd`;
+  }
 
   const { taak, redenen: taakRedenen } = taakUitCommits(commits);
   let scopeHashKop: string | null = null;

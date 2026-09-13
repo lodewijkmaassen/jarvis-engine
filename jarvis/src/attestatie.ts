@@ -205,7 +205,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   } else if (
     f.toetsing.oordeel !== "GO" ||
     f.toetsing.commit_sha !== f.kop ||
-    f.toetsing.pr_repo !== f.repo ||
+    f.toetsing.pr_repo.toLowerCase() !== f.repo.toLowerCase() ||
     f.toetsing.pr_nummer !== f.nummer
   ) {
     redenen.push(`de toetsing ${f.toetsing.id} hoort niet bij deze pull request op deze kop, of is geen GO`);
@@ -221,7 +221,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     const ok =
       f.autorisatiePr !== null &&
       f.autorisatiePr.soort === "pr" &&
-      f.autorisatiePr.pr_repo === f.repo &&
+      (f.autorisatiePr.pr_repo ?? "").toLowerCase() === f.repo.toLowerCase() &&
       f.autorisatiePr.pr_nummer === f.nummer &&
       f.autorisatiePr.commit_sha === f.kop;
     if (!ok) {
