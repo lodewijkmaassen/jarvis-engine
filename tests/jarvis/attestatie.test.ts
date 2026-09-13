@@ -81,7 +81,9 @@ describe("taakUitCommits", () => {
     expect(uit).toEqual({ taak: "T-1", redenen: [] });
   });
   it("weigert een commit zonder trailer en een mix van taken", () => {
-    expect(taakUitCommits([{ sha: KOP, boodschap: "Zonder" }]).redenen[0]).toMatch(/geen Jarvis-Task/);
+    expect(taakUitCommits([{ sha: KOP, boodschap: "Zonder" }]).redenen[0]).toMatch(/geen of meer dan/);
+    // Twee trailers in één commit: bij geen van beide taken.
+    expect(taakUitCommits([{ sha: KOP, boodschap: "Jarvis-Task: T-1\nJarvis-Task: T-2\n" }]).taak).toBeNull();
     const mix = taakUitCommits([
       { sha: KOP, boodschap: "Jarvis-Task: T-1" },
       { sha: ANDERE, boodschap: "Jarvis-Task: T-2" },
@@ -143,7 +145,24 @@ describe("beoordeelAttestatie", () => {
   it("weigert zonder GO op precies de kop", () => {
     expect(beoordeelAttestatie(feiten({ toetsing: null }))).toContainEqual(expect.stringMatching(/geen toetsing/));
     expect(beoordeelAttestatie(feiten({ toetsing: { ...toetsing, commit_sha: ANDERE } }))).toContainEqual(
-      expect.stringMatching(/hoort niet bij de kop/),
+      expect.stringMatching(/hoort niet bij deze pull request/),
+    );
+    expect(beoordeelAttestatie(feiten({ toetsing: { ...toetsing, pr_nummer: 8 } }))).toContainEqual(
+      expect.stringMatching(/hoort niet bij deze pull request/),
+    );
+  });
+  it("weigert zonder taak, zonder bestanden, met een akkoord voor een andere taak, en met een pr-akkoord op een ander nummer", () => {
+    expect(beoordeelAttestatie(feiten({ taak: null, taakRedenen: [] }))).toContainEqual(expect.stringMatching(/geen taak bekend/));
+    expect(beoordeelAttestatie(feiten({ gewijzigdeBestanden: [] }))).toContainEqual(expect.stringMatching(/geen bestanden/));
+    expect(beoordeelAttestatie(feiten({ autorisatieTaak: { ...autorisatie, taak: "T-anders" } }))).toContainEqual(
+      expect.stringMatching(/geen taakakkoord voor/),
+    );
+    const apart: Autorisatie = { ...autorisatie, id: "3", soort: "pr", pr_repo: "eigenaar/proef", pr_nummer: 8, commit_sha: KOP };
+    expect(beoordeelAttestatie(feiten({ gewijzigdeBestanden: [".env"], autorisatiePr: apart }))).toContainEqual(
+      expect.stringMatching(/harde uitzondering/),
+    );
+    expect(beoordeelAttestatie(feiten({ checks: [{ naam: "poort", status: "in_progress", conclusie: null }] }))).toContainEqual(
+      expect.stringMatching(/nog niet klaar/),
     );
   });
   it("weigert een harde uitzondering zonder apart akkoord, en aanvaardt die met", () => {
@@ -188,6 +207,11 @@ describe("attestatietekst", () => {
     expect(leesAttestatie(`${attestatieTekst(inhoud)}\n\nnaschrift`)).toEqual(inhoud);
     expect(leesAttestatie("LGTM")).toBeNull();
     expect(leesAttestatie("Attestatie (DEC-0043): kapot")).toBeNull();
+    // Een korte kop, een korte scope, of de attestatie pas op een latere regel: geen attestatie.
+    expect(leesAttestatie(attestatieTekst({ ...inhoud, kop: KOP.slice(0, 7) }))).toBeNull();
+    expect(leesAttestatie(attestatieTekst({ ...inhoud, scope: "abc" }))).toBeNull();
+    expect(leesAttestatie(`naschrift\n${attestatieTekst(inhoud)}`)).toBeNull();
+    expect(leesAttestatie(`x ${attestatieTekst(inhoud)}`)).toBeNull();
   });
   it("verifieert tegen de database", () => {
     expect(verifieerAttestatie(inhoud, KOP, autorisatie, toetsing)).toEqual([]);
@@ -225,9 +249,11 @@ describe("beoordeelSamenvoegen met een attestatie", () => {
     const eerder = { ...basis, reviews: [{ ...basis.reviews[0]!, commit: ANDERE }] };
     expect(beoordeelSamenvoegen(eerder, "eigenaar", [ANDERE])[0]).toMatch(/eerdere commit/);
   });
-  it("telt een goedkeuring van de bot zelf nooit", () => {
+  it("telt een goedkeuring van de bot zelf of van een derde nooit", () => {
     const bot = { ...basis, reviews: [{ gebruiker: "de-bot", staat: "APPROVED", commit: KOP }] };
     expect(beoordeelSamenvoegen(bot, "eigenaar", [KOP])[0]).toMatch(/geen goedkeurende review/);
+    const derde = { ...basis, reviews: [{ gebruiker: "voorbijganger", staat: "APPROVED", commit: KOP }] };
+    expect(beoordeelSamenvoegen(derde, "eigenaar", [KOP])[0]).toMatch(/geen goedkeurende review/);
   });
 });
 

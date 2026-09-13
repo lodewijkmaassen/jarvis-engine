@@ -120,10 +120,14 @@ export function leesUitzonderingenRegel(prTekst: string): "geen" | string | null
   return waarde.toLowerCase() === "geen" ? "geen" : waarde;
 }
 
-/** De Jarvis-Task-trailer van één commitboodschap, of null. */
+/**
+ * De Jarvis-Task-trailer van één commitboodschap: precies één. Geen trailer
+ * of twee trailers geeft null — een commit die twee taken noemt, hoort bij
+ * geen van beide.
+ */
 export function taakUitBoodschap(boodschap: string): string | null {
-  const m = /^Jarvis-Task:\s*(\S+)\s*$/m.exec(boodschap.replace(/\r\n/g, "\n"));
-  return m ? (m[1] ?? null) : null;
+  const alle = [...boodschap.replace(/\r\n/g, "\n").matchAll(/^Jarvis-Task:\s*(\S+)\s*$/gm)].map((m) => m[1] ?? "");
+  return alle.length === 1 ? alle[0]! : null;
 }
 
 /**
@@ -138,7 +142,7 @@ export function taakUitCommits(
   if (commits.length === 0) redenen.push("de pull request heeft geen commits");
   for (const c of commits) {
     const taak = taakUitBoodschap(c.boodschap);
-    if (taak === null) redenen.push(`commit ${c.sha.slice(0, 7)} draagt geen Jarvis-Task-trailer`);
+    if (taak === null) redenen.push(`commit ${c.sha.slice(0, 7)} draagt geen of meer dan één Jarvis-Task-trailer`);
     else taken.add(taak);
   }
   if (taken.size > 1) redenen.push(`de commits horen bij meer dan één taak: ${[...taken].sort().join(", ")}`);
@@ -178,10 +182,14 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     redenen.push(`de auteur is ${f.auteur}, niet de bot ${f.botLogin}; alleen werk van Jarvis wordt geattesteerd`);
   }
   redenen.push(...f.taakRedenen);
+  if (f.taak === null && f.taakRedenen.length === 0) redenen.push("geen taak bekend voor deze pull request");
+  if (f.gewijzigdeBestanden.length === 0) redenen.push("de pull request wijzigt geen bestanden; er is niets te attesteren");
 
   if (f.taak !== null) {
     if (f.autorisatieTaak === null) {
       redenen.push(`geen akkoord van de eigenaar op taak ${f.taak} in de database`);
+    } else if (f.autorisatieTaak.soort !== "taak" || f.autorisatieTaak.taak !== f.taak) {
+      redenen.push(`de gevonden autorisatie ${f.autorisatieTaak.id} is geen taakakkoord voor ${f.taak}`);
     } else if (f.scopeHashKop === null) {
       redenen.push(`tasks/${f.taak}/opdracht.md ontbreekt op de kop; zonder scope geen akkoord`);
     } else if (f.autorisatieTaak.scope_hash !== f.scopeHashKop) {
@@ -194,8 +202,13 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
 
   if (f.toetsing === null) {
     redenen.push(`geen toetsing met oordeel GO op de kop ${f.kop.slice(0, 7)}`);
-  } else if (f.toetsing.oordeel !== "GO" || f.toetsing.commit_sha !== f.kop) {
-    redenen.push(`de toetsing ${f.toetsing.id} hoort niet bij de kop of is geen GO`);
+  } else if (
+    f.toetsing.oordeel !== "GO" ||
+    f.toetsing.commit_sha !== f.kop ||
+    f.toetsing.pr_repo !== f.repo ||
+    f.toetsing.pr_nummer !== f.nummer
+  ) {
+    redenen.push(`de toetsing ${f.toetsing.id} hoort niet bij deze pull request op deze kop, of is geen GO`);
   }
 
   const treffers = raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
@@ -205,7 +218,12 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     redenen.push('de PR-tekst verklaart niets over uitzonderingen; zet er een regel "Uitzonderingen: geen" of "Uitzonderingen: <welke>" in');
   }
   if (uitzondering) {
-    const ok = f.autorisatiePr !== null && f.autorisatiePr.commit_sha === f.kop && f.autorisatiePr.pr_nummer === f.nummer;
+    const ok =
+      f.autorisatiePr !== null &&
+      f.autorisatiePr.soort === "pr" &&
+      f.autorisatiePr.pr_repo === f.repo &&
+      f.autorisatiePr.pr_nummer === f.nummer &&
+      f.autorisatiePr.commit_sha === f.kop;
     if (!ok) {
       const wat = [...treffers, ...(verklaring !== null && verklaring !== "geen" ? [`verklaard: ${verklaring}`] : [])];
       redenen.push(`harde uitzondering (DEC-0043 §2) zonder apart akkoord van de eigenaar op deze kop: ${wat.join("; ")}`);
@@ -244,7 +262,7 @@ export function leesAttestatie(tekst: string): AttestatieInhoud | null {
   const eerste = tekst.replace(/\r\n/g, "\n").split("\n")[0] ?? "";
   if (!eerste.startsWith(ATTESTATIE_VOORVOEGSEL)) return null;
   const m =
-    /autorisatie (\S+) · taak (\S+) · scope (\S+) · toetsing (\S+) GO op ([0-9a-f]{7,40}) · uitzonderingen: (.+?) · poort groen$/.exec(
+    /^Attestatie \(DEC-0043\): autorisatie (\S+) · taak (\S+) · scope ([0-9a-f]{64}) · toetsing (\S+) GO op ([0-9a-f]{40}) · uitzonderingen: (.+?) · poort groen$/.exec(
       eerste,
     );
   if (!m) return null;

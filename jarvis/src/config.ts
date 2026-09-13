@@ -154,7 +154,11 @@ export async function laadConfig(wortel: string): Promise<ConfigResultaat> {
   } catch {
     return { ok: false, fouten: [`${CONFIG_BESTANDSNAAM} niet gevonden in ${wortel}`] };
   }
+  return parseConfigTekst(ruw);
+}
 
+/** De configuratie uit tekst, voor een bestand dat niet op schijf staat (van een andere repository via de API). */
+export function parseConfigTekst(ruw: string): ConfigResultaat {
   // De configuratie is een kaal YAML-document; de parser verwacht een
   // front-matterblok. Vandaar de omhulling — één parser, één subset.
   const geparsed = parseFrontMatter(`---\n${ruw.replace(/\r\n/g, "\n").replace(/^\n+/, "")}\n---\n`);
