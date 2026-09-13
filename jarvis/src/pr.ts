@@ -50,26 +50,30 @@ export type Check = {
 };
 
 /**
- * Per checknaam alleen de laatste run. GitHub bewaart alle runs van een
- * commit: start een tweede run van dezelfde workflow (een review-event
- * tijdens een lopende run), dan annuleert de concurrency-groep de eerste en
- * blijft die als "cancelled" aan de commit hangen. Een geannuleerde run die
- * door een geslaagde is opgevolgd, zegt niets over de commit; de laatste run
- * wel. Zonder starttijd geldt de volgorde van de lijst.
+ * Laat alleen een OPGEVOLGDE, GEANNULEERDE run weg. GitHub bewaart alle runs
+ * van een commit: start een tweede run van dezelfde workflow (een
+ * review-event tijdens een lopende run), dan annuleert de concurrency-groep
+ * de eerste en blijft die als "cancelled" aan de commit hangen. Zo'n run
+ * zegt niets over de commit zodra er een later gestarte run met dezelfde naam
+ * is. Al het andere blijft staan en moet groen zijn: een rode run wordt
+ * nooit overstemd door een latere groene met dezelfde naam (QA-bevinding
+ * N-1 — anders kon een toegevoegde workflow met een job "poort" een echte
+ * rode poort onzichtbaar maken). Een run zonder starttijd geldt als eerder
+ * dan een run met starttijd; twee zonder starttijd volgen de lijstvolgorde.
  */
 export function laatstePerNaam(checks: readonly Check[]): readonly Check[] {
-  const laatste = new Map<string, Check>();
-  for (const c of checks) {
-    const eerder = laatste.get(c.naam);
-    if (!eerder) {
-      laatste.set(c.naam, c);
-      continue;
-    }
-    const a = eerder.gestart ?? "";
-    const b = c.gestart ?? "";
-    if (b >= a) laatste.set(c.naam, c);
-  }
-  return [...laatste.values()];
+  const positie = new Map<Check, number>();
+  checks.forEach((c, i) => positie.set(c, i));
+  const later = (a: Check, b: Check): boolean => {
+    // Is b later gestart dan a?
+    const ta = a.gestart ?? "";
+    const tb = b.gestart ?? "";
+    if (ta !== tb) return tb > ta;
+    return (positie.get(b) ?? 0) > (positie.get(a) ?? 0);
+  };
+  return checks.filter(
+    (c) => !(c.status === "completed" && c.conclusie === "cancelled" && checks.some((d) => d !== c && d.naam === c.naam && later(c, d))),
+  );
 }
 
 export type PullRequestFeiten = {

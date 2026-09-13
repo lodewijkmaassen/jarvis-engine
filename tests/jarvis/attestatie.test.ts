@@ -278,8 +278,16 @@ describe("laatstePerNaam", () => {
     // Andersom — de laatste run is geannuleerd — blijft geweigerd.
     const omgekeerd = { ...pr, checks: [...pr.checks].reverse().map((c, i) => ({ ...c, gestart: `2026-09-13T19:0${i}:00Z` })) };
     expect(beoordeelSamenvoegen(omgekeerd, "eigenaar")[0]).toMatch(/niet geslaagd \(cancelled\)/);
-    // Zonder starttijd geldt de lijstvolgorde.
-    expect(laatstePerNaam([{ naam: "a", status: "completed", conclusie: "failure" }, { naam: "a", status: "completed", conclusie: "success" }])[0]!.conclusie).toBe("success");
+    // Alleen een opgevolgde geannuleerde run valt weg; een rode run blijft altijd staan (QA N-1).
+    expect(laatstePerNaam([{ naam: "a", status: "completed", conclusie: "cancelled" }, { naam: "a", status: "completed", conclusie: "success" }]).map((c) => c.conclusie)).toEqual(["success"]);
+    expect(laatstePerNaam([{ naam: "a", status: "completed", conclusie: "failure" }, { naam: "a", status: "completed", conclusie: "success" }]).map((c) => c.conclusie)).toEqual(["failure", "success"]);
+    const overstemd = { ...pr, checks: [
+      { naam: "poort", status: "completed", conclusie: "failure", gestart: "2026-09-13T19:00:00Z" },
+      { naam: "poort", status: "completed", conclusie: "success", gestart: "2026-09-13T19:01:00Z" },
+    ] };
+    expect(beoordeelSamenvoegen(overstemd, "eigenaar")[0]).toMatch(/niet geslaagd \(failure\)/);
+    // Een geannuleerde run zonder opvolger blijft rood.
+    expect(laatstePerNaam([{ naam: "a", status: "completed", conclusie: "cancelled" }])).toHaveLength(1);
     // De attestatie kijkt op dezelfde manier.
     expect(beoordeelAttestatie(feiten({ checks: pr.checks }))).toEqual([]);
   });
