@@ -28,7 +28,7 @@
 // Alles hier is puur; de I/O (GitHub, database) staat in opdrachten.ts.
 
 import { createHash } from "node:crypto";
-import { ATTESTATIE_GEBRUIKER, type Check } from "./pr";
+import { ATTESTATIE_GEBRUIKER, laatstePerNaam, type Check } from "./pr";
 
 /** De identiteit waaronder de workflow de review afgeeft. */
 export const ATTESTATIE_LOGIN = ATTESTATIE_GEBRUIKER;
@@ -230,7 +230,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     }
   }
 
-  const poort = f.checks.filter((c) => c.naam === f.verplichteCheck);
+  const poort = laatstePerNaam(f.checks).filter((c) => c.naam === f.verplichteCheck);
   if (poort.length === 0) redenen.push(`de check "${f.verplichteCheck}" ontbreekt op de kop`);
   for (const c of poort) {
     if (c.status !== "completed") redenen.push(`de poort is nog niet klaar (${c.status})`);

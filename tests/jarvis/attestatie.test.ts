@@ -12,7 +12,7 @@ import {
   type Autorisatie,
   type Toetsing,
 } from "@/jarvis/src/attestatie";
-import { ATTESTATIE_GEBRUIKER, beoordeelSamenvoegen, type PullRequestFeiten } from "@/jarvis/src/pr";
+import { ATTESTATIE_GEBRUIKER, beoordeelSamenvoegen, laatstePerNaam, type PullRequestFeiten } from "@/jarvis/src/pr";
 import { restPadAutorisatieTaak, restPadToetsingKop } from "@/jarvis/src/db";
 
 const KOP = "a".repeat(40);
@@ -254,6 +254,34 @@ describe("beoordeelSamenvoegen met een attestatie", () => {
     expect(beoordeelSamenvoegen(bot, "eigenaar", [KOP])[0]).toMatch(/geen goedkeurende review/);
     const derde = { ...basis, reviews: [{ gebruiker: "voorbijganger", staat: "APPROVED", commit: KOP }] };
     expect(beoordeelSamenvoegen(derde, "eigenaar", [KOP])[0]).toMatch(/geen goedkeurende review/);
+  });
+});
+
+describe("laatstePerNaam", () => {
+  it("laat een geannuleerde run die door een geslaagde is opgevolgd niet meetellen", () => {
+    const pr: PullRequestFeiten = {
+      nummer: 7,
+      auteur: "de-bot",
+      kop: KOP,
+      basis: "main",
+      open: true,
+      concept: false,
+      samenvoegbaar: true,
+      samenvoegStaat: "clean",
+      reviews: [{ gebruiker: "eigenaar", staat: "APPROVED", commit: KOP }],
+      checks: [
+        { naam: "poort", status: "completed", conclusie: "cancelled", gestart: "2026-09-13T19:00:00Z" },
+        { naam: "poort", status: "completed", conclusie: "success", gestart: "2026-09-13T19:01:00Z" },
+      ],
+    };
+    expect(beoordeelSamenvoegen(pr, "eigenaar")).toEqual([]);
+    // Andersom — de laatste run is geannuleerd — blijft geweigerd.
+    const omgekeerd = { ...pr, checks: [...pr.checks].reverse().map((c, i) => ({ ...c, gestart: `2026-09-13T19:0${i}:00Z` })) };
+    expect(beoordeelSamenvoegen(omgekeerd, "eigenaar")[0]).toMatch(/niet geslaagd \(cancelled\)/);
+    // Zonder starttijd geldt de lijstvolgorde.
+    expect(laatstePerNaam([{ naam: "a", status: "completed", conclusie: "failure" }, { naam: "a", status: "completed", conclusie: "success" }])[0]!.conclusie).toBe("success");
+    // De attestatie kijkt op dezelfde manier.
+    expect(beoordeelAttestatie(feiten({ checks: pr.checks }))).toEqual([]);
   });
 });
 

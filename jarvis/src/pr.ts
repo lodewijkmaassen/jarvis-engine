@@ -45,7 +45,32 @@ export type Check = {
   readonly naam: string;
   readonly status: string;
   readonly conclusie: string | null;
+  /** Wanneer de run begon (ISO); bepaalt welke run van een naam de laatste is. */
+  readonly gestart?: string | null;
 };
+
+/**
+ * Per checknaam alleen de laatste run. GitHub bewaart alle runs van een
+ * commit: start een tweede run van dezelfde workflow (een review-event
+ * tijdens een lopende run), dan annuleert de concurrency-groep de eerste en
+ * blijft die als "cancelled" aan de commit hangen. Een geannuleerde run die
+ * door een geslaagde is opgevolgd, zegt niets over de commit; de laatste run
+ * wel. Zonder starttijd geldt de volgorde van de lijst.
+ */
+export function laatstePerNaam(checks: readonly Check[]): readonly Check[] {
+  const laatste = new Map<string, Check>();
+  for (const c of checks) {
+    const eerder = laatste.get(c.naam);
+    if (!eerder) {
+      laatste.set(c.naam, c);
+      continue;
+    }
+    const a = eerder.gestart ?? "";
+    const b = c.gestart ?? "";
+    if (b >= a) laatste.set(c.naam, c);
+  }
+  return [...laatste.values()];
+}
 
 export type PullRequestFeiten = {
   readonly nummer: number;
@@ -149,7 +174,8 @@ export function beoordeelSamenvoegen(
   );
   if (latereWijziging) redenen.push(`${eigenaar} vroeg wijzigingen op de huidige kop`);
 
-  const poort = pr.checks.filter((c) => c.naam === VERPLICHTE_CHECK);
+  const checks = laatstePerNaam(pr.checks);
+  const poort = checks.filter((c) => c.naam === VERPLICHTE_CHECK);
   if (poort.length === 0) {
     redenen.push(`de check "${VERPLICHTE_CHECK}" ontbreekt op de huidige kop; zonder poort wordt er niet samengevoegd`);
   }
@@ -157,7 +183,7 @@ export function beoordeelSamenvoegen(
     if (c.status !== "completed") redenen.push(`de poort is nog niet klaar (${c.status})`);
     else if (c.conclusie !== "success") redenen.push(`de poort is niet geslaagd (${c.conclusie ?? "onbekend"})`);
   }
-  for (const c of pr.checks) {
+  for (const c of checks) {
     if (c.naam === VERPLICHTE_CHECK) continue;
     if (c.status !== "completed") {
       redenen.push(`check ${c.naam} is nog niet klaar (${c.status})`);
