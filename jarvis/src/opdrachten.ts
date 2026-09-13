@@ -18,7 +18,7 @@ import { promisify } from "node:util";
 import { bouwContextPakket, rendereerPakket } from "./context";
 import { leesArgumenten } from "./args";
 import { parseFrontMatter } from "./frontmatter";
-import { laadConfig, leesStartpuntUitConfig, vindWortel, type JarvisConfig, type TaakKlasse } from "./config";
+import { laadConfig, leesStartpuntUitConfig, parseConfigTekst, vindWortel, type JarvisConfig, type TaakKlasse } from "./config";
 import { ackBronIsVertrouwd, formatteerLint, lint, parseerAcks } from "./lint";
 import { analyseerPlan, parseerPlanTabel, rendereerPlan } from "./plan";
 import { RECORD_TYPES, type RecordType } from "./records";
@@ -43,15 +43,51 @@ import {
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
 import { laadKennis, type KennisLading } from "./store";
 import {
+  ACTIEVE_ATTESTATIE,
   ACTIEVE_WORKFLOW,
+  canoniekeAttestatiePad,
   canoniekeWorkflowPad,
   VERPLICHTE_GOVERNANCE_TESTS,
   WORKFLOW_MAP,
   controleerGovernance,
   type BestandsFeiten,
 } from "./workflow";
+import {
+  attestatieTekst,
+  beoordeelAttestatie,
+  leesAttestatie,
+  scopeHash,
+  taakUitCommits,
+  verifieerAttestatie,
+  type AttestatieFeiten,
+  type Autorisatie,
+  type Toetsing,
+} from "./attestatie";
 import { bepaalModus, beoordeelEngine, ENGINE_MAP, leesEngineStand, type HoofdbranchVergelijking } from "./engine";
-import { beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, type PullRequestFeiten } from "./pr";
+import {
+  AUTORISATIE_ID_SQL,
+  AUTORISATIE_PR_SQL,
+  AUTORISATIE_TAAK_SQL,
+  AUTORISATIES_SQL,
+  berichtId,
+  BERICHT_VAN_JARVIS_SQL,
+  claimSql,
+  DOCUMENT_SQL,
+  isOordeel,
+  isTabel,
+  NIEUWE_ANTWOORDEN_SQL,
+  NIEUWE_BERICHTEN_SQL,
+  restPadAutorisatiePr,
+  restPadAutorisatieTaak,
+  restPadToetsingKop,
+  TOETSING_ID_SQL,
+  TOETSING_KOP_SQL,
+  TOETSING_SQL,
+  verbindingsBron,
+  verwerktSql,
+} from "./db";
+import { randomBytes } from "node:crypto";
+import { ATTESTATIE_GEBRUIKER, beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
 import { homedir } from "node:os";
 
 const uitvoeren = promisify(execFile);
@@ -239,6 +275,10 @@ export async function controleerWorkflow(wortel: string): Promise<number> {
     modus,
     actief: await feitenOver(wortelEchtPad, ACTIEVE_WORKFLOW),
     canoniek: await feitenOver(wortelEchtPad, canoniekPad),
+    attestatie: {
+      actief: await feitenOver(wortelEchtPad, ACTIEVE_ATTESTATIE),
+      canoniek: await feitenOver(wortelEchtPad, canoniekeAttestatiePad(modus)),
+    },
     workflowMapInhoud,
     testGroottes,
   });
@@ -533,7 +573,7 @@ async function leesTaakDossiers(wortel: string, takenMap: string): Promise<reado
     } catch {
       resultaat = null;
     }
-    dossiers.push({ id, opdracht: platte, resultaat });
+    dossiers.push({ id, opdracht: platte, tekst: opdracht, resultaat });
   }
   return dossiers;
 }
@@ -558,6 +598,25 @@ async function leesWeergavenaam(wortel: string, terugval: string): Promise<strin
 async function leesExternProject(pad: string): Promise<ProjectInvoer> {
   const wortel = path.resolve(pad);
   const mapnaam = path.basename(wortel);
+  // Draagt de repository een eigen jarvis.config.yml, dan is ze aangesloten:
+  // dan lezen we haar zoals de eigen repository, met haar eigen statusdocument,
+  // records en taakdossiers. Een onleesbare of uitgeschakelde configuratie
+  // telt als niet aangesloten; het overzicht suggereert dan niets.
+  const configResultaat = await laadConfig(wortel);
+  if (configResultaat.ok && configResultaat.config.enabled) {
+    const config = configResultaat.config;
+    const lading = await laadKennis(wortel, config.knowledge_map);
+    return {
+      id: config.project.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+      naam: await leesWeergavenaam(wortel, config.project),
+      aangesloten: true,
+      hoofdbranch: await leesHoofdbranch(wortel),
+      statusDocument: (await leesBestandOfLeeg(wortel, config.current_state, "statusdocument")) || null,
+      records: lading.records,
+      taken: await leesTaakDossiers(wortel, config.taken_map),
+      gitLog: await leesGitLog(wortel),
+    };
+  }
   const naam = await leesWeergavenaam(wortel, mapnaam);
   return {
     id: mapnaam.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
@@ -1226,9 +1285,15 @@ function help(): number {
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
       "  rollen   [--schrijf]              Genereert de providerafgeleiden van de rolcontracten;",
       "                                    zonder --schrijf een driftcontrole (zit in de poort)",
-      "  pr <wie|openen|status|mergen|uitnodigingen> [opties]",
-      "                                    Pull requests als de bot: openen, volgen, en samenvoegen",
-      "                                    na goedkeuring van de eigenaar op de huidige kop.",
+      "  db <nieuw|claim|verwerkt|bericht|document|toetsing|autorisaties|wie> [opties]",
+      "                                    De eigen database van Jarvis (schema jarvis): nieuwe",
+      "                                    antwoorden en berichten lezen, claimen, verwerken, documenten zetten,",
+      "                                    een QA-toetsing vastleggen, akkoorden van de eigenaar lezen.",
+      "  pr <wie|openen|status|attesteren|mergen|uitnodigingen> [opties]",
+      "                                    Pull requests als de bot: openen, volgen, de attestatie starten",
+      "                                    en samenvoegen na akkoord van de eigenaar (DEC-0043).",
+      "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
+      "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
@@ -1245,11 +1310,27 @@ function help(): number {
 
 const BOT_TOKEN_BESTAND = process.env.JARVIS_BOT_TOKEN_BESTAND ?? path.join(homedir(), ".jarvis-bot-token");
 
-/** Leest het token van de bot. Het komt nergens in uitvoer, logs of fouten. */
+/**
+ * Leest het token van de bot. Drie bronnen, in deze volgorde: de
+ * omgevingsvariabele JARVIS_BOT_TOKEN (cloud-omgevingen), het tokenbestand
+ * op de laptop, en als laatste de GitHub-CLI (`gh auth token`) wanneer die
+ * als de bot is aangemeld — zo werkt `jarvis pr` in een cloud-sessie zonder
+ * dat het token ergens anders hoeft te staan. Het komt nergens in uitvoer,
+ * logs of fouten.
+ */
 async function leesBotToken(): Promise<string | null> {
+  const uitOmgeving = (process.env.JARVIS_BOT_TOKEN ?? "").trim();
+  if (uitOmgeving.length > 0) return uitOmgeving;
   try {
     const inhoud = (await readFile(BOT_TOKEN_BESTAND, "utf8")).trim();
-    return inhoud.length > 0 ? inhoud : null;
+    if (inhoud.length > 0) return inhoud;
+  } catch {
+    // Geen bestand; probeer de CLI.
+  }
+  try {
+    const { stdout } = await uitvoeren("gh", ["auth", "token"], { maxBuffer: 1024 * 1024 });
+    const token = stdout.trim();
+    return token.length > 0 ? token : null;
   } catch {
     return null;
   }
@@ -1304,11 +1385,14 @@ async function leesPullRequest(token: string, slug: string, nummer: number): Pro
   if (reviews.status !== 200) return `reviews niet te lezen (${foutTekst(reviews)})`;
   const checks = await github(token, "GET", `/repos/${slug}/commits/${p.head.sha}/check-runs?per_page=100`);
   if (checks.status !== 200) return `checks niet te lezen (${foutTekst(checks)})`;
-  const lijst = (reviews.lading as { user: { login: string }; state: string; commit_id: string }[]).map((r) => ({
-    gebruiker: r.user.login,
-    staat: r.state,
-    commit: r.commit_id,
-  }));
+  const lijst = (reviews.lading as { user: { login: string }; state: string; commit_id: string; body: string | null }[]).map(
+    (r) => ({
+      gebruiker: r.user.login,
+      staat: r.state,
+      commit: r.commit_id,
+      tekst: r.body ?? "",
+    }),
+  );
   const runs = (checks.lading as { check_runs: { name: string; status: string; conclusion: string | null }[] }).check_runs;
   return {
     nummer,
@@ -1337,7 +1421,7 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
   const wat = losse[0] ?? "";
   const token = await leesBotToken();
   if (token === null) {
-    console.error(`jarvis pr: geen bottoken gevonden in ${BOT_TOKEN_BESTAND}. Zie docs: de eigenaar zet daar het token van de bot.`);
+    console.error(`jarvis pr: geen bottoken: niet in JARVIS_BOT_TOKEN, niet in ${BOT_TOKEN_BESTAND}, en de GitHub-CLI is niet aangemeld.`);
     return 1;
   }
   const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
@@ -1438,7 +1522,25 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
     return 1;
   }
   const eigenaar = eigenaarVan(slug);
-  const redenen = beoordeelSamenvoegen(feiten, eigenaar);
+
+  if (wat === "attesteren") {
+    // Start de attestatieworkflow op main; die beoordeelt zelf en keurt goed
+    // of niet. De bot kan hier niets afdwingen: hij vraagt alleen om de toets.
+    const start = await github(token, "POST", `/repos/${slug}/actions/workflows/jarvis-attestatie.yml/dispatches`, {
+      ref: "main",
+      inputs: { pr: String(nummer) },
+    });
+    if (start.status !== 204) {
+      console.error(`jarvis pr attesteren: workflow niet gestart (${foutTekst(start)}); staat jarvis-attestatie.yml op main?`);
+      return 1;
+    }
+    console.log(`jarvis pr: attestatie gevraagd voor #${nummer} op ${feiten.kop.slice(0, 7)}; de workflow beoordeelt en geeft bij een schone uitkomst de review af (zie Actions → jarvis-attestatie).`);
+    return 0;
+  }
+
+  const attestaties = await geverifieerdeAttestaties(token, slug, feiten);
+  for (const o of attestaties.opmerkingen) console.error(`jarvis pr: ${o}`);
+  const redenen = beoordeelSamenvoegen(feiten, eigenaar, attestaties.koppen);
 
   if (wat === "status") {
     console.log(`jarvis pr: #${nummer} van ${feiten.auteur} naar ${feiten.basis}, kop ${feiten.kop.slice(0, 7)}, ${feiten.open ? "open" : "gesloten"}.`);
@@ -1462,12 +1564,492 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
       return 1;
     }
     const uit = samen.lading as { sha: string };
-    console.log(`jarvis pr: #${nummer} samengevoegd in ${feiten.basis} als ${uit.sha.slice(0, 7)} (mergecommit), na goedkeuring van ${eigenaar}.`);
+    const grond = attestaties.koppen.includes(feiten.kop) ? "een geverifieerde attestatie van de poort" : `goedkeuring van ${eigenaar}`;
+    console.log(`jarvis pr: #${nummer} samengevoegd in ${feiten.basis} als ${uit.sha.slice(0, 7)} (mergecommit), op grond van ${grond}.`);
     return 0;
   }
 
-  console.error(`jarvis pr: onbekende deelopdracht "${wat}". Gebruik wie, openen, status, mergen of uitnodigingen.`);
+  console.error(`jarvis pr: onbekende deelopdracht "${wat}". Gebruik wie, openen, status, attesteren, mergen of uitnodigingen.`);
   return 2;
+}
+
+// ---------------------------------------------------------------------------
+// De eigen database van Jarvis (schema jarvis). Zie db.ts.
+// ---------------------------------------------------------------------------
+
+const DB_URL_BESTAND = process.env.JARVIS_DB_URL_BESTAND ?? path.join(homedir(), ".jarvis-db-url");
+
+async function leesDbUrl(): Promise<string | null> {
+  const uitOmgeving = (process.env.JARVIS_DB_URL ?? "").trim();
+  if (uitOmgeving.length > 0) return uitOmgeving;
+  try {
+    const inhoud = (await readFile(DB_URL_BESTAND, "utf8")).trim();
+    return inhoud.length > 0 ? inhoud : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * `jarvis db <nieuw|claim|verwerkt|bericht|document|wie> …`
+ *
+ *   nieuw                                  Nieuwe antwoorden en berichten van de eigenaar, als JSON.
+ *   claim <tabel> <id> --door <naam>       Zet een item op "in behandeling"; slaagt alleen als het nog nieuw was.
+ *   verwerkt <tabel> <id> --verwerking <t> Zet een item op "verwerkt" met de toelichting.
+ *   bericht --tekst <t> [--context <json>] Schrijft een bericht van Jarvis.
+ *   document <id> --bestand <json>         Zet een document (overzicht/huidig, jarvis/status).
+ *   wie                                    Toont waar de verbinding vandaan komt en of ze werkt; nooit de reeks zelf.
+ */
+async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const wat = losse[0] ?? "";
+  const url = await leesDbUrl();
+  const bron = verbindingsBron(process.env.JARVIS_DB_URL, url !== null && !(process.env.JARVIS_DB_URL ?? "").trim());
+  if (url === null) {
+    console.error(`jarvis db: geen verbindingsreeks: niet in JARVIS_DB_URL en niet in ${DB_URL_BESTAND}.`);
+    return 1;
+  }
+  const { default: postgres } = await import("postgres");
+  const sql = postgres(url, { prepare: false, max: 1, connect_timeout: 15 });
+  try {
+    if (wat === "wie") {
+      const rij = await sql`select current_user as gebruiker, current_setting('server_version') as versie`;
+      console.log(`jarvis db: verbonden als ${rij[0]?.gebruiker} (bron: ${bron}; PostgreSQL ${rij[0]?.versie}).`);
+      return 0;
+    }
+    if (wat === "nieuw") {
+      const antwoorden = await sql.unsafe(NIEUWE_ANTWOORDEN_SQL);
+      const berichten = await sql.unsafe(NIEUWE_BERICHTEN_SQL);
+      console.log(JSON.stringify({ antwoorden, berichten }, null, 2));
+      return 0;
+    }
+    if (wat === "claim" || wat === "verwerkt") {
+      const tabel = losse[1] ?? "";
+      const id = losse[2] ?? "";
+      if (!isTabel(tabel) || !id) {
+        console.error(`jarvis db ${wat}: gebruik: jarvis db ${wat} <antwoorden|berichten> <id> ${wat === "claim" ? "--door <naam>" : "--verwerking <tekst>"}`);
+        return 2;
+      }
+      if (wat === "claim") {
+        const door = vlaggen.get("door") ?? "";
+        if (!door) {
+          console.error("jarvis db claim: --door <naam> is verplicht (laptop, cloud, …).");
+          return 2;
+        }
+        const rijen = await sql.unsafe(claimSql(tabel), [id, door]);
+        if (rijen.length === 0) {
+          console.log(`jarvis db: ${tabel}/${id} is al in behandeling of verwerkt; overgeslagen.`);
+          return 3;
+        }
+        console.log(`jarvis db: ${tabel}/${id} geclaimd door ${door}.`);
+        return 0;
+      }
+      const verwerking = vlaggen.get("verwerking") ?? "";
+      if (!verwerking) {
+        console.error("jarvis db verwerkt: --verwerking <tekst> is verplicht.");
+        return 2;
+      }
+      const rijen = await sql.unsafe(verwerktSql(tabel), [id, verwerking]);
+      console.log(rijen.length === 0 ? `jarvis db: ${tabel}/${id} niet gevonden.` : `jarvis db: ${tabel}/${id} verwerkt.`);
+      return rijen.length === 0 ? 1 : 0;
+    }
+    if (wat === "bericht") {
+      const tekst = vlaggen.get("tekst") ?? "";
+      if (!tekst) {
+        console.error("jarvis db bericht: --tekst <tekst> is verplicht.");
+        return 2;
+      }
+      const context = vlaggen.get("context") ?? "{}";
+      JSON.parse(context);
+      const id = berichtId(new Date(), randomBytes(4).toString("hex"));
+      await sql.unsafe(BERICHT_VAN_JARVIS_SQL, [id, tekst, context]);
+      console.log(`jarvis db: bericht ${id} geschreven.`);
+      return 0;
+    }
+    if (wat === "toetsing") {
+      // jarvis db toetsing <repo> <nummer> <sha> <GO|NO-GO> --door <naam> [--rapport <bestand>]
+      const repo = losse[1] ?? "";
+      const nummer = Number.parseInt(losse[2] ?? "", 10);
+      const sha = losse[3] ?? "";
+      const oordeel = losse[4] ?? "";
+      const rapportPad = vlaggen.get("rapport") ?? "";
+      const door = vlaggen.get("door") ?? "";
+      if (!/^[^/\s]+\/[^/\s]+$/.test(repo) || !Number.isInteger(nummer) || !/^[0-9a-f]{40}$/.test(sha) || !isOordeel(oordeel) || !door) {
+        console.error("jarvis db toetsing: gebruik: jarvis db toetsing <eigenaar/naam> <nummer> <volledige sha> <GO|NO-GO> --door <naam> [--rapport <bestand>]");
+        return 2;
+      }
+      const rapport = rapportPad ? await readFile(path.resolve(rapportPad), "utf8") : null;
+      const rijen = await sql.unsafe(TOETSING_SQL, [repo, nummer, sha, oordeel, rapport, door]);
+      console.log(`jarvis db: toetsing ${String(rijen[0]?.["id"])} vastgelegd: ${repo}#${nummer} op ${sha.slice(0, 7)} ${oordeel}.`);
+      return 0;
+    }
+    if (wat === "autorisaties") {
+      const taak = vlaggen.get("taak") ?? "";
+      const rijen = taak ? await sql.unsafe(AUTORISATIE_TAAK_SQL, [taak]) : await sql.unsafe(AUTORISATIES_SQL);
+      console.log(JSON.stringify(rijen, null, 2));
+      return 0;
+    }
+    if (wat === "document") {
+      const id = losse[1] ?? "";
+      const bestand = vlaggen.get("bestand") ?? "";
+      if (!id || !bestand) {
+        console.error("jarvis db document: gebruik: jarvis db document <id> --bestand <json-bestand>");
+        return 2;
+      }
+      const inhoud = await readFile(path.resolve(bestand), "utf8");
+      JSON.parse(inhoud);
+      await sql.unsafe(DOCUMENT_SQL, [id, inhoud]);
+      console.log(`jarvis db: document ${id} gezet.`);
+      return 0;
+    }
+    console.error(`jarvis db: onbekende deelopdracht "${wat}". Gebruik nieuw, claim, verwerkt, bericht, document, toetsing, autorisaties of wie.`);
+    return 2;
+  } catch (fout) {
+    // Nooit de verbindingsreeks of het wachtwoord in een foutmelding.
+    const tekst = fout instanceof Error ? fout.message : String(fout);
+    console.error(`jarvis db: mislukt: ${tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
+    return 1;
+  } finally {
+    await sql.end({ timeout: 2 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Attestatie (DEC-0043): de poort geeft de goedkeurende review af. Zie
+// attestatie.ts voor de regels; hier alleen de I/O.
+//
+// Twee lezers, één oordeel. De workflow (`jarvis attestatie`) leest akkoord
+// en toetsing via de leesbeelden met de publieke sleutel; `jarvis pr mergen`
+// leest ze via de rol jarvis_werker. Beide verzamelen dezelfde feiten van
+// GitHub en laten dezelfde pure beoordeling lopen. Een review van
+// github-actions[bot] is daardoor alleen een technische grendel op GitHub:
+// wie samenvoegt, beoordeelt zelf opnieuw — een review die niet uit de
+// attestatieworkflow komt (een andere workflow met schrijfrecht, een run van
+// een andere ref) haalt het daarmee niet.
+// ---------------------------------------------------------------------------
+
+type PgClient = {
+  unsafe: (sql: string, params?: readonly unknown[]) => Promise<readonly Record<string, unknown>[]>;
+  end: (o: { timeout: number }) => Promise<void>;
+};
+
+/** Waar akkoorden en toetsingen vandaan komen: de leesbeelden (REST) of de rol (SQL). */
+type AttestatieBron = {
+  readonly taak: (taak: string) => Promise<Autorisatie | null>;
+  readonly pr: (repo: string, nummer: number, kop: string) => Promise<Autorisatie | null>;
+  readonly toetsing: (repo: string, nummer: number, kop: string) => Promise<Toetsing | null>;
+  readonly opId: (autorisatie: string, toetsing: string) => Promise<{ autorisatie: Autorisatie | null; toetsing: Toetsing | null }>;
+};
+
+/** Rij → Autorisatie, met pr_nummer als getal (PostgREST en postgres geven soms een string). */
+function alsAutorisatie(rij: Record<string, unknown> | undefined): Autorisatie | null {
+  if (!rij) return null;
+  return {
+    id: String(rij["id"]),
+    soort: rij["soort"] === "pr" ? "pr" : "taak",
+    project: rij["project"] == null ? null : String(rij["project"]),
+    taak: rij["taak"] == null ? null : String(rij["taak"]),
+    scope_hash: rij["scope_hash"] == null ? null : String(rij["scope_hash"]),
+    pr_repo: rij["pr_repo"] == null ? null : String(rij["pr_repo"]),
+    pr_nummer: rij["pr_nummer"] == null ? null : Number(rij["pr_nummer"]),
+    commit_sha: rij["commit_sha"] == null ? null : String(rij["commit_sha"]),
+    op: String(rij["op"]),
+  };
+}
+
+function alsToetsing(rij: Record<string, unknown> | undefined): Toetsing | null {
+  if (!rij) return null;
+  return {
+    id: String(rij["id"]),
+    pr_repo: String(rij["pr_repo"]),
+    pr_nummer: Number(rij["pr_nummer"]),
+    commit_sha: String(rij["commit_sha"]),
+    oordeel: String(rij["oordeel"]),
+    rapport: rij["rapport"] == null ? null : String(rij["rapport"]),
+    door: String(rij["door"]),
+    op: String(rij["op"]),
+  };
+}
+
+/**
+ * Leest één leesbeeld via PostgREST met de publieke sleutel. Het schema
+ * `jarvis` moet in de API zichtbaar zijn; de leesbeelden geven geen
+ * eigenaarsgegevens prijs. Fouten zijn fouten: geen stille lege lijst.
+ */
+async function leesViaRest(url: string, sleutel: string, pad: string): Promise<readonly Record<string, unknown>[]> {
+  const antwoord = await fetch(`${url.replace(/\/$/, "")}/rest/v1/${pad}`, {
+    headers: {
+      apikey: sleutel,
+      Authorization: `Bearer ${sleutel}`,
+      "Accept-Profile": "jarvis",
+      Accept: "application/json",
+      "User-Agent": "jarvis-attestatie",
+    },
+  });
+  if (!antwoord.ok) throw new Error(`database niet te lezen via REST (HTTP ${antwoord.status}) op ${pad.split("?")[0]}`);
+  const lading: unknown = await antwoord.json();
+  return Array.isArray(lading) ? (lading as Record<string, unknown>[]) : [];
+}
+
+function restBron(url: string, sleutel: string): AttestatieBron {
+  return {
+    taak: async (taak) => alsAutorisatie((await leesViaRest(url, sleutel, restPadAutorisatieTaak(taak)))[0]),
+    pr: async (repo, nummer, kop) => alsAutorisatie((await leesViaRest(url, sleutel, restPadAutorisatiePr(repo, nummer, kop)))[0]),
+    toetsing: async (repo, nummer, kop) => alsToetsing((await leesViaRest(url, sleutel, restPadToetsingKop(repo, nummer, kop)))[0]),
+    opId: async () => ({ autorisatie: null, toetsing: null }),
+  };
+}
+
+function sqlBron(sql: PgClient): AttestatieBron {
+  return {
+    taak: async (taak) => alsAutorisatie((await sql.unsafe(AUTORISATIE_TAAK_SQL, [taak]))[0]),
+    pr: async (repo, nummer, kop) => alsAutorisatie((await sql.unsafe(AUTORISATIE_PR_SQL, [repo, nummer, kop]))[0]),
+    toetsing: async (repo, nummer, kop) => alsToetsing((await sql.unsafe(TOETSING_KOP_SQL, [repo, nummer, kop]))[0]),
+    opId: async (a, t) => ({
+      autorisatie: alsAutorisatie((await sql.unsafe(AUTORISATIE_ID_SQL, [a]))[0]),
+      toetsing: alsToetsing((await sql.unsafe(TOETSING_ID_SQL, [t]))[0]),
+    }),
+  };
+}
+
+/** Alle pagina's van een GitHub-lijst; weigert boven het plafond (fail closed). */
+async function leesAllePaginas<T>(token: string, pad: string, plafond: number): Promise<readonly T[] | string> {
+  const alles: T[] = [];
+  for (let pagina = 1; pagina <= plafond; pagina += 1) {
+    const a = await github(token, "GET", `${pad}${pad.includes("?") ? "&" : "?"}per_page=100&page=${pagina}`);
+    if (a.status !== 200) return `${pad.split("?")[0]} niet te lezen (${foutTekst(a)})`;
+    const lijst = a.lading as T[];
+    alles.push(...lijst);
+    if (lijst.length < 100) return alles;
+  }
+  return `${pad.split("?")[0]}: meer dan ${plafond * 100} regels; zo'n pull request wordt niet geattesteerd`;
+}
+
+/**
+ * De configuratie van de repository waar de PR in staat, van main. Niet uit
+ * de werkmap: `jarvis pr mergen 5 --repo x/y` kan vanuit een ander project
+ * draaien, en de PR-branch mag zijn eigen configuratie niet meebrengen.
+ */
+async function leesConfigVanRepo(token: string, slug: string): Promise<JarvisConfig | string> {
+  const a = await github(token, "GET", `/repos/${slug}/contents/jarvis.config.yml?ref=main`);
+  if (a.status !== 200) return `jarvis.config.yml op main van ${slug} niet te lezen (${foutTekst(a)})`;
+  const d = a.lading as { content?: string; encoding?: string };
+  if (d.encoding !== "base64" || typeof d.content !== "string") return `jarvis.config.yml van ${slug} heeft een onverwachte vorm`;
+  const uit = parseConfigTekst(Buffer.from(d.content, "base64").toString("utf8"));
+  return uit.ok ? uit.config : uit.fouten.join("; ");
+}
+
+/**
+ * Verzamelt alles wat de beoordeling nodig heeft: de PR-feiten van GitHub
+ * (commits, bestanden, dossier op de kop, checks) en de rijen uit de bron.
+ */
+async function verzamelAttestatieFeiten(
+  token: string,
+  slug: string,
+  nummer: number,
+  feiten: PullRequestFeiten,
+  config: JarvisConfig,
+  bron: AttestatieBron,
+): Promise<AttestatieFeiten | string> {
+  const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
+  if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
+  const prLading = pr.lading as { body?: string | null; commits?: number; changed_files?: number };
+  const prTekst = String(prLading.body ?? "");
+  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string } }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10);
+  if (typeof commitsRuw === "string") return commitsRuw;
+  const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message }));
+  const bestandenRuw = await leesAllePaginas<{ filename: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10);
+  if (typeof bestandenRuw === "string") return bestandenRuw;
+  const bestanden = bestandenRuw.map((f) => f.filename);
+  // Het commits-eindpunt geeft hoogstens 250 commits en de lijsten kunnen
+  // afwijken van wat GitHub over de PR zegt; dan is er iets ongelezen, en
+  // ongelezen is ongecontroleerd (QA-bevinding 14).
+  if (typeof prLading.commits === "number" && prLading.commits !== commits.length) {
+    return `de pull request telt ${prLading.commits} commits maar er zijn er ${commits.length} gelezen; zo'n pull request wordt niet geattesteerd`;
+  }
+  if (typeof prLading.changed_files === "number" && prLading.changed_files !== bestanden.length) {
+    return `de pull request telt ${prLading.changed_files} bestanden maar er zijn er ${bestanden.length} gelezen; zo'n pull request wordt niet geattesteerd`;
+  }
+
+  const { taak, redenen: taakRedenen } = taakUitCommits(commits);
+  let scopeHashKop: string | null = null;
+  let autorisatieTaak: Autorisatie | null = null;
+  if (taak !== null) {
+    const dossier = await github(
+      token,
+      "GET",
+      `/repos/${slug}/contents/${encodeURIComponent(config.taken_map)}/${encodeURIComponent(taak)}/opdracht.md?ref=${feiten.kop}`,
+    );
+    if (dossier.status === 200) {
+      const d = dossier.lading as { content?: string; encoding?: string };
+      if (d.encoding === "base64" && typeof d.content === "string") {
+        scopeHashKop = scopeHash(Buffer.from(d.content, "base64").toString("utf8"));
+      }
+    }
+    autorisatieTaak = await bron.taak(taak);
+  }
+  return {
+    nummer,
+    auteur: feiten.auteur,
+    botLogin: config.attestatie.bot,
+    kop: feiten.kop,
+    repo: slug,
+    taak,
+    taakRedenen,
+    autorisatieTaak,
+    scopeHashKop,
+    toetsing: await bron.toetsing(slug, nummer, feiten.kop),
+    gewijzigdeBestanden: bestanden,
+    extraPaden: config.attestatie.extra_paden,
+    prTekst,
+    autorisatiePr: await bron.pr(slug, nummer, feiten.kop),
+    checks: feiten.checks,
+    verplichteCheck: VERPLICHTE_CHECK,
+  };
+}
+
+/**
+ * Welke goedkeuringen van github-actions[bot] op deze PR een geldige
+ * attestatie dragen. Twee lagen: de tekst moet kloppen met de rijen in de
+ * eigen database (rol jarvis_werker), én de volledige beoordeling moet met
+ * eigen feiten opnieuw schoon zijn. Zonder databaseverbinding is er niets te
+ * verifiëren: dan telt geen enkele attestatie en blijft alleen een review van
+ * de eigenaar over. Fouten worden gemeld zonder verbindingsreeks.
+ */
+async function geverifieerdeAttestaties(
+  token: string,
+  slug: string,
+  feiten: PullRequestFeiten,
+): Promise<{ koppen: readonly string[]; opmerkingen: readonly string[] }> {
+  const kandidaten = feiten.reviews.filter(
+    (r) => r.staat === "APPROVED" && r.gebruiker.toLowerCase() === ATTESTATIE_GEBRUIKER && leesAttestatie(r.tekst ?? "") !== null,
+  );
+  if (kandidaten.length === 0) return { koppen: [], opmerkingen: [] };
+  const url = await leesDbUrl();
+  if (url === null) {
+    return { koppen: [], opmerkingen: [`${kandidaten.length} attestatie(s) gevonden maar geen databaseverbinding om ze te verifiëren`] };
+  }
+  const opmerkingen: string[] = [];
+  const koppen: string[] = [];
+  const config = await leesConfigVanRepo(token, slug);
+  if (typeof config === "string") return { koppen, opmerkingen: [config] };
+  const { default: postgres } = await import("postgres");
+  const sql = postgres(url, { prepare: false, max: 1, connect_timeout: 15 }) as unknown as PgClient;
+  try {
+    const bron = sqlBron(sql);
+    for (const r of kandidaten) {
+      if (r.commit !== feiten.kop) {
+        opmerkingen.push(`attestatie op ${r.commit.slice(0, 7)} overgeslagen: niet de huidige kop`);
+        continue;
+      }
+      const inhoud = leesAttestatie(r.tekst ?? "")!;
+      const rijen = await bron.opId(inhoud.autorisatie, inhoud.toetsing);
+      const redenen = [...verifieerAttestatie(inhoud, r.commit, rijen.autorisatie, rijen.toetsing)];
+      if (redenen.length === 0) {
+        const f = await verzamelAttestatieFeiten(token, slug, feiten.nummer, feiten, config, bron);
+        if (typeof f === "string") redenen.push(f);
+        else {
+          redenen.push(...beoordeelAttestatie(f));
+          if (f.autorisatieTaak?.id !== inhoud.autorisatie) redenen.push("de attestatie noemt een andere autorisatie dan de laatste voor deze taak");
+          if (f.toetsing?.id !== inhoud.toetsing) redenen.push("de attestatie noemt een andere toetsing dan de laatste GO op de kop");
+        }
+      }
+      if (redenen.length === 0) koppen.push(r.commit);
+      else opmerkingen.push(`attestatie op ${r.commit.slice(0, 7)} afgewezen: ${redenen.join("; ")}`);
+    }
+  } catch (fout) {
+    const tekst = fout instanceof Error ? fout.message : String(fout);
+    opmerkingen.push(`attestatie niet te verifiëren: ${tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
+  } finally {
+    await sql.end({ timeout: 2 });
+  }
+  return { koppen, opmerkingen };
+}
+
+/**
+ * `jarvis attestatie --pr <nummer> [--repo <slug>]`
+ *
+ * Draait in de workflow `jarvis-attestatie.yml` met GITHUB_TOKEN. Verzamelt
+ * de feiten, leest het akkoord en de toetsing uit de eigen database via de
+ * leesbeelden, en geeft bij een schone uitkomst de goedkeurende review af.
+ * Elke andere uitkomst: exitcode 1 met de redenen, en niets op de PR.
+ */
+async function opdrachtAttestatie(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const token = (process.env.GITHUB_TOKEN ?? "").trim();
+  if (!token) {
+    console.error("jarvis attestatie: geen GITHUB_TOKEN; deze opdracht draait alleen in de attestatieworkflow.");
+    return 1;
+  }
+  const nummer = Number.parseInt(vlaggen.get("pr") ?? "", 10);
+  if (!Number.isInteger(nummer) || nummer <= 0) {
+    console.error("jarvis attestatie: --pr <nummer> is verplicht.");
+    return 2;
+  }
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  const slug = vlaggen.get("repo") || (process.env.GITHUB_REPOSITORY ?? "").trim() || (await slugUitOrigin(wortel));
+  if (!slug) {
+    console.error("jarvis attestatie: geen repository bekend; geef --repo <eigenaar/naam>.");
+    return 1;
+  }
+  // De configuratie van de uitgecheckte main, niet van de PR.
+  const configResultaat = await laadConfig(wortel);
+  if (!configResultaat.ok) {
+    for (const f of configResultaat.fouten) console.error(`jarvis attestatie: ${f}`);
+    return 1;
+  }
+  const config = configResultaat.config;
+  const bron = config.attestatie;
+  if (!bron.url || !bron.sleutel || !bron.bot) {
+    console.error("jarvis attestatie: jarvis.config.yml mist attestatie.url, attestatie.sleutel of attestatie.bot; zonder bron geen attestatie.");
+    return 1;
+  }
+
+  const feiten = await leesPullRequest(token, slug, nummer);
+  if (typeof feiten === "string") {
+    console.error(`jarvis attestatie: ${feiten}`);
+    return 1;
+  }
+  let f: AttestatieFeiten | string;
+  try {
+    f = await verzamelAttestatieFeiten(token, slug, nummer, feiten, config, restBron(bron.url, bron.sleutel));
+  } catch (fout) {
+    f = fout instanceof Error ? fout.message : String(fout);
+  }
+  if (typeof f === "string") {
+    console.error(`jarvis attestatie: ${f}`);
+    return 1;
+  }
+  const uitkomst = beoordeelAttestatie(f);
+  if (uitkomst.length > 0) {
+    for (const r of uitkomst) console.error(`jarvis attestatie: ${r}`);
+    console.error(`jarvis attestatie: #${nummer} op ${feiten.kop.slice(0, 7)} niet geattesteerd.`);
+    return 1;
+  }
+  const tekst = attestatieTekst({
+    autorisatie: f.autorisatieTaak!.id,
+    taak: f.taak!,
+    scope: f.scopeHashKop!,
+    toetsing: f.toetsing!.id,
+    kop: feiten.kop,
+    uitzonderingen: f.autorisatiePr === null ? "geen" : `apart akkoord ${f.autorisatiePr.id}`,
+  });
+  const alBestaand = feiten.reviews.some(
+    (r) => r.staat === "APPROVED" && r.gebruiker.toLowerCase() === ATTESTATIE_GEBRUIKER && r.commit === feiten.kop && r.tekst === tekst,
+  );
+  if (alBestaand) {
+    console.log(`jarvis attestatie: #${nummer} is op ${feiten.kop.slice(0, 7)} al geattesteerd; niets te doen.`);
+    return 0;
+  }
+  const review = await github(token, "POST", `/repos/${slug}/pulls/${nummer}/reviews`, {
+    commit_id: feiten.kop,
+    event: "APPROVE",
+    body: tekst,
+  });
+  if (review.status !== 200) {
+    console.error(`jarvis attestatie: review afgeven mislukt (${foutTekst(review)})`);
+    return 1;
+  }
+  console.log(`jarvis attestatie: #${nummer} geattesteerd op ${feiten.kop.slice(0, 7)}: ${tekst}`);
+  return 0;
 }
 
 export async function voerUit(argv: readonly string[]): Promise<number> {
@@ -1517,6 +2099,12 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
       break;
     case "pr":
       code = await opdrachtPr(losse, vlaggen);
+      break;
+    case "db":
+      code = await opdrachtDb(losse, vlaggen);
+      break;
+    case "attestatie":
+      code = await opdrachtAttestatie(vlaggen);
       break;
     case "help":
     case "--help":

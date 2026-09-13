@@ -1,0 +1,68 @@
+name: jarvis-attestatie
+
+# De attestatie van Jarvis (DEC-0043): de poort geeft de goedkeurende review af.
+#
+# De eigenaar autoriseert per taak in de Jarvis-interface; dat akkoord staat
+# in de eigen database van Jarvis en kan alleen door zijn ingelogde account
+# zijn geschreven. De ruleset op de hoofdbranch eist daarnaast een
+# goedkeurende review van iemand anders dan de auteur. Die review is
+# techniek: deze workflow verifieert deterministisch dat het akkoord bestaat,
+# dat de scope van de taak sindsdien niet veranderde, dat een onafhankelijke
+# toetsing GO gaf op precies deze commit, dat er geen harde uitzondering
+# speelt zonder apart akkoord, en dat de poort groen is. Pas dan keurt hij
+# goed, met het kortlevende GITHUB_TOKEN van deze run.
+#
+# Waarom een workflow en geen tweede botaccount: GITHUB_TOKEN bestaat alleen
+# tijdens de run, kan buiten deze repository niets, en hoeft nergens bewaard
+# of geroteerd te worden. De code die beslist staat op main; een pull request
+# kan haar niet aanpassen om zichzelf goed te keuren, want `workflow_dispatch`
+# draait altijd de versie op de opgegeven ref (main).
+#
+# GitHub telt deze goedkeuring alleen mee wanneer de repository-instelling
+# "Allow GitHub Actions to create and approve pull requests" aanstaat. Dat is
+# een bewuste keuze van de eigenaar, per repository.
+#
+# Deze workflow bevat geen logica. Hij zet één invoer in de omgeving en roept
+# een vaste opdracht aan; die leest, beoordeelt en handelt.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "Nummer van de pull request"
+        required: true
+        type: string
+
+concurrency:
+  group: jarvis-attestatie-${{ inputs.pr }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  attestatie:
+    runs-on: ubuntu-latest
+    steps:
+      # Gepind op een commit-SHA (RSK-0020), net als in de poort.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Bewust de standaardbranch: de attestatiecode komt van main, niet
+          # van de pull request die beoordeeld wordt.
+          ref: main
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # --ignore-scripts: geen lifecycle-scripts, om dezelfde reden als in de
+      # poort. Deze job leest bestanden en praat met twee API's; meer niet.
+      - run: npm ci --ignore-scripts
+
+      - name: Jarvis-attestatie
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMMER: ${{ inputs.pr }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs attestatie --pr "$PR_NUMMER"

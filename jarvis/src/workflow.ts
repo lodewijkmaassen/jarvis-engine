@@ -55,6 +55,21 @@ export function canoniekeWorkflowPad(modus: "engine" | "consumer"): string {
   return modus === "engine" ? CANONIEKE_WORKFLOW : CANONIEKE_WORKFLOW_CONSUMER;
 }
 
+/**
+ * De attestatieworkflow (DEC-0043): geeft de goedkeurende review af namens de
+ * eigenaar. Niet verplicht in elke repository (een repository zonder eigen
+ * database werkt met reviews van de eigenaar), maar als hij er staat, moet
+ * hij byte-identiek zijn aan de canonieke bron: hij draagt schrijfrecht op
+ * pull requests en is daarmee een tweede ingang.
+ */
+export const ACTIEVE_ATTESTATIE = ".github/workflows/jarvis-attestatie.yml";
+export const CANONIEKE_ATTESTATIE = "jarvis/canonical/jarvis-attestatie.yml";
+export const CANONIEKE_ATTESTATIE_CONSUMER = "node_modules/jarvis-engine/jarvis/canonical/jarvis-attestatie.yml";
+
+export function canoniekeAttestatiePad(modus: "engine" | "consumer"): string {
+  return modus === "engine" ? CANONIEKE_ATTESTATIE : CANONIEKE_ATTESTATIE_CONSUMER;
+}
+
 /** De governanceconfiguratie zelf. Niet instelbaar. */
 export const GOVERNANCE_CONFIG = "jarvis.config.yml";
 
@@ -75,6 +90,8 @@ export const WORKFLOW_MAP = ".github/workflows";
 export const TOEGESTANE_WORKFLOWS: readonly string[] = [
   // De governance-poort zelf.
   "jarvis-lint.yml",
+  // De attestatie namens de eigenaar (DEC-0043); canonieke bron verplicht.
+  "jarvis-attestatie.yml",
   // Bestaande workflows van voor Jarvis. Ze staan hier omdat ze er zijn, niet
   // omdat ze beoordeeld zijn: alleen `jarvis-lint.yml` heeft een canonieke
   // bron. Wat deze lijst wel doet is een NIEUWE workflow tegenhouden.
@@ -127,6 +144,12 @@ export type GovernanceInvoer = {
   readonly modus?: "engine" | "consumer";
   readonly actief: BestandsFeiten;
   readonly canoniek: BestandsFeiten;
+  /**
+   * De attestatieworkflow en zijn canonieke bron. Ontbreekt het actieve
+   * bestand, dan is er niets te vergelijken; staat het er, dan moet het
+   * byte-identiek zijn aan de bron.
+   */
+  readonly attestatie?: { readonly actief: BestandsFeiten; readonly canoniek: BestandsFeiten };
   /** Bestandsnamen in de workflowmap, of null wanneer die niet te lezen is. */
   readonly workflowMapInhoud: readonly string[] | null;
   /** Per verplicht governance-testbestand: het aantal bytes, of null als het ontbreekt. */
@@ -234,6 +257,20 @@ export function controleerGovernance(invoer: GovernanceInvoer): readonly string[
   if (redenen.length === 0) {
     const uitkomst = vergelijkWorkflow(actief.bytes, canoniek.bytes);
     if (!uitkomst.gelijk) redenen.push(`${ACTIEVE_WORKFLOW} ${uitkomst.reden}`);
+  }
+
+  if (invoer.attestatie !== undefined && invoer.attestatie.actief.bytes !== null) {
+    const a = invoer.attestatie;
+    const bronPad = canoniekeAttestatiePad(modus);
+    if (a.actief.viaSymlink) redenen.push(`${ACTIEVE_ATTESTATIE} is een symbolische link of ligt achter een link`);
+    if (a.canoniek.viaSymlink) redenen.push(`${bronPad} is een symbolische link of ligt achter een link`);
+    if (a.actief.echtPad !== null && a.canoniek.echtPad === a.actief.echtPad) {
+      redenen.push(`${ACTIEVE_ATTESTATIE} en ${bronPad} zijn hetzelfde bestand`);
+    }
+    if (!a.actief.viaSymlink && !a.canoniek.viaSymlink) {
+      const uitkomst = vergelijkWorkflow(a.actief.bytes, a.canoniek.bytes);
+      if (!uitkomst.gelijk) redenen.push(`${ACTIEVE_ATTESTATIE} ${uitkomst.reden}`);
+    }
   }
 
   if (invoer.workflowMapInhoud === null) {

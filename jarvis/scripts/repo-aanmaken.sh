@@ -18,13 +18,21 @@ bot="${JARVIS_BOT_LOGIN:-}"
 args=()
 verwacht_bot=false
 for a in "$@"; do
-  if $verwacht_bot; then bot="$a"; verwacht_bot=false; continue; fi
+  if $verwacht_bot; then
+    # --bot gevolgd door een vlag is een vergissing, geen login (QA N-2).
+    if [[ "$a" == --* ]]; then echo "repo-aanmaken: --bot zonder login" >&2; exit 2; fi
+    bot="$a"; verwacht_bot=false; continue
+  fi
   case "$a" in
     --publiek) publiek=true ;;
     --bot) verwacht_bot=true ;;
     *) args+=("$a") ;;
   esac
 done
+if $verwacht_bot; then
+  echo "repo-aanmaken: --bot zonder login" >&2
+  exit 2
+fi
 naam="${args[0]:-}"
 beschrijving="${args[1]:-}"
 if [[ -z "$naam" || ! "$naam" =~ ^[a-z0-9][a-z0-9-]{0,99}$ ]]; then
@@ -53,11 +61,12 @@ if [[ "$status" == "404" ]]; then
     exit 1
   fi
   if $publiek; then echo "repo-aanmaken: publieke repository $login/$naam aangemaakt."; else echo "repo-aanmaken: privé repository $login/$naam aangemaakt."; fi
-  # Standaard-ruleset, alleen op een zojuist aangemaakte repository (DEC-0038):
-  # geen verwijderen, geen force-push, pull request met één goedkeuring.
-  # Identiek aan wat tovas-flow en kasboek hebben. Bestaande repositories
-  # raakt dit script nooit.
-  ruleset='{"name":"main-protection","target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_approving_review_count":1,"dismiss_stale_reviews_on_push":true,"require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":false}}]}'
+  # Standaard-ruleset, alleen op een zojuist aangemaakte repository (DEC-0038,
+  # aangescherpt in DEC-0041): geen verwijderen, geen force-push, pull request
+  # met één goedkeuring en uitsluitend een mergecommit, en de check `poort`
+  # (de job uit de canonieke workflow) moet geslaagd zijn. Bestaande
+  # repositories raakt dit script nooit.
+  ruleset='{"name":"main-protection","target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"pull_request","parameters":{"required_approving_review_count":1,"dismiss_stale_reviews_on_push":true,"require_code_owner_review":false,"require_last_push_approval":false,"required_review_thread_resolution":false,"allowed_merge_methods":["merge"]}},{"type":"required_status_checks","parameters":{"strict_required_status_checks_policy":false,"required_status_checks":[{"context":"poort"}]}}]}'
   rs="$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Authorization: Bearer $token" -H "Accept: application/vnd.github+json" "$api/repos/$login/$naam/rulesets" -d "$ruleset")"
   if [[ "$rs" == "201" ]]; then
     echo "repo-aanmaken: standaard-ruleset main-protection gezet."

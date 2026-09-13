@@ -118,14 +118,16 @@ export function rolSchrijfrechten(config: JarvisConfig): ReadonlyMap<string, rea
   const map = (waarde: string) => `${waarde.replace(/\/+$/, "")}/`;
   const kennis = map(config.knowledge_map);
   const taken = map(config.taken_map);
-  const tests = map(config.test_pad);
   // De map waarin CURRENT_STATE staat. Ligt dat bestand in de wortel, dan is er
   // geen documentatiemap en krijgt de rol alleen dat ene bestand - anders zou
   // "STAND.md/" als mapvoorvoegsel worden gelezen en nergens op passen.
   const statusPad = config.current_state.replace(/\\/g, "/");
   const docs = statusPad.includes("/") ? `${statusPad.slice(0, statusPad.lastIndexOf("/"))}/` : statusPad;
   return new Map<string, readonly string[]>([
-    ["qa", [tests, taken]],
+    // QA schrijft verslagen, geen tests: het rolcontract verbiedt QA om tests
+    // te wijzigen, en wie de tests schrijft beoordeelt zijn eigen dekking.
+    // Tests zijn van de bouwende rol (DEC-0040 in het eerste project).
+    ["qa", [taken]],
     ["knowledge-manager", [kennis, taken, docs]],
     ["architect", [taken, docs]],
     ["orchestrator", [taken]],

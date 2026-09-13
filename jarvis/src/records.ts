@@ -116,6 +116,10 @@ export const riskSchema = z.strictObject({
   mitigatie: nonEmpty,
   eigenaar: nonEmpty,
   status: z.enum(["open", "beheerst", "geaccepteerd", "vervallen"]),
+  // De taak die dit risico aanpakt. Zolang die loopt is het risico open maar
+  // geen beslissing meer voor de eigenaar: het werk is van Jarvis (CON-0015),
+  // en de eigenaar ziet het terug in de pull request van die taak.
+  aanpak: z.string().regex(/^T-\d{8}-[a-z0-9-]+$/).optional(),
   // Sectie "## Opties": per keuze wat er dan gebeurt, plus een advies. Vrij
   // van vorm hier; de interface leest er regels "- Label: gevolg" uit.
   opties: z.string().optional(),

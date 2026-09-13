@@ -62,4 +62,14 @@ rol_controle_vanaf: "6cf25531ba80bd192b6539fb13897aab684920dd"
 
 branch_voorvoegsel: jarvis/
 
+# Attestatie (DEC-0043): waar de attestatieworkflow het akkoord van de
+# eigenaar leest. URL en publishable key zijn publieke identifiers van de
+# eigen database van Jarvis (ze staan in elke browser die de interface
+# opent); de rechten zitten in RLS en in de leesbeelden, niet in de sleutel.
+attestatie:
+  url: https://mfjuaiezjtjdhahvwqzn.supabase.co
+  sleutel: sb_publishable_y3QWqIKhgbuUGsXSivbG0Q_RtZgJ_b9
+  bot: tovas-jarvis-bot
+  extra_paden: []
+
 rollen_map: jarvis/roles
