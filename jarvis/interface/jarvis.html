@@ -369,8 +369,19 @@ function draadVan(id) { return staat.berichten.filter((b) => (b.context?.node ??
 /* ---------- radiale lay-out ----------
    Elk kind van de kern krijgt een sector naar rato van wat er zichtbaar
    onder hangt; dieper wordt dezelfde sector verder verdeeld. Straal per
-   diepte, met wat extra ruimte voor projecten. */
+   diepte is een ondergrens: past de tekst van de kinderen niet op de boog
+   van hun sector, dan schuift die ring naar buiten tot ze past (de eigenaar
+   zag labels over elkaar heen). Teksten van taken en takken staan aan de
+   buitenkant, weg van de buren op dezelfde ring. */
 const STRAAL = [0, 175, 300, 405, 490];
+const PLAT = 0.82;
+/* Hoeveel boog (px) een knoop langs zijn ring nodig heeft: de schijf plus de
+   tekst, die vlak bij boven/onder horizontaal naast de buren komt te staan. */
+function ruimteNodig(n, hoek) {
+  const tekst = n.soort === "project" ? 100 : n.soort === "taak" ? Math.min(30, (n.taak.titel || "").length) * 6.4 + 24 : n.soort === "cluster" ? (n.label || "").length * 6.4 + 20 : Math.min(34, (n.item?.titel || "").length) * 6 + 20;
+  const schijf = n.soort === "project" ? 80 : n.soort === "taak" ? 48 : n.soort === "cluster" ? 40 : 22;
+  return schijf + Math.abs(Math.sin(hoek)) * tekst;
+}
 function gewicht(n) {
   if (n.soort === "item") return 1;
   const uitgevouwen = staat.open.has(n.id) && n.kinderen.length > 0;
@@ -378,19 +389,26 @@ function gewicht(n) {
   return uitgevouwen ? Math.max(eigen, n.kinderen.reduce((s, k) => s + gewicht(k), 0)) : eigen;
 }
 function legUit(root) {
-  root.x = 0; root.y = 0; root.hoek = 0; root.diepte = 0;
+  root.x = 0; root.y = 0; root.hoek = 0; root.diepte = 0; root.r = 0;
   const plaats = (n, van, tot, diepte) => {
     const zichtbaar = staat.open.has(n.id) || n.soort === "root" ? n.kinderen : [];
     const totaal = zichtbaar.reduce((s, k) => s + gewicht(k), 0) || 1;
+    // Eerste ronde: hoeken. Tweede ronde: de straal die nodig is om alle
+    // kinderen zonder overlap op de boog van deze sector te zetten.
     let a = van;
     for (const k of zichtbaar) {
       const deel = ((tot - van) * gewicht(k)) / totaal;
-      const mid = a + deel / 2;
-      k.hoek = mid; k.diepte = diepte;
-      const r = STRAAL[Math.min(diepte, STRAAL.length - 1)];
-      k.x = Math.cos(mid) * r; k.y = Math.sin(mid) * r * 0.82;
-      plaats(k, a, a + deel, diepte + 1);
+      k.hoek = a + deel / 2; k.deel = deel; k.diepte = diepte;
       a += deel;
+    }
+    const basis = STRAAL[Math.min(diepte, STRAAL.length - 1)];
+    const boogNodig = zichtbaar.reduce((s, k) => s + ruimteNodig(k, k.hoek), 0);
+    const sector = tot - van;
+    const r = Math.max(basis, n.r + 95, boogNodig / (sector * PLAT));
+    for (const k of zichtbaar) {
+      k.r = r;
+      k.x = Math.cos(k.hoek) * r; k.y = Math.sin(k.hoek) * r * PLAT;
+      plaats(k, k.hoek - k.deel / 2, k.hoek + k.deel / 2, diepte + 1);
     }
   };
   // Projecten links en rechts, de takken van de kern ertussen: begin bij 180°.
@@ -435,6 +453,18 @@ function kernSvg(root) {
     ${open ? `<g class="badge"><circle cx="28" cy="-26" r="10"/><text x="28" y="-22.5" text-anchor="middle">${open}</text></g>` : ""}
   </g>`;
 }
+/* Waar de tekst van een knoop staat: aan de buitenkant van de ring, dus
+   rechts van een knoop rechts, links van een knoop links, en boven/onder bij
+   de polen. Zo raakt hij de buren op dezelfde ring niet. */
+function labelPlek(n, afstand) {
+  const c = Math.cos(n.hoek || 0), sn = Math.sin(n.hoek || 0);
+  if (Math.abs(c) < 0.35) {
+    const onder = sn > 0;
+    return { x: 0, anchor: "middle", y1: onder ? afstand + 10 : -afstand - 12, y2: onder ? afstand + 21 : -afstand - 1 };
+  }
+  const rechts = c > 0;
+  return { x: rechts ? afstand : -afstand, anchor: rechts ? "start" : "end", y1: -1, y2: 10 };
+}
 function knoopSvg(n) {
   const actief = staat.gekozen === n.id;
   const draad = draadVan(n.id).length;
@@ -461,8 +491,8 @@ function knoopSvg(n) {
       <circle class="voortgang-rest" r="${r + 4}"/>${st.length ? `<circle class="voortgang" r="${r + 4}" stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90)"/>` : ""}
       <circle class="schijf" r="${r}"/>
       <text class="sub" y="4" text-anchor="middle" style="font-size:9px">${st.length ? `${gedaan}/${st.length}` : "taak"}</text>
-      <text class="blad" y="${r + 16}" text-anchor="middle" style="font-size:10.5px">${esc(kort(t.titel, 26))}</text>
-      <text class="sub" y="${r + 27}" text-anchor="middle" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${t.aan_zet === "eigenaar" ? "wacht op jou" : t.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>
+      ${(() => { const L = labelPlek(n, r + 6); return `<text class="blad" x="${L.x}" y="${L.y1}" text-anchor="${L.anchor}" style="font-size:10.5px">${esc(kort(t.titel, 30))}</text>
+      <text class="sub" x="${L.x}" y="${L.y2}" text-anchor="${L.anchor}" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${t.aan_zet === "eigenaar" ? "wacht op jou" : t.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>`; })()}
       ${!uitgevouwen && n.kinderen.length ? `<text class="plus" x="${r}" y="${r + 4}">+${n.kinderen.length}</text>` : ""}
       ${draad ? `<circle class="praat" cx="${-r - 2}" cy="${-r - 2}" r="3.5"/>` : ""}
       ${open ? `<g class="badge"><circle cx="${r}" cy="${-r}" r="8"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9.5px">${open}</text></g>` : ""}
@@ -473,7 +503,7 @@ function knoopSvg(n) {
     const urg = hoogsteUrg(n);
     return `<g class="knoop ${actief ? "actief" : ""} ${urg === 0 ? "u-hoog" : urg === 1 ? "u-midden" : ""}" data-id="${esc(n.id)}" transform="translate(${x} ${y})" tabindex="0" role="button" aria-label="${esc(n.label)}">
       <circle class="schijf" r="${r}"/><text class="sub" y="3.5" text-anchor="middle" style="font-size:9px">${n.kinderen.length}</text>
-      <text class="blad" y="${r + 14}" text-anchor="middle" style="font-size:10.5px">${esc(n.label)}</text>
+      ${(() => { const L = labelPlek(n, r + 6); return `<text class="blad" x="${L.x}" y="${L.y1 + (L.anchor === "middle" ? 0 : 4)}" text-anchor="${L.anchor}" style="font-size:10.5px">${esc(n.label)}</text>`; })()}
       ${!uitgevouwen ? `<text class="plus" x="${r}" y="${r + 2}">+</text>` : ""}
       ${draad ? `<circle class="praat" cx="${-r}" cy="${-r}" r="3.5"/>` : ""}
       ${open ? `<g class="badge ${urg > 1 ? "rustig" : ""}"><circle cx="${r}" cy="${-r}" r="7.5"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9px">${open}</text></g>` : ""}
