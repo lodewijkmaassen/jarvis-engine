@@ -1393,7 +1393,7 @@ async function leesPullRequest(token: string, slug: string, nummer: number): Pro
       tekst: r.body ?? "",
     }),
   );
-  const runs = (checks.lading as { check_runs: { name: string; status: string; conclusion: string | null }[] }).check_runs;
+  const runs = (checks.lading as { check_runs: { name: string; status: string; conclusion: string | null; started_at?: string | null }[] }).check_runs;
   return {
     nummer,
     auteur: p.user.login,
@@ -1404,7 +1404,7 @@ async function leesPullRequest(token: string, slug: string, nummer: number): Pro
     samenvoegbaar: p.mergeable,
     samenvoegStaat: p.mergeable_state,
     reviews: lijst,
-    checks: runs.map((r) => ({ naam: r.name, status: r.status, conclusie: r.conclusion })),
+    checks: runs.map((r) => ({ naam: r.name, status: r.status, conclusie: r.conclusion, gestart: r.started_at ?? null })),
   };
 }
 
