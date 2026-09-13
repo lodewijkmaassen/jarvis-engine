@@ -83,3 +83,63 @@ export function verbindingsBron(omgeving: string | undefined, bestandGevonden: b
   if (bestandGevonden) return "bestand";
   return null;
 }
+
+// --- Autorisaties en toetsingen (DEC-0043) --------------------------------
+//
+// `autorisaties` schrijft alleen de eigenaar, via de interface; de rol
+// jarvis_werker leest ze. `toetsingen` schrijft jarvis_werker na een
+// onafhankelijke QA-ronde. Beide tabellen zijn onveranderbaar: geen update,
+// geen delete, ook niet voor de rol.
+
+export const AUTORISATIE_KOLOMMEN = "id, soort, project, taak, scope_hash, pr_repo, pr_nummer, commit_sha, op";
+export const TOETSING_KOLOMMEN = "id, pr_repo, pr_nummer, commit_sha, oordeel, rapport, door, op";
+
+/** De laatste taakautorisatie voor een taak. */
+export const AUTORISATIE_TAAK_SQL =
+  `select ${AUTORISATIE_KOLOMMEN} from jarvis.autorisaties where soort = 'taak' and taak = $1 order by op desc limit 1`;
+
+/** Een PR-autorisatie (harde uitzondering) op precies deze kop. */
+export const AUTORISATIE_PR_SQL =
+  `select ${AUTORISATIE_KOLOMMEN} from jarvis.autorisaties ` +
+  "where soort = 'pr' and pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 order by op desc limit 1";
+
+export const AUTORISATIE_ID_SQL = `select ${AUTORISATIE_KOLOMMEN} from jarvis.autorisaties where id = $1`;
+export const AUTORISATIES_SQL = `select ${AUTORISATIE_KOLOMMEN} from jarvis.autorisaties order by op desc limit 200`;
+
+export const OORDELEN = ["GO", "NO-GO"] as const;
+export type Oordeel = (typeof OORDELEN)[number];
+export function isOordeel(waarde: string): waarde is Oordeel {
+  return (OORDELEN as readonly string[]).includes(waarde);
+}
+
+export const TOETSING_SQL =
+  "insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel, rapport, door) " +
+  "values ($1, $2, $3, $4, $5, $6) returning id";
+
+/** De laatste GO op precies deze kop. */
+export const TOETSING_KOP_SQL =
+  `select ${TOETSING_KOLOMMEN} from jarvis.toetsingen ` +
+  "where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and oordeel = 'GO' order by op desc limit 1";
+
+export const TOETSING_ID_SQL = `select ${TOETSING_KOLOMMEN} from jarvis.toetsingen where id = $1`;
+
+/**
+ * Dezelfde lezingen via de REST-API van PostgREST, voor de attestatieworkflow
+ * die geen databaserol heeft: alleen de publieke sleutel en de leesbeelden
+ * `autorisaties_open` en `toetsingen_open` (zonder eigenaarsgegevens).
+ */
+export function restPadAutorisatieTaak(taak: string): string {
+  return `autorisaties_open?soort=eq.taak&taak=eq.${encodeURIComponent(taak)}&order=op.desc&limit=1`;
+}
+export function restPadAutorisatiePr(repo: string, nummer: number, kop: string): string {
+  return (
+    `autorisaties_open?soort=eq.pr&pr_repo=eq.${encodeURIComponent(repo)}&pr_nummer=eq.${nummer}` +
+    `&commit_sha=eq.${encodeURIComponent(kop)}&order=op.desc&limit=1`
+  );
+}
+export function restPadToetsingKop(repo: string, nummer: number, kop: string): string {
+  return (
+    `toetsingen_open?pr_repo=eq.${encodeURIComponent(repo)}&pr_nummer=eq.${nummer}` +
+    `&commit_sha=eq.${encodeURIComponent(kop)}&oordeel=eq.GO&order=op.desc&limit=1`
+  );
+}

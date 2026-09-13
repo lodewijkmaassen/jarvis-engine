@@ -72,6 +72,26 @@ export const configSchema = z.strictObject({
    * de gepinde engine-SHA aan precies deze repository.
    */
   engine_repository: z.string().trim().default(""),
+  /**
+   * Waar de attestatieworkflow het akkoord van de eigenaar leest (DEC-0043):
+   * de REST-URL van de eigen database van Jarvis en de publieke
+   * (publishable) sleutel. Beide zijn publieke identifiers: ze staan in elke
+   * browser die de interface opent. Leeg = geen attestatie in deze repository.
+   */
+  attestatie: z
+    .strictObject({
+      url: z.string().trim().default(""),
+      sleutel: z.string().trim().default(""),
+      /** De login van de bot die PR's opent; alleen diens werk wordt geattesteerd. */
+      bot: z.string().trim().default(""),
+      /**
+       * Paden of mapvoorvoegsels die in dit project een harde uitzondering
+       * zijn (deployment, productie, secrets), bovenop de vaste lijst van de
+       * engine. Bijvoorbeeld het deploymentbestand van de hostingpartij.
+       */
+      extra_paden: z.array(z.string().trim().min(1)).default([]),
+    })
+    .default({ url: "", sleutel: "", bot: "", extra_paden: [] }),
   // Jarvis als eigen project in het overzicht: de kern op de kaart. Wat in
   // deze repository bij Jarvis hoort (paden voor de beweging) en welke tag op
   // een record "dit gaat over Jarvis" betekent, zegt de configuratie; leeg =

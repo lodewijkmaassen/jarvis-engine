@@ -26,7 +26,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  ACTIEVE_ATTESTATIE,
   ACTIEVE_WORKFLOW,
+  CANONIEKE_ATTESTATIE,
   CANONIEKE_WORKFLOW,
   CANONIEKE_WORKFLOW_CONSUMER,
   GOVERNANCE_CONFIG,
@@ -194,6 +196,31 @@ describe("de gehardde governancecontrole", () => {
 
   it("keurt de gezonde situatie goed", () => {
     expect(controleerGovernance(basis())).toEqual([]);
+  });
+
+  describe("de attestatieworkflow (DEC-0043)", () => {
+    const attestatie = (actief: Partial<BestandsFeiten>, canoniek: Partial<BestandsFeiten> = {}) => ({
+      actief: feiten({ echtPad: `${WORTEL}/${ACTIEVE_ATTESTATIE}`, ...actief }),
+      canoniek: feiten({ echtPad: `${WORTEL}/${CANONIEKE_ATTESTATIE}`, ...canoniek }),
+    });
+
+    it("hoeft er niet te zijn", () => {
+      expect(controleerGovernance(basis({ attestatie: attestatie({ bytes: null }, { bytes: null }) }))).toEqual([]);
+    });
+
+    it("moet, als hij er is, byte-identiek zijn aan de canonieke bron", () => {
+      expect(controleerGovernance(basis({ attestatie: attestatie({}) }))).toEqual([]);
+      const uit = controleerGovernance(basis({ attestatie: attestatie({ bytes: Buffer.from("anders") }) }));
+      expect(uit.join(" ")).toContain(`${ACTIEVE_ATTESTATIE} wijkt af`);
+    });
+
+    it("blokkeert zonder canonieke bron, achter een link, en als het hetzelfde bestand is", () => {
+      expect(controleerGovernance(basis({ attestatie: attestatie({}, { bytes: null }) })).join(" ")).toContain("canonieke bron ontbreekt");
+      expect(controleerGovernance(basis({ attestatie: attestatie({ viaSymlink: true }) })).join(" ")).toContain("symbolische link");
+      expect(
+        controleerGovernance(basis({ attestatie: attestatie({ echtPad: "/repo/x" }, { echtPad: "/repo/x" }) })).join(" "),
+      ).toContain("hetzelfde bestand");
+    });
   });
 
   it("blokkeert wanneer de twee bestanden verschillen", () => {
@@ -375,8 +402,15 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
     await symlink(map, path.join(map, "node_modules", "jarvis-engine"), "junction");
     await writeFile(path.join(map, ".github/workflows/jarvis-lint.yml"), workflow);
     await writeFile(path.join(map, "jarvis/canonical/jarvis-lint.yml"), workflow);
+    // De attestatieworkflow heeft ook een canonieke bron; in de proef staan
+    // beide, byte-identiek.
+    const attestatie = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-attestatie.yml"));
+    await writeFile(path.join(map, ".github/workflows/jarvis-attestatie.yml"), attestatie);
+    await writeFile(path.join(map, "jarvis/canonical/jarvis-attestatie.yml"), attestatie);
     for (const naam of TOEGESTANE_WORKFLOWS) {
-      if (naam !== "jarvis-lint.yml") await writeFile(path.join(map, ".github/workflows", naam), "op: {}\n");
+      if (naam !== "jarvis-lint.yml" && naam !== "jarvis-attestatie.yml") {
+        await writeFile(path.join(map, ".github/workflows", naam), "op: {}\n");
+      }
     }
     for (const testpad of VERPLICHTE_GOVERNANCE_TESTS) {
       await mkdir(path.dirname(path.join(map, testpad)), { recursive: true });

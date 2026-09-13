@@ -13,6 +13,7 @@
 //
 // Volgorde en sortering zijn vast. Een overzicht dat bij elke run anders
 // gesorteerd is, leest als beweging waar geen beweging is.
+import { scopeHash } from "./attestatie";
 import type { KnowledgeRecord, RecordType } from "./records";
 
 export const OVERZICHT_VERSIE = 1;
@@ -89,6 +90,15 @@ export type TaakItem = {
   readonly laatste_beweging: string | null;
   /** Jarvis is aan zet en er is al dagen geen beweging: iets om te bewaken. */
   readonly stil: boolean;
+  /**
+   * De scope waarop de eigenaar akkoord geeft (DEC-0043): de volledige tekst
+   * van opdracht.md, alleen voor een actieve taak, en de SHA-256 ervan met
+   * LF-regeleindes. De interface toont de tekst, hasht wat ze toont en legt
+   * die hash bij het akkoord vast; de attestatie vergelijkt met het bestand
+   * op de kop van de pull request.
+   */
+  readonly scope: string | null;
+  readonly scope_hash: string | null;
 };
 
 /** Na hoeveel dagen zonder commit een taak waar Jarvis aan zet is als stil geldt. */
@@ -139,6 +149,8 @@ export type TaakDossier = {
   readonly id: string;
   /** Front-matter van opdracht.md, als platte sleutel-waarde-paren. */
   readonly opdracht: Readonly<Record<string, string>>;
+  /** De volledige tekst van opdracht.md (de scope); ontbreekt in oudere aanroepen. */
+  readonly tekst?: string;
   /** Inhoud van resultaat.md, of null als dat er nog niet is. */
   readonly resultaat: string | null;
 };
@@ -721,6 +733,8 @@ export function leesTaken(
         wacht_op: aan_zet === "eigenaar" ? openVoorEigenaar[0].titel : volgendeStap,
         laatste_beweging: laatste,
         stil: aan_zet === "jarvis" && dagenStil >= STIL_NA_DAGEN,
+        scope: actief && t.tekst !== undefined ? t.tekst.replace(/\r\n/g, "\n") : null,
+        scope_hash: actief && t.tekst !== undefined ? scopeHash(t.tekst) : null,
       };
     })
     .sort((a, b) => a.id.localeCompare(b.id));

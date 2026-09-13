@@ -19,11 +19,16 @@
 // WAT SAMENVOEGEN VEREIST
 //
 // De ruleset op de hoofdbranch eist een goedkeuring; deze module eist meer,
-// en bewust: een goedkeurende review van de eigenaar van de repository, op
-// precies de commit die nu de kop van de PR is, alle checks geslaagd, en een
-// PR die GitHub zelf schoon samenvoegbaar noemt. Een goedkeuring van vóór een
-// latere push telt niet: dan is iets anders goedgekeurd dan wat wordt
-// samengevoegd.
+// en bewust: een goedkeurende review op precies de commit die nu de kop van
+// de PR is, alle checks geslaagd, en een PR die GitHub zelf schoon
+// samenvoegbaar noemt. Een goedkeuring van vóór een latere push telt niet:
+// dan is iets anders goedgekeurd dan wat wordt samengevoegd.
+//
+// Twee soorten goedkeuring tellen (DEC-0043): een review van de eigenaar
+// zelf, of een attestatie van de poort (github-actions[bot]) waarvan de
+// aanroeper de inhoud tegen de eigen database heeft geverifieerd en de kop
+// als "geattesteerd" doorgeeft. Een goedkeuring van wie dan ook anders — ook
+// van de bot — is geen autorisatie.
 //
 // Alles hier is puur; de I/O staat in opdrachten.ts.
 
@@ -32,6 +37,8 @@ export type Review = {
   readonly staat: string;
   /** De commit waarop de review is gegeven. */
   readonly commit: string;
+  /** De tekst van de review; bij een attestatie de attestatietekst. */
+  readonly tekst?: string;
 };
 
 export type Check = {
@@ -94,27 +101,46 @@ const GOEDE_CONCLUSIES = new Set(["success", "skipped", "neutral"]);
  */
 export const VERPLICHTE_CHECK = "poort";
 
+/** De identiteit waaronder de poort attesteert (zie attestatie.ts). */
+export const ATTESTATIE_GEBRUIKER = "github-actions[bot]";
+
 /**
  * Waarom deze PR nu niet samengevoegd mag worden. Leeg betekent: voeg samen.
  *
  * `eigenaar` is de login die de inhoudelijke autorisatie geeft: de eigenaar
- * van de repository. Een goedkeuring van iemand anders (ook van de bot) is
- * geen autorisatie in de zin van de governance.
+ * van de repository. `geattesteerdeKoppen` zijn de commits waarop de
+ * aanroeper een attestatie van de poort heeft geverifieerd tegen de eigen
+ * database (DEC-0043); zo'n attestatie geldt als autorisatie. Een
+ * goedkeuring van iemand anders (ook van de bot) is geen autorisatie.
  */
-export function beoordeelSamenvoegen(pr: PullRequestFeiten, eigenaar: string): readonly string[] {
+export function beoordeelSamenvoegen(
+  pr: PullRequestFeiten,
+  eigenaar: string,
+  geattesteerdeKoppen: readonly string[] = [],
+): readonly string[] {
   const redenen: string[] = [];
   if (!pr.open) redenen.push(`#${pr.nummer} is niet open`);
   if (pr.concept) redenen.push(`#${pr.nummer} is een concept (draft)`);
 
-  const goedkeuringen = pr.reviews.filter(
+  const vanEigenaar = pr.reviews.filter(
     (r) => r.staat === "APPROVED" && r.gebruiker.toLowerCase() === eigenaar.toLowerCase(),
   );
+  const attestaties = pr.reviews.filter(
+    (r) =>
+      r.staat === "APPROVED" &&
+      r.gebruiker.toLowerCase() === ATTESTATIE_GEBRUIKER &&
+      geattesteerdeKoppen.includes(r.commit),
+  );
+  const goedkeuringen = [...vanEigenaar, ...attestaties];
   const opKop = goedkeuringen.filter((r) => r.commit === pr.kop);
   if (goedkeuringen.length === 0) {
-    redenen.push(`geen goedkeurende review van ${eigenaar}; dat is de autorisatie en die is van de eigenaar`);
+    redenen.push(
+      `geen goedkeurende review van ${eigenaar} en geen geverifieerde attestatie van de poort; ` +
+        `de autorisatie is van de eigenaar (per taak, DEC-0043)`,
+    );
   } else if (opKop.length === 0) {
     redenen.push(
-      `de goedkeuring van ${eigenaar} is gegeven op een eerdere commit dan de huidige kop ${pr.kop.slice(0, 7)}; ` +
+      `de goedkeuring is gegeven op een eerdere commit dan de huidige kop ${pr.kop.slice(0, 7)}; ` +
         `wat goedgekeurd is, is niet wat samengevoegd zou worden`,
     );
   }
