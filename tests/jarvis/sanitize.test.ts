@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   LEGE_ALLOWLIST,
   VOORBEELD_MARKERING,
+  isIdentifierVorm,
   isVerdachteEntropie,
   laadAllowlist,
   maskeerFragment,
@@ -135,6 +136,18 @@ describe("vals-positieven", () => {
 
   it("markeert een lange identifier zonder cijfers niet als hoge entropie", () => {
     expect(isVerdachteEntropie("context_fragment_regels_en_status_paden_lijst")).toBe(false);
+    // Gedateerde identifiers: datum of Jarvis-voorvoegsel plus woorden; een
+    // passphrase zonder datumkop blijft verdacht (sanitize-hash.test.ts).
+    expect(isVerdachteEntropie("20260913120100_jarvis_leesbeelden_alleen_lezen")).toBe(false);
+    expect(isVerdachteEntropie("T-20260913-akkoord-via-interface-proef")).toBe(false);
+    expect(isIdentifierVorm("20260913120100_jarvis_leesbeelden")).toBe(true);
+    // Maar een segment dat cijfers en letters mengt blijft verdacht.
+    expect(isIdentifierVorm("ghp_" + "x7Kq".repeat(9))).toBe(false);
+    expect(isIdentifierVorm("sk-proj-" + "a1B2".repeat(8))).toBe(false);
+    expect(isIdentifierVorm("a".repeat(40))).toBe(false);
+    expect(isIdentifierVorm("correct-horse-battery-staple-generator-7")).toBe(false);
+    expect(isIdentifierVorm("offerte_config_opvolg_2_positief")).toBe(false);
+    expect(isIdentifierVorm("DEC-0043-autorisatie-per-taak-uitzonderingen")).toBe(true);
   });
 
   it("markeert een willekeurige sleutel van 32 tekens wél", () => {

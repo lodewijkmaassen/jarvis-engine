@@ -293,7 +293,26 @@ export function isVerdachteEntropie(token: string, minimumLengte = ENTROPIE_MINI
   if (!/[0-9]/.test(token)) return false;
   if (!/[A-Za-z]/.test(token)) return false;
   if (isHash(token)) return false;
+  if (isIdentifierVorm(token)) return false;
   return shannonEntropie(token) >= ENTROPIE_DREMPEL_BITS;
+}
+
+/**
+ * Een gedateerde identifier van mensen: een migratienaam
+ * (`20260913120100_jarvis_leesbeelden`) of een Jarvis-id
+ * (`T-20260913-akkoord-via-interface`, `DEC-0043-…`) — een datum- of
+ * volgnummerkop, daarna alleen segmenten van louter letters of louter cijfers,
+ * gescheiden door "_" of "-". Bewust smal: een eerdere, bredere vormregel
+ * ("drie of meer gekoppelde woorden") stelde ook passphrases vrij en is om
+ * die reden verwijderd; een passphrase begint niet met een datum of een
+ * Jarvis-voorvoegsel. Een secret mengt cijfers en letters binnen een segment
+ * en blijft verdacht.
+ */
+export function isIdentifierVorm(token: string): boolean {
+  const kop = /^(?:[0-9]{8,}|[A-Z]{1,4}-[0-9]{4,8})(?=[_-])/.exec(token);
+  if (!kop) return false;
+  const rest = token.slice(kop[0].length + 1).split(/[_-]/);
+  return rest.length >= 1 && rest.every((s) => /^[0-9]+$/.test(s) || /^[a-z]+$/.test(s));
 }
 
 // ---------------------------------------------------------------------------
