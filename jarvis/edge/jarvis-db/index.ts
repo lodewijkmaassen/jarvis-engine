@@ -28,16 +28,26 @@ import toegestaan from "./toegestaan.json" with { type: "json" };
 
 const TOEGESTAAN: ReadonlySet<string> = new Set(toegestaan as string[]);
 
-function gelijkInConstanteTijd(a: string, b: string): boolean {
+/**
+ * Vergelijkt twee geheimen via hun SHA-256-digest: de vergelijking duurt
+ * altijd even lang en de lengte van het echte token lekt niet via timing
+ * (QA-bevinding 5).
+ */
+async function gelijkInConstanteTijd(a: string, b: string): Promise<boolean> {
   const enc = new TextEncoder();
-  const x = enc.encode(a);
-  const y = enc.encode(b);
-  let verschil = x.length ^ y.length;
-  for (let i = 0; i < Math.max(x.length, y.length); i += 1) {
-    verschil |= (x[i % Math.max(x.length, 1)] ?? 0) ^ (y[i % Math.max(y.length, 1)] ?? 0);
-  }
+  const [x, y] = await Promise.all([
+    crypto.subtle.digest("SHA-256", enc.encode(a)),
+    crypto.subtle.digest("SHA-256", enc.encode(b)),
+  ]);
+  const xa = new Uint8Array(x);
+  const ya = new Uint8Array(y);
+  let verschil = 0;
+  for (let i = 0; i < xa.length; i += 1) verschil |= (xa[i] ?? 0) ^ (ya[i] ?? 0);
   return verschil === 0;
 }
+
+/** Bovengrens voor de som van alle parameterlengtes: een overzicht is honderden KB, meer niet. */
+const MAX_PARAMS_TEKENS = 2_000_000;
 
 function antwoord(status: number, lading: unknown): Response {
   return new Response(JSON.stringify(lading), {
@@ -49,14 +59,14 @@ function antwoord(status: number, lading: unknown): Response {
 Deno.serve(async (req: Request) => {
   if (req.method !== "POST") return antwoord(405, { fout: "alleen POST" });
 
-  const token = Deno.env.get("JARVIS_API_TOKEN") ?? "";
-  const url = Deno.env.get("JARVIS_DB_URL") ?? "";
+  const token = (Deno.env.get("JARVIS_API_TOKEN") ?? "").trim();
+  const url = (Deno.env.get("JARVIS_DB_URL") ?? "").trim();
   if (token.length < 16 || url.length === 0) {
     return antwoord(503, { fout: "functie niet ingericht: JARVIS_API_TOKEN en JARVIS_DB_URL ontbreken als secrets" });
   }
   const kop = req.headers.get("authorization") ?? "";
   const gegeven = kop.startsWith("Bearer ") ? kop.slice(7).trim() : "";
-  if (!gegeven || !gelijkInConstanteTijd(gegeven, token)) return antwoord(401, { fout: "geen geldig token" });
+  if (!gegeven || !(await gelijkInConstanteTijd(gegeven, token))) return antwoord(401, { fout: "geen geldig token" });
 
   let body: { sql?: unknown; params?: unknown };
   try {
@@ -64,12 +74,15 @@ Deno.serve(async (req: Request) => {
   } catch {
     return antwoord(400, { fout: "geen JSON" });
   }
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return antwoord(400, { fout: "geen JSON-object" });
   const sql = typeof body.sql === "string" ? body.sql : "";
   const params = Array.isArray(body.params) ? body.params : [];
   if (!TOEGESTAAN.has(sql)) return antwoord(400, { fout: "statement niet toegestaan" });
   if (params.length > 8 || params.some((p) => p !== null && !["string", "number", "boolean"].includes(typeof p))) {
     return antwoord(400, { fout: "parameters: hoogstens acht, alleen tekst, getal, boolean of null" });
   }
+  const tekens = params.reduce<number>((n, p) => n + (typeof p === "string" ? p.length : 0), 0);
+  if (tekens > MAX_PARAMS_TEKENS) return antwoord(400, { fout: "parameters te groot" });
 
   const verbinding = postgres(url, { prepare: false, max: 1, connect_timeout: 10, idle_timeout: 5 });
   try {

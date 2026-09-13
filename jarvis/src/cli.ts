@@ -2,7 +2,7 @@
 //
 // Dit bestand is met opzet drie regels logica. Alles wat iets doet staat in
 // opdrachten.ts, dat bij het importeren niets uitvoert; hier staat alleen de
-// vertaling van een exitcode naar `process.exit`.
+// vertaling van een exitcode naar `process.exitCode`.
 //
 // De scheiding bestaat omdat ze eerst ontbrak. Toen het entrypoint onderin de
 // opdrachtenmodule stond, startte elke import de CLI en werd elke test afgekapt

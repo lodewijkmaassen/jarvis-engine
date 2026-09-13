@@ -12,7 +12,7 @@ _Gegenereerd op 2026-09-13._
 |---|---|
 | Hoofdbranch | `main` op `4908ec5` (2026-09-13) |
 | Hoogste migratie | onbekend |
-| Testbestanden | 26 |
+| Testbestanden | 27 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 

@@ -1322,17 +1322,19 @@ const BOT_TOKEN_BESTAND = process.env.JARVIS_BOT_TOKEN_BESTAND ?? path.join(home
 async function leesBotToken(): Promise<string | null> {
   const uitOmgeving = (process.env.JARVIS_BOT_TOKEN ?? "").trim();
   if (uitOmgeving.length > 0) return uitOmgeving;
-  // In een cloud-sessie van het platform staat er soms een plaatshouder in
-  // GH_TOKEN/GITHUB_TOKEN die de GitHub-proxy buiten de VM vervangt door de
-  // echte identiteit; die is per definitie geen geheim en werkt alleen daar.
-  const plaatshouder = (process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "").trim();
-  if (plaatshouder.length > 0) return plaatshouder;
   try {
     const inhoud = (await readFile(BOT_TOKEN_BESTAND, "utf8")).trim();
     if (inhoud.length > 0) return inhoud;
   } catch {
-    // Geen bestand; probeer de CLI.
+    // Geen bestand; verder met de plaatshouder of de CLI.
   }
+  // In een cloud-sessie van het platform staat er soms een plaatshouder in
+  // GH_TOKEN/GITHUB_TOKEN die de GitHub-proxy buiten de VM vervangt door de
+  // echte identiteit; die is per definitie geen geheim en werkt alleen daar.
+  // Ná het bestand: op de laptop mag een persoonlijke GH_TOKEN de bot niet
+  // verdringen (QA-bevinding 2).
+  const plaatshouder = (process.env.GH_TOKEN ?? process.env.GITHUB_TOKEN ?? "").trim();
+  if (plaatshouder.length > 0) return plaatshouder;
   try {
     const { stdout } = await uitvoeren("gh", ["auth", "token"], { maxBuffer: 1024 * 1024 });
     const token = stdout.trim();
@@ -1440,6 +1442,15 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
   }
   const botLogin = (ik.lading as { login: string }).login;
   const verloopt = ik.koppen.get("github-authentication-token-expiration");
+  // Noemt de configuratie de bot, dan werkt jarvis pr alleen als die bot:
+  // een token van iemand anders (de eigenaar, een persoonlijke GH_TOKEN)
+  // opent of merget hier niets. `wie` mag het wel melden.
+  const configResultaat = await laadConfig(wortel);
+  const verwachteBot = configResultaat.ok ? configResultaat.config.attestatie.bot : "";
+  if (wat !== "wie" && verwachteBot && botLogin.toLowerCase() !== verwachteBot.toLowerCase()) {
+    console.error(`jarvis pr: het token hoort bij ${botLogin}, maar jarvis.config.yml noemt ${verwachteBot} als bot; onder een andere identiteit doet jarvis pr niets.`);
+    return 1;
+  }
 
   if (wat === "wie") {
     console.log(`jarvis pr: bot ${botLogin}; token verloopt ${verloopt ?? "onbekend"}.`);
