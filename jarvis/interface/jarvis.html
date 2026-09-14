@@ -100,7 +100,7 @@ p{margin:0}
 .legenda .l-midden::before{border-color:var(--midden)}
 .legenda .l-ok::before{border-color:var(--ok)}
 .legenda .l-los::before{border-style:dashed}
-@media(max-width:899px){.legenda{display:none}.status{max-width:62vw;font-size:10.5px}.kop h1{font-size:20px}}
+@media(max-width:899px){.legenda{display:none}.status{max-width:62vw;font-size:10.5px}.kop h1{font-size:20px}.gereedschap{top:52px;bottom:auto;flex-direction:column}.gereedschap .knop{min-width:38px;min-height:38px}}
 
 /* ---- schuifkaart ---- */
 .kaart{position:fixed;z-index:10;background:var(--vlak);border:1px solid var(--lijn2);backdrop-filter:blur(8px);display:flex;flex-direction:column;box-shadow:0 -10px 40px rgba(0,0,0,.5)}
@@ -369,8 +369,32 @@ function draadVan(id) { return staat.berichten.filter((b) => (b.context?.node ??
 /* ---------- radiale lay-out ----------
    Elk kind van de kern krijgt een sector naar rato van wat er zichtbaar
    onder hangt; dieper wordt dezelfde sector verder verdeeld. Straal per
-   diepte, met wat extra ruimte voor projecten. */
+   diepte is een ondergrens: past de tekst van de kinderen niet op de boog
+   van hun sector, dan schuift die ring naar buiten tot ze past (de eigenaar
+   zag labels over elkaar heen). Teksten van taken en takken staan aan de
+   buitenkant, weg van de buren op dezelfde ring. */
 const STRAAL = [0, 175, 300, 405, 490];
+const PLAT = 0.82;
+/* Hoeveel boog (px) een knoop langs zijn ring nodig heeft: de schijf plus de
+   tekst, die vlak bij boven/onder horizontaal naast de buren komt te staan. */
+function tekstBreedte(n) {
+  return n.soort === "project" ? 100 : n.soort === "taak" ? Math.min(30, (n.taak.titel || "").length) * 6.4 + 24 : n.soort === "cluster" ? (n.label || "").length * 6.4 + 20 : Math.min(34, (n.item?.titel || "").length) * 6 + 20;
+}
+function schijfMaat(n) { return n.soort === "project" ? 80 : n.soort === "taak" ? 48 : n.soort === "cluster" ? 40 : 22; }
+function ruimteNodig(n, hoek) {
+  return schijfMaat(n) + Math.abs(Math.sin(hoek)) * tekstBreedte(n);
+}
+/* Hoe ver (px) de schijf plus het label van een knoop radiaal naar buiten
+   reiken: aan de zijkanten steekt het label horizontaal uit, bij de polen
+   staat het onder of boven de schijf (labelPlek). De ring van de kinderen
+   moet daar voorbij liggen, anders valt een kind in het label van zijn
+   ouder (QA-bevinding PR #18, ronde 2). */
+function uitsteek(n) {
+  if (n.soort === "root") return 0;
+  const c = Math.abs(Math.cos(n.hoek || 0));
+  const schijf = schijfMaat(n) / 2;
+  return c < 0.35 ? schijf + 30 : (schijf + 6 + tekstBreedte(n)) * c + 12;
+}
 function gewicht(n) {
   if (n.soort === "item") return 1;
   const uitgevouwen = staat.open.has(n.id) && n.kinderen.length > 0;
@@ -378,19 +402,33 @@ function gewicht(n) {
   return uitgevouwen ? Math.max(eigen, n.kinderen.reduce((s, k) => s + gewicht(k), 0)) : eigen;
 }
 function legUit(root) {
-  root.x = 0; root.y = 0; root.hoek = 0; root.diepte = 0;
+  root.x = 0; root.y = 0; root.hoek = 0; root.diepte = 0; root.r = 0;
   const plaats = (n, van, tot, diepte) => {
     const zichtbaar = staat.open.has(n.id) || n.soort === "root" ? n.kinderen : [];
-    const totaal = zichtbaar.reduce((s, k) => s + gewicht(k), 0) || 1;
+    const sector = tot - van;
+    // Eerste ronde: hoeken naar gewicht (wat eronder hangt). Tweede ronde:
+    // hoeken naar de boog die elke knoop op zijn ring werkelijk nodig heeft
+    // (schijf plus tekst, die bij de polen horizontaal naast de buren staat),
+    // met het gewicht als bodem; daarna de straal waarop dat alles past. Wie
+    // de hoek alleen naar gewicht verdeelt, zet twee bladtaken bij de onderpool
+    // met hun labels over elkaar (QA-bevinding PR #18).
+    const gewichten = zichtbaar.map((k) => gewicht(k));
+    const totaalGewicht = gewichten.reduce((s, g) => s + g, 0) || 1;
     let a = van;
+    zichtbaar.forEach((k, i) => { const deel = (sector * gewichten[i]) / totaalGewicht; k.hoek = a + deel / 2; k.deel = deel; k.diepte = diepte; a += deel; });
+    let boogNodig = 0;
+    for (let ronde = 0; ronde < 2; ronde += 1) {
+      const aandelen = zichtbaar.map((k, i) => ruimteNodig(k, k.hoek) + gewichten[i] * 40);
+      boogNodig = aandelen.reduce((s, x) => s + x, 0) || 1;
+      a = van;
+      zichtbaar.forEach((k, i) => { const deel = (sector * aandelen[i]) / boogNodig; k.hoek = a + deel / 2; k.deel = deel; a += deel; });
+    }
+    const basis = STRAAL[Math.min(diepte, STRAAL.length - 1)];
+    const r = Math.max(basis, n.r + 95, n.r + uitsteek(n) + 60, boogNodig / (sector * PLAT));
     for (const k of zichtbaar) {
-      const deel = ((tot - van) * gewicht(k)) / totaal;
-      const mid = a + deel / 2;
-      k.hoek = mid; k.diepte = diepte;
-      const r = STRAAL[Math.min(diepte, STRAAL.length - 1)];
-      k.x = Math.cos(mid) * r; k.y = Math.sin(mid) * r * 0.82;
-      plaats(k, a, a + deel, diepte + 1);
-      a += deel;
+      k.r = r;
+      k.x = Math.cos(k.hoek) * r; k.y = Math.sin(k.hoek) * r * PLAT;
+      plaats(k, k.hoek - k.deel / 2, k.hoek + k.deel / 2, diepte + 1);
     }
   };
   // Projecten links en rechts, de takken van de kern ertussen: begin bij 180°.
@@ -419,7 +457,8 @@ function tekenKaart() {
   teken(root);
   knopen = kernSvg(root) + knopen;
   $svg.innerHTML = `<g id="wereld" transform="translate(${staat.zoom.x} ${staat.zoom.y}) scale(${staat.zoom.k})"><circle r="${STRAAL[1] - 40}" fill="none" stroke="var(--lijn)"/><circle r="${STRAAL[1] + 55}" fill="none" stroke="var(--lijn)" stroke-dasharray="2 10"/>${takken}${knopen}</g>`;
-  if (!staat.eersteFit) { staat.eersteFit = true; centreer(); if (staat.gekozen) focusOp(vindKnoop(root, staat.gekozen)); }
+  // Eerste fit: de schuifkaart gaat zo open als er iets gekozen is; centreren rekent met die stand, anders komt de kaart eronder (QA #19).
+  if (!staat.eersteFit) { staat.eersteFit = true; $paneel.hidden = !staat.gekozen; centreer(); if (staat.gekozen && staat.gekozen !== "root") focusOp(vindKnoop(root, staat.gekozen)); }
 }
 function kernSvg(root) {
   const open = root.project ? openItems({ kinderen: root.kinderen.filter((k) => k.soort !== "project") }) : 0;
@@ -434,6 +473,18 @@ function kernSvg(root) {
     ${draad ? `<circle class="praat" cx="-30" cy="-26" r="4"/>` : ""}
     ${open ? `<g class="badge"><circle cx="28" cy="-26" r="10"/><text x="28" y="-22.5" text-anchor="middle">${open}</text></g>` : ""}
   </g>`;
+}
+/* Waar de tekst van een knoop staat: aan de buitenkant van de ring, dus
+   rechts van een knoop rechts, links van een knoop links, en boven/onder bij
+   de polen. Zo raakt hij de buren op dezelfde ring niet. */
+function labelPlek(n, afstand) {
+  const c = Math.cos(n.hoek || 0), sn = Math.sin(n.hoek || 0);
+  if (Math.abs(c) < 0.35) {
+    const onder = sn > 0;
+    return { x: 0, anchor: "middle", y1: onder ? afstand + 10 : -afstand - 12, y2: onder ? afstand + 21 : -afstand - 1 };
+  }
+  const rechts = c > 0;
+  return { x: rechts ? afstand : -afstand, anchor: rechts ? "start" : "end", y1: -1, y2: 10 };
 }
 function knoopSvg(n) {
   const actief = staat.gekozen === n.id;
@@ -461,8 +512,8 @@ function knoopSvg(n) {
       <circle class="voortgang-rest" r="${r + 4}"/>${st.length ? `<circle class="voortgang" r="${r + 4}" stroke-dasharray="${(C * frac).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90)"/>` : ""}
       <circle class="schijf" r="${r}"/>
       <text class="sub" y="4" text-anchor="middle" style="font-size:9px">${st.length ? `${gedaan}/${st.length}` : "taak"}</text>
-      <text class="blad" y="${r + 16}" text-anchor="middle" style="font-size:10.5px">${esc(kort(t.titel, 26))}</text>
-      <text class="sub" y="${r + 27}" text-anchor="middle" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${t.aan_zet === "eigenaar" ? "wacht op jou" : t.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>
+      ${(() => { const L = labelPlek(n, r + 6); return `<text class="blad" x="${L.x}" y="${L.y1}" text-anchor="${L.anchor}" style="font-size:10.5px">${esc(kort(t.titel, 30))}</text>
+      <text class="sub" x="${L.x}" y="${L.y2}" text-anchor="${L.anchor}" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${t.aan_zet === "eigenaar" ? "wacht op jou" : t.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>`; })()}
       ${!uitgevouwen && n.kinderen.length ? `<text class="plus" x="${r}" y="${r + 4}">+${n.kinderen.length}</text>` : ""}
       ${draad ? `<circle class="praat" cx="${-r - 2}" cy="${-r - 2}" r="3.5"/>` : ""}
       ${open ? `<g class="badge"><circle cx="${r}" cy="${-r}" r="8"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9.5px">${open}</text></g>` : ""}
@@ -473,7 +524,7 @@ function knoopSvg(n) {
     const urg = hoogsteUrg(n);
     return `<g class="knoop ${actief ? "actief" : ""} ${urg === 0 ? "u-hoog" : urg === 1 ? "u-midden" : ""}" data-id="${esc(n.id)}" transform="translate(${x} ${y})" tabindex="0" role="button" aria-label="${esc(n.label)}">
       <circle class="schijf" r="${r}"/><text class="sub" y="3.5" text-anchor="middle" style="font-size:9px">${n.kinderen.length}</text>
-      <text class="blad" y="${r + 14}" text-anchor="middle" style="font-size:10.5px">${esc(n.label)}</text>
+      ${(() => { const L = labelPlek(n, r + 6); return `<text class="blad" x="${L.x}" y="${L.y1 + (L.anchor === "middle" ? 0 : 4)}" text-anchor="${L.anchor}" style="font-size:10.5px">${esc(n.label)}</text>`; })()}
       ${!uitgevouwen ? `<text class="plus" x="${r}" y="${r + 2}">+</text>` : ""}
       ${draad ? `<circle class="praat" cx="${-r}" cy="${-r}" r="3.5"/>` : ""}
       ${open ? `<g class="badge ${urg > 1 ? "rustig" : ""}"><circle cx="${r}" cy="${-r}" r="7.5"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9px">${open}</text></g>` : ""}
@@ -493,12 +544,34 @@ function knoopSvg(n) {
 
 /* ---------- pannen en zoomen ---------- */
 function pasZoomToe() { const w = document.getElementById("wereld"); if (w) w.setAttribute("transform", `translate(${staat.zoom.x} ${staat.zoom.y}) scale(${staat.zoom.k})`); }
+/* De omvang van wat zichtbaar is, met ruimte voor de labels; de kaart groeit
+   mee met de tekst (ruimteNodig), dus passen doen we op de echte maat. */
+function omvang(root) {
+  let minX = -60, maxX = 60, minY = -60, maxY = 60;
+  const loop = (n) => {
+    const zichtbaar = staat.open.has(n.id) || n.soort === "root" ? n.kinderen : [];
+    for (const k of zichtbaar) {
+      minX = Math.min(minX, k.x - 150); maxX = Math.max(maxX, k.x + 150);
+      minY = Math.min(minY, k.y - 55); maxY = Math.max(maxY, k.y + 65);
+      loop(k);
+    }
+  };
+  loop(root);
+  return { minX, maxX, minY, maxY };
+}
 function centreer() {
   const W = $canvas.clientWidth, H = $canvas.clientHeight;
   const klein = W < 900;
-  // Op de telefoon staat de kaart boven de schuifkaart; iets naar boven en iets uitgezoomd.
-  const k = klein ? Math.min(1, (W - 24) / (2 * STRAAL[1] + 120)) : Math.min(1.1, (Math.min(W - 560, H) - 40) / (2 * STRAAL[1] + 140));
-  staat.zoom = { k, x: klein ? 0 : -(Math.min(520, W * 0.46) / 2), y: klein && !$paneel.hidden ? -H * 0.22 : 0 };
+  const b = staat.boom ? omvang(staat.boom) : { minX: -200, maxX: 200, minY: -200, maxY: 200 };
+  const bw = Math.max(240, b.maxX - b.minX), bh = Math.max(240, b.maxY - b.minY);
+  // Op de telefoon staat de kaart in het bovendeel, boven de schuifkaart en onder de kop.
+  const ruimteW = klein ? W - 24 : Math.min(W - 560, W) - 40;
+  const ruimteH = klein ? ($paneel.hidden ? H - 150 : H * 0.38 - 90) : H - 40;
+  const k = Math.max(klein ? 0.2 : 0.35, Math.min(klein ? 1 : 1.1, ruimteW / bw, ruimteH / bh));
+  const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+  const px = klein ? 0 : -(Math.min(520, W * 0.46) / 2);
+  const py = klein ? ($paneel.hidden ? 30 : -H * 0.31 + 50) : 0;
+  staat.zoom = { k, x: px - cx * k, y: py - cy * k };
   pasZoomToe();
 }
 let wijzers = new Map(), sleep = null, knijp = null;
@@ -537,8 +610,14 @@ function kies(id) {
 function focusOp(n) {
   const W = $canvas.clientWidth, H = $canvas.clientHeight;
   if (W >= 900 || !n) return;
-  const k = staat.zoom.k;
-  staat.zoom.x = -n.x * k; staat.zoom.y = -H * 0.30 - n.y * k;
+  // Een tik op een knoop brengt hem leesbaar in beeld: de hele kaart past op
+  // een telefoon alleen sterk uitgezoomd (letters van 2 px), dus de gekozen
+  // knoop en zijn buren komen op minstens 0,85 te staan; wegvegen of ⌂ geeft
+  // het overzicht terug.
+  const k = Math.max(staat.zoom.k, 0.85);
+  staat.zoom.k = k;
+  // Onder de kop en de knoppenkolom (tot ~180 px), boven de schuifkaart.
+  staat.zoom.x = -n.x * k; staat.zoom.y = -H * 0.26 - n.y * k;
   pasZoomToe();
 }
 
@@ -591,8 +670,9 @@ function verzamelActies() {
     if (!al) nu.push({ soort: "akkoord-pr", id: `b:${b.id}`, bericht: b, project: o.projecten.find((p) => p.id === v.project) ?? null });
   }
   for (const a of o.voor_jou.filter(isOpen)) (a.soort === "risico" && a.urgentie !== "hoog" ? later : nu).push({ soort: "item", id: `i:${a.id}`, item: a, project: o.projecten.find((p) => p.id === a.project) ?? null });
-  const rang = (x) => x.soort === "akkoord" ? 0 : x.soort === "akkoord-pr" ? 1 : URG[x.item.urgentie] + 2;
-  nu.sort((a, b) => rang(a) - rang(b)); later.sort((a, b) => URG[a.item.urgentie] - URG[b.item.urgentie]);
+  const urg = (a) => URG[a.urgentie] ?? 2;
+  const rang = (x) => x.soort === "akkoord" ? 0 : x.soort === "akkoord-pr" ? 1 : urg(x.item) + 2;
+  nu.sort((a, b) => rang(a) - rang(b)); later.sort((a, b) => urg(a.item) - urg(b.item));
   return { nu, later };
 }
 function actieAkkoordHtml(x) {
@@ -759,7 +839,7 @@ document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-actie]"); if (!el) return;
   const actie = el.dataset.actie, id = el.dataset.id;
   if (actie === "kies") { kies(id); return; }
-  if (actie === "sluit") { staat.gekozen = null; bewaarZicht(); render(); return; }
+  if (actie === "sluit") { staat.gekozen = null; bewaarZicht(); render(); if ($canvas.clientWidth < 900) centreer(); return; }
   if (actie === "centreer") { centreer(); return; }
   if (actie === "zoom-in") { zoomRond(1.25); return; }
   if (actie === "zoom-uit") { zoomRond(0.8); return; }
@@ -783,7 +863,7 @@ document.addEventListener("input", (e) => { const d = e.target.dataset?.draad; i
 // Schuifkaart op de telefoon dichtvegen.
 let greep = null;
 document.getElementById("greep").addEventListener("pointerdown", (e) => { greep = e.clientY; });
-document.addEventListener("pointerup", (e) => { if (greep !== null && e.clientY - greep > 60) { staat.gekozen = null; bewaarZicht(); render(); } greep = null; });
+document.addEventListener("pointerup", (e) => { if (greep !== null && e.clientY - greep > 60) { staat.gekozen = null; bewaarZicht(); render(); centreer(); } greep = null; });
 if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => { if (staat.gekozen) toonPaneel(); };
 
 /* ---------- gegevens ---------- */
@@ -811,9 +891,19 @@ function bronArtifact(db, artifact) {
 const alsObject = (x) => { if (typeof x !== "string") return x; try { return JSON.parse(x); } catch { return null; } };
 function bronSupabase(client) {
   const tabel = (naam) => client.schema("jarvis").from(naam);
+  // Realtime is de snelle weg, maar op een telefoon valt het kanaal weg zodra de
+  // app op de achtergrond staat; wie dan terugkomt zag verouderde knoppen en
+  // tikte op een vervallen akkoordverzoek (gemeten 2026-09-14). Daarom laadt
+  // alles opnieuw als de pagina weer zichtbaar wordt, en elke twee minuten.
+  const laders = [];
   const luister = (naam, laad) => {
+    laders.push(laad);
     client.channel(`jarvis-${naam}`).on("postgres_changes", { event: "*", schema: "jarvis", table: naam }, () => laad()).subscribe();
   };
+  const ververs = () => { for (const laad of laders) laad(); };
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") ververs(); });
+  window.addEventListener("online", ververs);
+  setInterval(() => { if (document.visibilityState === "visible") ververs(); }, 120_000);
   return {
     soort: "supabase",
     overzicht(cb, fout) {
@@ -886,7 +976,7 @@ async function geefAkkoordTaak(taakId) {
   const hash = await sha256Hex(t.scope);
   if (t.scope_hash && hash !== t.scope_hash) { staat.dbFout = "De getoonde scope komt niet overeen met het overzicht; ververs de pagina."; render(); return; }
   const rij = { soort: "taak", project: t.project ?? null, taak: t.id, scope_hash: hash, tekst: t.scope, bron: "interface" };
-  try { await staat.bron.autoriseer(rij); staat.dbFout = null; meldJarvis(`akkoord ${t.id}`); }
+  try { await staat.bron.autoriseer(rij); staat.autorisaties = [{ ...rij, op: new Date().toISOString() }, ...staat.autorisaties]; staat.dbFout = null; meldJarvis(`akkoord ${t.id}`); }
   catch (err) { staat.dbFout = `Akkoord niet vastgelegd (${err?.code ?? err?.message ?? "onbekend"}).`; }
   render();
 }
@@ -894,7 +984,7 @@ async function geefAkkoordPr(berichtId) {
   const b = staat.berichten.find((x) => x.id === berichtId); const v = b?.context?.akkoord_pr;
   if (!v) return;
   const rij = { soort: "pr", project: v.project ?? null, taak: v.taak ?? null, pr_repo: v.repo, pr_nummer: Number(v.nummer), commit_sha: v.commit_sha, tekst: b.tekst, bron: "interface" };
-  try { await staat.bron.autoriseer(rij); staat.dbFout = null; meldJarvis(`akkoord pr ${v.repo}#${v.nummer}`); }
+  try { await staat.bron.autoriseer(rij); staat.autorisaties = [{ ...rij, op: new Date().toISOString() }, ...staat.autorisaties]; staat.dbFout = null; meldJarvis(`akkoord pr ${v.repo}#${v.nummer}`); }
   catch (err) { staat.dbFout = `Akkoord niet vastgelegd (${err?.code ?? err?.message ?? "onbekend"}).`; }
   render();
 }

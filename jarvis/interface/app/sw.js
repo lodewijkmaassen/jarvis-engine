@@ -16,7 +16,7 @@ self.addEventListener("fetch", (e) => {
   // Netwerk eerst (de pagina verandert bij elke uitrol); de cache als vangnet.
   e.respondWith(
     fetch(e.request)
-      .then((antwoord) => { if (antwoord.ok) caches.open(CACHE).then((c) => c.put(e.request, antwoord.clone())); return antwoord; })
+      .then((antwoord) => { if (antwoord.ok) { const kopie = antwoord.clone(); e.waitUntil(caches.open(CACHE).then((c) => c.put(e.request, kopie))); } return antwoord; })
       .catch(() => caches.match(e.request, { ignoreSearch: true }).then((hit) => hit ?? (e.request.mode === "navigate" ? caches.match("/index.html") : Response.error()))),
   );
 });
