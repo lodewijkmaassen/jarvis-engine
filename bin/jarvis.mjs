@@ -21,7 +21,7 @@ const tsx = createRequire(import.meta.url).resolve("tsx/cli");
 // In een cloud-sessie loopt al het uitgaande verkeer via een HTTP-proxy uit
 // HTTPS_PROXY; curl volgt die vanzelf, Node's fetch niet. Met deze vlag doet
 // Node (24.5+) dat wel; oudere versies negeren haar en cli.ts vangt het op.
-const kind = spawn(process.execPath, [tsx, cli, ...process.argv.slice(2)], {
+const kind = spawn(process.execPath, ["--disable-warning=UNDICI-EHPA", tsx, cli, ...process.argv.slice(2)], {
   stdio: "inherit",
   env: { ...process.env, NODE_USE_ENV_PROXY: process.env.NODE_USE_ENV_PROXY ?? "1" },
 });
