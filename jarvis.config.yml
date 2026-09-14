@@ -70,6 +70,8 @@ attestatie:
   url: https://mfjuaiezjtjdhahvwqzn.supabase.co
   sleutel: sb_publishable_y3QWqIKhgbuUGsXSivbG0Q_RtZgJ_b9
   bot: tovas-jarvis-bot
+  uitvoerders:
+    - claude[bot]
   extra_paden: []
 
 rollen_map: jarvis/roles

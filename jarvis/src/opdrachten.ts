@@ -2025,6 +2025,7 @@ async function verzamelAttestatieFeiten(
     nummer,
     auteur: feiten.auteur,
     botLogin: config.attestatie.bot,
+    uitvoerders: config.attestatie.uitvoerders,
     kop: feiten.kop,
     repo: slug,
     taken,
