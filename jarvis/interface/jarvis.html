@@ -609,7 +609,12 @@ function kies(id) {
 function focusOp(n) {
   const W = $canvas.clientWidth, H = $canvas.clientHeight;
   if (W >= 900 || !n) return;
-  const k = staat.zoom.k;
+  // Een tik op een knoop brengt hem leesbaar in beeld: de hele kaart past op
+  // een telefoon alleen sterk uitgezoomd (letters van 2 px), dus de gekozen
+  // knoop en zijn buren komen op minstens 0,85 te staan; wegvegen of ⌂ geeft
+  // het overzicht terug.
+  const k = Math.max(staat.zoom.k, 0.85);
+  staat.zoom.k = k;
   staat.zoom.x = -n.x * k; staat.zoom.y = -H * 0.30 - n.y * k;
   pasZoomToe();
 }
@@ -663,8 +668,9 @@ function verzamelActies() {
     if (!al) nu.push({ soort: "akkoord-pr", id: `b:${b.id}`, bericht: b, project: o.projecten.find((p) => p.id === v.project) ?? null });
   }
   for (const a of o.voor_jou.filter(isOpen)) (a.soort === "risico" && a.urgentie !== "hoog" ? later : nu).push({ soort: "item", id: `i:${a.id}`, item: a, project: o.projecten.find((p) => p.id === a.project) ?? null });
-  const rang = (x) => x.soort === "akkoord" ? 0 : x.soort === "akkoord-pr" ? 1 : URG[x.item.urgentie] + 2;
-  nu.sort((a, b) => rang(a) - rang(b)); later.sort((a, b) => URG[a.item.urgentie] - URG[b.item.urgentie]);
+  const urg = (a) => URG[a.urgentie] ?? 2;
+  const rang = (x) => x.soort === "akkoord" ? 0 : x.soort === "akkoord-pr" ? 1 : urg(x.item) + 2;
+  nu.sort((a, b) => rang(a) - rang(b)); later.sort((a, b) => urg(a.item) - urg(b.item));
   return { nu, later };
 }
 function actieAkkoordHtml(x) {
