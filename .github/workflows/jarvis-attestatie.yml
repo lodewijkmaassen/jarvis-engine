@@ -40,6 +40,10 @@ concurrency:
 permissions:
   contents: read
   pull-requests: write
+  # De poortstatus lezen: in een privé-repository weigert GitHub dat zonder
+  # checks:read (gemeten 2026-09-14 bij Kasboek #5: 403 "Resource not
+  # accessible by integration"; in de publieke engine-repository werkte het wel).
+  checks: read
 
 jobs:
   attestatie:
