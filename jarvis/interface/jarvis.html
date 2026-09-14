@@ -1,4 +1,17 @@
+<!doctype html>
+<html lang="nl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Jarvis</title>
+<meta name="theme-color" content="#060A10">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
@@ -87,7 +100,7 @@ p{margin:0}
 .legenda .l-midden::before{border-color:var(--midden)}
 .legenda .l-ok::before{border-color:var(--ok)}
 .legenda .l-los::before{border-style:dashed}
-@media(max-width:899px){.legenda{display:none}}
+@media(max-width:899px){.legenda{display:none}.status{max-width:62vw;font-size:10.5px}.kop h1{font-size:20px}}
 
 /* ---- schuifkaart ---- */
 .kaart{position:fixed;z-index:10;background:var(--vlak);border:1px solid var(--lijn2);backdrop-filter:blur(8px);display:flex;flex-direction:column;box-shadow:0 -10px 40px rgba(0,0,0,.5)}
@@ -150,6 +163,24 @@ textarea::placeholder{color:var(--zacht)}
 .antwoordstatus .verw{color:var(--inkt)}
 .antwoordstatus .verw::before{content:"Jarvis: ";color:var(--cyaan);font-family:var(--display);letter-spacing:.1em;text-transform:uppercase;font-size:12px}
 .leeg{padding:16px;color:var(--gedempt);text-align:center;border:1px dashed var(--lijn)}
+/* ---- acties: alleen wat werkelijk bij de eigenaar ligt ---- */
+.acties{margin-top:10px;display:flex;flex-direction:column;gap:8px}
+.actie{border:1px solid var(--midden);border-left-width:3px;background:var(--vlak2)}
+.actie.rustig{border-color:var(--lijn2);border-left-color:var(--laag)}
+.actie summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 12px;min-height:48px;align-items:center}
+.actie summary::-webkit-details-marker{display:none}
+.actie summary .kopje{font-family:var(--display);font-weight:700;font-size:14px;letter-spacing:.06em;text-transform:uppercase;color:#fff;line-height:1.2}
+.actie summary .sub{grid-column:1;font-family:var(--mono);font-size:11px;color:var(--gedempt)}
+.actie summary .pijl{grid-column:2;grid-row:1/3;font-family:var(--mono);color:var(--cyaan)}
+.actie[open] summary .pijl{transform:rotate(90deg)}
+.actie .lijf{padding:0 12px 12px;border-top:1px solid var(--lijn)}
+.actie .lijf .blok{margin-top:10px}
+.actie .lijf p{font-size:13.5px}
+.actie ul.kaal{margin:4px 0 0;padding-left:18px;color:var(--gedempt);font-size:13.5px}
+.actie ul.kaal li{margin:2px 0}
+.actie .knop.groot{min-height:48px;width:100%;background:var(--cyaan-zacht);border-color:var(--cyaan);color:#fff;box-shadow:var(--cyaan-gloed)}
+.status .acties-knop{display:block;margin-top:4px;padding:6px 10px;border:1px solid var(--midden);color:#fff;background:var(--midden-zacht);font-family:var(--display);font-weight:700;letter-spacing:.1em;text-transform:uppercase;font-size:12px;min-height:36px}
+.status .acties-knop.leeg{border-color:var(--lijn);background:none;color:var(--gedempt)}
 .leeg strong{display:block;color:#fff;font-family:var(--display);font-size:16px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px}
 .tegels{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-top:10px}
 .tegel{padding:8px 10px;border:1px solid var(--lijn);background:var(--vlak2)}
@@ -214,7 +245,8 @@ details.stand .md{padding:0 12px 10px}
 .stemregel label{display:inline-flex;gap:6px;align-items:center;min-height:32px;cursor:pointer}
 .stemregel select{background:var(--vlak2);color:var(--inkt);border:1px solid var(--lijn2);font:inherit;font-size:12px;padding:4px 6px;max-width:100%}
 </style>
-
+</head>
+<body>
 <div id="canvas"><svg id="kaart" role="group" aria-label="Jarvis-kaart"></svg></div>
 <div class="kop">
   <h1>Jarvis<small id="kop-versie"></small></h1>
@@ -536,16 +568,84 @@ function lijstRegel(a) {
   const antwoord = staat.antwoorden.get(a.id);
   return `<button class="regel ${antwoord ? "beantwoord" : `u-${esc(a.urgentie)}`}" data-actie="kies" data-id="i:${esc(a.id)}"><span class="chip soort-${esc(a.soort)}">${esc(SOORT[a.soort] ?? a.soort)}</span><span class="t">${esc(a.titel)}</span>${antwoord ? `<span class="chip ${antwoord.status === "verwerkt" ? "ok" : "wacht"}">${antwoord.status === "verwerkt" ? "verwerkt" : "wacht"}</span>` : ""}</button>`;
 }
+/* ---------- acties: wat werkelijk bij de eigenaar ligt ----------
+   Nu nodig: een akkoord op een taak waarvan de volgende stap dat akkoord is (DEC-0043) en waar nog geen geldig
+   akkoord op de huidige scope ligt; een apart akkoord voor één pull request (harde uitzondering); een open
+   beslissing, actie, conflict of blokkade uit een dossier. Later: open risico's (accepteren of aanpakken).
+   Statusmeldingen en verificaties staan hier nooit: die handelt Jarvis zelf af. */
+function akkoordNodig(t) {
+  if (t.status === "afgerond" || !t.scope) return false;
+  const stap = (t.stappen ?? []).find((x) => !x.gedaan)?.tekst ?? "";
+  const nodig = t.akkoord_nodig ?? (/\bakkoord\b/i.test(stap) && /\beigenaar\b/i.test(stap));
+  if (!nodig) return false;
+  const laatste = akkoordVan(t);
+  return !(laatste && laatste.scope_hash === t.scope_hash);
+}
+function verzamelActies() {
+  const o = staat.overzicht; const nu = [], later = [];
+  if (!o) return { nu, later };
+  for (const p of o.projecten) for (const t of p.taken) if (akkoordNodig(t)) nu.push({ soort: "akkoord", id: `a:${t.id}`, taak: t, project: p });
+  for (const b of staat.berichten) {
+    const v = b.context?.akkoord_pr; if (!v || b.van !== "jarvis") continue;
+    const al = staat.autorisaties.some((a) => a.soort === "pr" && a.pr_repo === v.repo && Number(a.pr_nummer) === Number(v.nummer) && a.commit_sha === v.commit_sha);
+    if (!al) nu.push({ soort: "akkoord-pr", id: `b:${b.id}`, bericht: b, project: o.projecten.find((p) => p.id === v.project) ?? null });
+  }
+  for (const a of o.voor_jou.filter(isOpen)) (a.soort === "risico" && a.urgentie !== "hoog" ? later : nu).push({ soort: "item", id: `i:${a.id}`, item: a, project: o.projecten.find((p) => p.id === a.project) ?? null });
+  const rang = (x) => x.soort === "akkoord" ? 0 : x.soort === "akkoord-pr" ? 1 : URG[x.item.urgentie] + 2;
+  nu.sort((a, b) => rang(a) - rang(b)); later.sort((a, b) => URG[a.item.urgentie] - URG[b.item.urgentie]);
+  return { nu, later };
+}
+function actieAkkoordHtml(x) {
+  const t = x.taak; const st = t.stappen ?? []; const eerste = st.findIndex((s) => !s.gedaan);
+  const daarna = eerste >= 0 ? st.slice(eerste + 1).filter((s) => !s.gedaan) : [];
+  const risicos = (x.project?.aandacht ?? []).filter((a) => a.soort === "risico" && a.bron.startsWith(`tasks/${t.id}/`) && isOpen(a));
+  return `<details class="actie" id="actie-${esc(x.id)}"><summary><span class="kopje">Akkoord: ${esc(t.titel)}</span><span class="sub">${esc(x.project?.naam ?? t.project)} · ${esc(t.id)}${t.klasse ? " · klasse " + esc(t.klasse) : ""}</span><span class="pijl">›</span></summary><div class="lijf">
+    <div class="blok"><span class="eyebrow">Wat Jarvis van je nodig heeft</span><p>Je akkoord op de scope van deze taak: de opdracht zoals die hieronder staat. Eén tik; het wordt onveranderbaar op jouw account vastgelegd.</p></div>
+    <div class="blok"><span class="eyebrow">Waarom alleen jij dit kunt</span><p>Autorisatie is van de eigenaar (DEC-0043). Zonder jouw akkoord op deze scope mag Jarvis de pull requests van deze taak niet attesteren en niet samenvoegen${t.wacht_op ? `: <strong>${inlineMd(t.wacht_op)}</strong>` : "."}</p></div>
+    <div class="blok"><span class="eyebrow">Wat Jarvis daarna zelf doet</span>${daarna.length ? `<ul class="kaal">${daarna.map((s) => `<li>${inlineMd(s.tekst)}</li>`).join("")}</ul>` : `<p>De pull request(s) van deze taak toetsen, attesteren en samenvoegen, en de taak afronden.</p>`}</div>
+    <div class="blok"><span class="eyebrow">Gevolgen en risico's</span><p>Jarvis bouwt, toetst en voegt samen wat binnen deze scope valt zonder het je nog te vragen. Een harde uitzondering — wezenlijke scopewijziging, kosten, secrets, productie, iets destructiefs — vraagt hij apart.</p>${risicos.length ? `<ul class="kaal">${risicos.map((r) => `<li>${esc(r.titel)}</li>`).join("")}</ul>` : ""}</div>
+    <details><summary style="cursor:pointer;font-size:12.5px;color:var(--zacht)">De scope (opdracht.md) die je goedkeurt · ${esc(String(t.scope_hash ?? "").slice(0, 8))}</summary><div class="scope">${esc(t.scope)}</div></details>
+    <div class="akkoord">${staat.bron?.soort === "supabase" ? `<button class="knop groot" data-actie="akkoord-taak" data-id="${esc(t.id)}">Akkoord met deze taak</button>` : `<p style="font-size:12.5px;color:var(--gedempt)">Akkoord geven kan alleen in de eigen app (ingelogd).</p>`}</div>
+    <button class="knop stil" data-actie="kies" data-id="t:${esc(t.id)}" style="margin-top:6px">Open de taak</button>
+  </div></details>`;
+}
+function actiePrHtml(x) {
+  const b = x.bericht; const v = b.context.akkoord_pr;
+  return `<details class="actie" id="actie-${esc(x.id)}"><summary><span class="kopje">Apart akkoord: ${esc(v.repo)}#${esc(String(v.nummer))}</span><span class="sub">${esc(x.project?.naam ?? v.project ?? "")}${v.taak ? " · " + esc(v.taak) : ""} · harde uitzondering</span><span class="pijl">›</span></summary><div class="lijf">
+    <div class="blok"><span class="eyebrow">Wat Jarvis van je nodig heeft</span><p>${inlineMd(b.tekst)}</p></div>
+    <div class="blok"><span class="eyebrow">Waarom alleen jij dit kunt</span><p>Deze pull request raakt een harde uitzondering (DEC-0043 §2); het akkoord op de taak dekt hem niet. Je akkoord geldt precies voor commit ${esc(String(v.commit_sha).slice(0, 7))}.</p></div>
+    <div class="blok"><span class="eyebrow">Wat Jarvis daarna zelf doet</span><p>Attesteren en samenvoegen, en verdergaan met de volgende stap van de taak.</p></div>
+    ${akkoordPrHtml(b)}
+  </div></details>`;
+}
+function actieItemHtml(x) {
+  const a = x.item;
+  return `<details class="actie ${a.soort === "risico" && a.urgentie !== "hoog" ? "rustig" : ""}" id="actie-${esc(x.id)}"><summary><span class="kopje">${esc(SOORT[a.soort] ?? a.soort)}: ${esc(a.titel)}</span><span class="sub">${esc(x.project?.naam ?? a.project)} · ${esc(a.urgentie)} · ${esc(a.bron)}</span><span class="pijl">›</span></summary><div class="lijf">
+    ${a.toelichting ? `<div class="blok"><span class="eyebrow">Wat er speelt</span><p>${inlineMd(a.toelichting)}</p></div>` : ""}
+    ${a.waarom ? `<div class="blok"><span class="eyebrow">Waarom dit bij jou ligt</span><p>${inlineMd(a.waarom)}</p></div>` : ""}
+    <div class="blok"><span class="eyebrow">Je keuzes, en wat er dan gebeurt</span><ul class="kaal">${(a.opties ?? []).map((o) => `<li><strong>${esc(o.label)}</strong> — ${inlineMd(o.gevolg)}</li>`).join("")}</ul></div>
+    <button class="knop groot" data-actie="kies" data-id="i:${esc(a.id)}">Kiezen</button>
+  </div></details>`;
+}
+function actiesHtml() {
+  const { nu, later } = verzamelActies();
+  const kaart = (x) => x.soort === "akkoord" ? actieAkkoordHtml(x) : x.soort === "akkoord-pr" ? actiePrHtml(x) : actieItemHtml(x);
+  let s = `<div class="blok"><span class="eyebrow">Voor jou · ${nu.length ? `${nu.length} nu nodig` : "niets nodig"}</span>`;
+  s += nu.length ? `<div class="acties">${nu.map(kaart).join("")}</div>` : `<div class="leeg"><strong>Niets voor jou</strong>Jarvis heeft op dit moment geen actie of beslissing van je nodig.</div>`;
+  s += `</div>`;
+  if (later.length) s += `<div class="blok"><span class="eyebrow">Beslissingen die kunnen wachten · ${later.length}</span><div class="acties">${later.map(kaart).join("")}</div></div>`;
+  return s;
+}
 function rootHtml(n) {
   const o = staat.overzicht; const j = staat.jarvis; const live = jarvisLive();
   const eigen = n.kinderen.filter((k) => k.soort !== "project");
-  const alles = o.voor_jou.filter(isOpen);
-  let s = `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${alles.length}<small>${alles.filter((a) => a.urgentie === "hoog").length} hoog</small></div></div><div class="tegel"><span class="eyebrow">Projecten</span><div class="n">${o.projecten.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${o.projecten.reduce((t, p) => t + p.recent.length, 0)}<small>/ ${RECENT_DAGEN} d</small></div></div></div>`;
+  const acties = verzamelActies();
+  let s = actiesHtml();
+  s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${acties.nu.length}<small>${acties.later.length} later</small></div></div><div class="tegel"><span class="eyebrow">Projecten</span><div class="n">${o.projecten.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${o.projecten.reduce((t, p) => t + p.recent.length, 0)}<small>/ ${RECENT_DAGEN} d</small></div></div></div>`;
   s += `<div class="agent ${live.bezig ? "bezig" : live.live ? "actief" : ""}"><span class="naam"><span class="dot"></span>${esc(j?.sessie?.naam ?? "Jarvis")}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(j?.sessie?.rol ?? "orchestrator")}</span><span class="wat">${esc(live.tekst)}</span><span class="meta">${j?.sessie?.model ? esc(j.sessie.model) : ""}${j?.sessie?.laatste ? " · laatste update " + esc(tijd(j.sessie.laatste)) : ""}. Eén model, vijf rollen; geen andere AI.</span></div>`;
   for (const a of j?.agenten ?? []) s += `<div class="agent ${a.status === "bezig" ? "bezig" : "actief"}"><span class="naam"><span class="dot"></span>${esc(a.naam)}</span><span class="mono" style="font-size:11px">${esc(a.rol ?? "")}</span><span class="wat">${esc(a.wat ?? "")}</span></div>`;
   if (eigen.length) s += `<div class="blok"><span class="eyebrow">Wat Jarvis doet</span>${eigen.map((k) => `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" && k.taak.stappen?.length ? `<small>${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : ""}</span></button>`).join("")}</div>`;
-  const perProject = new Map(); for (const a of alles) { const l = perProject.get(a.project) ?? []; l.push(a); perProject.set(a.project, l); }
-  s += `<div class="blok"><span class="eyebrow">Alles wat bij jou ligt</span>${[...perProject.entries()].map(([pid, lijst]) => { const p = o.projecten.find((x) => x.id === pid); return `<div class="itemmeta"><span class="chip project">${esc(p?.naam ?? pid)}</span><span class="mono" style="font-size:11px;color:var(--zacht)">${lijst.length}</span></div>${lijst.sort((a, b) => URG[a.urgentie] - URG[b.urgentie]).map(lijstRegel).join("")}`; }).join("") || `<div class="leeg"><strong>Niets open</strong></div>`}</div>`;
+  s += `<div class="blok"><span class="eyebrow">Projecten</span>${n.kinderen.filter((k) => k.soort === "project").map((k) => `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}<small>${k.project.taken.filter((t) => t.status !== "afgerond").length} taken · ${k.project.recent.length} commits / ${RECENT_DAGEN} d${k.project.aangesloten ? "" : " · niet aangesloten"}</small></span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : ""}</span></button>`).join("")}</div>`;
   return s;
 }
 function projectHtml(n) {
@@ -649,7 +749,9 @@ function render() {
   const leeftijdDagen = (Date.now() - new Date(o.gegenereerd_op).getTime()) / 864e5;
   const wachten = [...staat.antwoorden.values()].filter((a) => a.status !== "verwerkt").length + staat.berichten.filter((b) => b.van !== "jarvis" && b.status === "nieuw").length;
   const live = jarvisLive();
-  $status.innerHTML = `<span class="dot ${live.bezig || wachten ? "bezig" : live.live ? "" : "uit"}"></span><b>${live.bezig ? esc(live.tekst) : wachten ? `${wachten} bij Jarvis` : live.live ? "sessie actief" : "geen sessie"}</b><br><span class="${leeftijdDagen > 3 ? "oud" : ""}">stand ${esc(relatief(o.gegenereerd_op))}</span>${staat.signaal ? `<br>${esc(staat.signaal)}` : ""}`;
+  $status.innerHTML = `<span class="dot ${live.bezig || wachten ? "bezig" : live.live ? "" : "uit"}"></span><b>${live.bezig ? esc(kort(live.tekst, 44)) : wachten ? `${wachten} bij Jarvis` : live.live ? "sessie actief" : "geen sessie"}</b><br><span class="${leeftijdDagen > 3 ? "oud" : ""}">stand ${esc(relatief(o.gegenereerd_op))}</span>${staat.signaal ? `<br>${esc(staat.signaal)}` : ""}`;
+  const acties = verzamelActies();
+  $status.innerHTML += `<button class="acties-knop ${acties.nu.length ? "" : "leeg"}" data-actie="kies" data-id="root" aria-label="Wat bij jou ligt">${acties.nu.length ? `${acties.nu.length} voor jou` : acties.later.length ? `niets dringend · ${acties.later.length} open` : "niets voor jou"}</button>`;
   document.getElementById("kop-versie").textContent = `v${o.versie ?? 1}`;
 }
 
@@ -706,6 +808,7 @@ function bronArtifact(db, artifact) {
     async wek(reden, lading) { if (!artifact()) throw Object.assign(new Error("geen artifact"), { code: "capability_disabled" }); await artifact().publish({ "signaal.json": { content: JSON.stringify({ op: new Date().toISOString(), reden, ...lading }, null, 2), contentType: "application/json" } }); },
   };
 }
+const alsObject = (x) => { if (typeof x !== "string") return x; try { return JSON.parse(x); } catch { return null; } };
 function bronSupabase(client) {
   const tabel = (naam) => client.schema("jarvis").from(naam);
   const luister = (naam, laad) => {
@@ -714,16 +817,16 @@ function bronSupabase(client) {
   return {
     soort: "supabase",
     overzicht(cb, fout) {
-      const laad = async () => { const { data, error } = await tabel("documenten").select("inhoud").eq("id", "overzicht/huidig").maybeSingle(); if (error) fout(error); else cb(data?.inhoud ?? null); };
+      const laad = async () => { const { data, error } = await tabel("documenten").select("inhoud").eq("id", "overzicht/huidig").maybeSingle(); if (error) fout(error); else cb(alsObject(data?.inhoud) ?? null); };
       laad(); luister("documenten", laad);
     },
     status(cb) {
-      const laad = async () => { const { data } = await tabel("documenten").select("inhoud").eq("id", "jarvis/status").maybeSingle(); cb(data?.inhoud ?? null); };
-      laad();
+      const laad = async () => { const { data } = await tabel("documenten").select("inhoud").eq("id", "jarvis/status").maybeSingle(); cb(alsObject(data?.inhoud) ?? null); };
+      laad(); luister("documenten", laad);
     },
     berichten(cb, fout) {
       let eerste = true;
-      const laad = async () => { const { data, error } = await tabel("berichten").select("*").order("op"); if (error) fout(error); else { cb(data ?? [], eerste); eerste = false; } };
+      const laad = async () => { const { data, error } = await tabel("berichten").select("*").order("op"); if (error) fout(error); else { cb((data ?? []).map((b) => ({ ...b, context: alsObject(b.context) ?? {} })), eerste); eerste = false; } };
       laad(); luister("berichten", laad);
     },
     antwoorden(cb, fout) {
@@ -812,7 +915,20 @@ function toonLogin(client, melding) {
     if (error) toonLogin(client, "Inloggen mislukt: " + error.message);
   });
 }
+function bronProef(gegevens) {
+  const weiger = async () => { throw Object.assign(new Error("proefbron: alleen lezen"), { code: "proef" }); };
+  return {
+    soort: "proef",
+    overzicht(cb) { cb(gegevens.overzicht ?? null); },
+    status(cb) { cb(gegevens.status ?? null); },
+    berichten(cb) { cb(gegevens.berichten ?? [], false); },
+    antwoorden(cb) { cb(gegevens.antwoorden ?? []); },
+    autorisaties(cb) { cb(gegevens.autorisaties ?? []); },
+    antwoord: weiger, bericht: weiger, intrekken: weiger, autoriseer: weiger, async wek() {},
+  };
+}
 async function maakBron() {
+  if (window.JARVIS_PROEF) return bronProef(window.JARVIS_PROEF);
   const cfg = window.JARVIS_SUPABASE;
   if (cfg?.url && cfg?.key) {
     await new Promise((ok, nee) => { const sc = document.createElement("script"); sc.src = "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.58.0/dist/umd/supabase.js"; sc.onload = ok; sc.onerror = nee; document.head.appendChild(sc); });
@@ -832,8 +948,10 @@ async function maakBron() {
   return bronArtifact(db, () => staat.artifact);
 }
 async function start() {
+  if (window.JARVIS_SUPABASE && "serviceWorker" in navigator) navigator.serviceWorker.register("sw.js").catch(() => {});
   const bron = await maakBron();
   staat.bron = bron; staat.db = bron;
+  if (!staat.gekozen) staat.gekozen = "root";
   if (!bron) { $status.innerHTML = `<span class="dot uit"></span>geen gegevens — open dit op claude.ai of als eigen app`; return; }
   bron.overzicht((data) => {
     if (!data) { $status.innerHTML = `<span class="dot uit"></span>nog geen overzicht`; return; }
@@ -857,3 +975,5 @@ async function start() {
 start();
 })();
 </script>
+</body>
+</html>
