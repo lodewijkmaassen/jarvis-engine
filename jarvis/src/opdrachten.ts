@@ -36,12 +36,14 @@ import {
   RECENT_DAGEN,
   bouwOverzicht,
   leesItemsOnder,
+  type Overzicht,
   type GitRegel,
   type ProjectInvoer,
   type ProjectOverzicht,
   type TaakDossier,
 } from "./overzicht";
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
+import { ROLLEN, bepaalRegie, type Activiteit, type Rol } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
 import {
   ACTIEVE_ATTESTATIE,
@@ -74,6 +76,8 @@ import {
   AUTORISATIES_SINDS_SQL,
   AUTORISATIES_SQL,
   berichtId,
+  ACTIVITEIT_RECENT_SQL,
+  ACTIVITEIT_SQL,
   BERICHT_VAN_JARVIS_SQL,
   claimSql,
   DOCUMENT_SQL,
@@ -709,7 +713,8 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
  * gaat door de sanitizer voordat hij ergens terechtkomt. Dit is persistente
  * Jarvis-data die de repository verlaat, en daar geldt CON-0008 dubbel.
  */
-async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+/** Het overzicht zoals `jarvis overzicht` het bouwt, voor hergebruik door `jarvis regie`. */
+async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; overzicht: Overzicht }> {
   const { wortel, config, lading } = await laadAlles();
   const nu = new Date();
 
@@ -758,7 +763,11 @@ async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
-  const overzicht = bouwOverzicht([...kern, eigen, ...externen], nu, kernId);
+  return { wortel, overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+}
+
+async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const { wortel, overzicht } = await bouwOverzichtVanuit(vlaggen);
   const json = `${JSON.stringify(overzicht, null, 2)}\n`;
 
   // De poort voor alles wat de repository verlaat. Geen uitzonderingen: een
@@ -1573,6 +1582,7 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
     }
     const pr = nieuw.lading as { number: number; html_url: string };
     console.log(`jarvis pr: #${pr.number} geopend door ${botLogin}: ${pr.html_url}`);
+    await schrijfActiviteit({ uitvoerder: dezeUitvoerder(), rol: "developer", taak: null, project: null, soort: "pr", tekst: `pull request #${pr.number} geopend: ${titel}`, verwijzing: `${slug}#${pr.number}` });
     return 0;
   }
 
@@ -1734,6 +1744,154 @@ async function verbindDb(): Promise<{ readonly sql: DbClient; readonly bron: str
  *   wachten [--max <seconden>]             Wacht tot er een nieuw antwoord, bericht of akkoord is; geeft dat als JSON.
  *   wie                                    Toont waar de verbinding vandaan komt en of ze werkt; nooit de reeks zelf.
  */
+/**
+ * Schrijft één activiteitsregel van het digitale team. Zonder database (of
+ * zonder de tabel) faalt de opdracht die het aanroept niet: activiteit is
+ * zichtbaarheid, geen voorwaarde.
+ */
+export async function schrijfActiviteit(a: {
+  readonly uitvoerder: string;
+  readonly rol: Rol;
+  readonly taak: string | null;
+  readonly project: string | null;
+  readonly soort: string;
+  readonly tekst: string;
+  readonly verwijzing?: string | null;
+}): Promise<boolean> {
+  const verbinding = await verbindDb();
+  if (verbinding === null) return false;
+  try {
+    await verbinding.sql.unsafe(ACTIVITEIT_SQL, [a.uitvoerder, a.rol, a.taak, a.project, a.soort, a.tekst.slice(0, 500), a.verwijzing ?? null]);
+    return true;
+  } catch (fout) {
+    const tekst = fout instanceof Error ? fout.message : String(fout);
+    console.error(`jarvis: activiteit niet geschreven: ${tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>").slice(0, 160)}`);
+    return false;
+  } finally {
+    await verbinding.sql.end({ timeout: 2 });
+  }
+}
+
+/** Welke uitvoerder dit is: de cloud (proxy van het platform) of de laptop. */
+function dezeUitvoerder(): string {
+  return process.env.JARVIS_UITVOERDER ?? (process.env.HTTPS_PROXY || process.env.https_proxy ? "cloud" : "laptop");
+}
+
+/**
+ * `jarvis werk <claim|stap|heartbeat|fout|klaar|vrijgave> <taak> [--rol r] [--project p] [--tekst t] [--verwijzing v]`
+ * De uitvoerder meldt wat een rol aan een taak doet. Een claim maakt de taak
+ * RUNNING voor `jarvis regie`; stappen en heartbeats houden hem levend; fout
+ * blokkeert; klaar of vrijgave beëindigt de uitvoering.
+ */
+async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const soort = losse[0] ?? "";
+  const taak = losse[1] ?? "";
+  const soorten = ["claim", "stap", "heartbeat", "fout", "klaar", "vrijgave"];
+  if (!soorten.includes(soort) || !/^T-\d{8}-[a-z0-9-]+$/i.test(taak)) {
+    console.error(`jarvis werk: gebruik: jarvis werk <${soorten.join("|")}> <taak-id> [--rol <rol>] [--project <id>] [--tekst "<wat>"] [--verwijzing <pr/commit>]`);
+    return 2;
+  }
+  const rol = (vlaggen.get("rol") ?? "developer") as Rol;
+  if (!(ROLLEN as readonly string[]).includes(rol)) {
+    console.error(`jarvis werk: onbekende rol "${rol}"; kies uit ${ROLLEN.join(", ")}.`);
+    return 2;
+  }
+  const standaard: Record<string, string> = { claim: "opgepakt", stap: "stap gezet", heartbeat: "nog bezig", fout: "fout", klaar: "klaar", vrijgave: "losgelaten" };
+  const ok = await schrijfActiviteit({
+    uitvoerder: vlaggen.get("door") ?? dezeUitvoerder(),
+    rol,
+    taak,
+    project: vlaggen.get("project") ?? null,
+    soort,
+    tekst: vlaggen.get("tekst") ?? standaard[soort],
+    verwijzing: vlaggen.get("verwijzing") ?? null,
+  });
+  if (!ok) {
+    console.error("jarvis werk: geen database bereikbaar; niets geschreven.");
+    return 1;
+  }
+  console.log(`jarvis werk: ${soort} op ${taak} door ${rol} (${vlaggen.get("door") ?? dezeUitvoerder()}) vastgelegd.`);
+  return 0;
+}
+
+/**
+ * `jarvis regie [--extern <pad,pad>] [--uit <bestand>] [--schrijf] [--json]`
+ * De Task Controller: per open taak de toestand, de verantwoordelijke rol,
+ * waarom, laatste activiteit, volgende stap en wie die uitvoert; per rol wat
+ * hij doet; en het uitvoerbare werk in prioriteitsvolgorde. Met --schrijf
+ * gaat het als document regie/huidig naar de database en meldt de controller
+ * zijn ronde als activiteit.
+ */
+async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const { wortel, overzicht } = await bouwOverzichtVanuit(vlaggen);
+  let activiteit: Activiteit[] = [];
+  const verbinding = await verbindDb();
+  if (verbinding !== null) {
+    try {
+      const rijen = await verbinding.sql.unsafe(ACTIVITEIT_RECENT_SQL);
+      activiteit = rijen.map((r) => ({
+        op: new Date(String(r.op)).toISOString(),
+        uitvoerder: String(r.uitvoerder),
+        rol: String(r.rol),
+        taak: r.taak === null ? null : String(r.taak),
+        project: r.project === null ? null : String(r.project),
+        soort: String(r.soort),
+        tekst: String(r.tekst),
+        verwijzing: r.verwijzing === null || r.verwijzing === undefined ? null : String(r.verwijzing),
+      }));
+    } catch (fout) {
+      const tekst = fout instanceof Error ? fout.message : String(fout);
+      console.error(`jarvis regie: activiteit niet te lezen (${tekst.slice(0, 120)}); toestand zonder heartbeat.`);
+    } finally {
+      await verbinding.sql.end({ timeout: 2 });
+    }
+  }
+  const regie = bepaalRegie(overzicht, activiteit, new Date());
+  const json = `${JSON.stringify(regie, null, 2)}\n`;
+
+  const allowlist = await laadAllowlistVanSchijf(wortel);
+  const bevindingen = scanTekst(json, allowlist, "regie.json");
+  if (bevindingen.length > 0) {
+    console.error(`jarvis regie: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);
+    return 1;
+  }
+
+  const uit = vlaggen.get("uit");
+  if (uit) {
+    await mkdir(path.dirname(path.resolve(wortel, uit)), { recursive: true });
+    await writeFile(path.resolve(wortel, uit), json, "utf8");
+  }
+  if (vlaggen.has("schrijf")) {
+    const v2 = await verbindDb();
+    if (v2 === null) {
+      console.error("jarvis regie: geen database bereikbaar; regie/huidig niet geschreven.");
+      return 1;
+    }
+    try {
+      await v2.sql.unsafe(DOCUMENT_SQL, ["regie/huidig", json]);
+    } finally {
+      await v2.sql.end({ timeout: 2 });
+    }
+    await schrijfActiviteit({
+      uitvoerder: dezeUitvoerder(),
+      rol: "task-controller",
+      taak: null,
+      project: null,
+      soort: "regie",
+      tekst: `ronde: ${regie.taken.length} open, ${regie.uitvoerbaar.length} uitvoerbaar, ${regie.afwijkingen.length} afwijking(en)`,
+    });
+  }
+  if (vlaggen.has("json") || (!uit && !vlaggen.has("schrijf"))) {
+    process.stdout.write(json);
+    return 0;
+  }
+  for (const t of regie.taken) {
+    console.log(`${t.toestand.padEnd(22)} ${t.id.padEnd(36)} ${t.verantwoordelijke.padEnd(18)} ${t.waarom}`);
+  }
+  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig gezet" : ""}.`);
+  return 0;
+}
+
 async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
   const wat = losse[0] ?? "";
   const verbinding = await verbindDb();
@@ -1847,6 +2005,7 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       const rapport = rapportPad ? await readFile(path.resolve(rapportPad), "utf8") : null;
       const rijen = await sql.unsafe(TOETSING_SQL, [repo, nummer, sha, oordeel, rapport, door]);
       console.log(`jarvis db: toetsing ${String(rijen[0]?.["id"])} vastgelegd: ${repo}#${nummer} op ${sha.slice(0, 7)} ${oordeel}.`);
+      await schrijfActiviteit({ uitvoerder: door, rol: "qa", taak: null, project: null, soort: "toetsing", tekst: `toetsing ${oordeel} op ${repo}#${nummer} (${sha.slice(0, 7)})`, verwijzing: `${repo}#${nummer}` });
       return 0;
     }
     if (wat === "autorisaties") {
@@ -2253,6 +2412,12 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
       break;
     case "overzicht":
       code = await opdrachtOverzicht(vlaggen);
+      break;
+    case "regie":
+      code = await opdrachtRegie(vlaggen);
+      break;
+    case "werk":
+      code = await opdrachtWerk(losse, vlaggen);
       break;
     case "rollen":
       code = await opdrachtRollen(vlaggen);
