@@ -100,7 +100,7 @@ p{margin:0}
 .legenda .l-midden::before{border-color:var(--midden)}
 .legenda .l-ok::before{border-color:var(--ok)}
 .legenda .l-los::before{border-style:dashed}
-@media(max-width:899px){.legenda{display:none}.status{max-width:62vw;font-size:10.5px}.kop h1{font-size:20px}}
+@media(max-width:899px){.legenda{display:none}.status{max-width:62vw;font-size:10.5px}.kop h1{font-size:20px}.gereedschap{top:52px;bottom:auto;flex-direction:column}.gereedschap .knop{min-width:38px;min-height:38px}}
 
 /* ---- schuifkaart ---- */
 .kaart{position:fixed;z-index:10;background:var(--vlak);border:1px solid var(--lijn2);backdrop-filter:blur(8px);display:flex;flex-direction:column;box-shadow:0 -10px 40px rgba(0,0,0,.5)}
@@ -523,12 +523,34 @@ function knoopSvg(n) {
 
 /* ---------- pannen en zoomen ---------- */
 function pasZoomToe() { const w = document.getElementById("wereld"); if (w) w.setAttribute("transform", `translate(${staat.zoom.x} ${staat.zoom.y}) scale(${staat.zoom.k})`); }
+/* De omvang van wat zichtbaar is, met ruimte voor de labels; de kaart groeit
+   mee met de tekst (ruimteNodig), dus passen doen we op de echte maat. */
+function omvang(root) {
+  let minX = -60, maxX = 60, minY = -60, maxY = 60;
+  const loop = (n) => {
+    const zichtbaar = staat.open.has(n.id) || n.soort === "root" ? n.kinderen : [];
+    for (const k of zichtbaar) {
+      minX = Math.min(minX, k.x - 150); maxX = Math.max(maxX, k.x + 150);
+      minY = Math.min(minY, k.y - 55); maxY = Math.max(maxY, k.y + 65);
+      loop(k);
+    }
+  };
+  loop(root);
+  return { minX, maxX, minY, maxY };
+}
 function centreer() {
   const W = $canvas.clientWidth, H = $canvas.clientHeight;
   const klein = W < 900;
-  // Op de telefoon staat de kaart boven de schuifkaart; iets naar boven en iets uitgezoomd.
-  const k = klein ? Math.min(1, (W - 24) / (2 * STRAAL[1] + 120)) : Math.min(1.1, (Math.min(W - 560, H) - 40) / (2 * STRAAL[1] + 140));
-  staat.zoom = { k, x: klein ? 0 : -(Math.min(520, W * 0.46) / 2), y: klein && !$paneel.hidden ? -H * 0.22 : 0 };
+  const b = staat.boom ? omvang(staat.boom) : { minX: -200, maxX: 200, minY: -200, maxY: 200 };
+  const bw = Math.max(240, b.maxX - b.minX), bh = Math.max(240, b.maxY - b.minY);
+  // Op de telefoon staat de kaart in het bovendeel, boven de schuifkaart en onder de kop.
+  const ruimteW = klein ? W - 24 : Math.min(W - 560, W) - 40;
+  const ruimteH = klein ? ($paneel.hidden ? H - 150 : H * 0.38 - 90) : H - 40;
+  const k = Math.max(0.35, Math.min(klein ? 1 : 1.1, ruimteW / bw, ruimteH / bh));
+  const cx = (b.minX + b.maxX) / 2, cy = (b.minY + b.maxY) / 2;
+  const px = klein ? 0 : -(Math.min(520, W * 0.46) / 2);
+  const py = klein ? ($paneel.hidden ? 30 : -H * 0.31 + 50) : 0;
+  staat.zoom = { k, x: px - cx * k, y: py - cy * k };
   pasZoomToe();
 }
 let wijzers = new Map(), sleep = null, knijp = null;
@@ -789,7 +811,7 @@ document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-actie]"); if (!el) return;
   const actie = el.dataset.actie, id = el.dataset.id;
   if (actie === "kies") { kies(id); return; }
-  if (actie === "sluit") { staat.gekozen = null; bewaarZicht(); render(); return; }
+  if (actie === "sluit") { staat.gekozen = null; bewaarZicht(); render(); if ($canvas.clientWidth < 900) centreer(); return; }
   if (actie === "centreer") { centreer(); return; }
   if (actie === "zoom-in") { zoomRond(1.25); return; }
   if (actie === "zoom-uit") { zoomRond(0.8); return; }
@@ -813,7 +835,7 @@ document.addEventListener("input", (e) => { const d = e.target.dataset?.draad; i
 // Schuifkaart op de telefoon dichtvegen.
 let greep = null;
 document.getElementById("greep").addEventListener("pointerdown", (e) => { greep = e.clientY; });
-document.addEventListener("pointerup", (e) => { if (greep !== null && e.clientY - greep > 60) { staat.gekozen = null; bewaarZicht(); render(); } greep = null; });
+document.addEventListener("pointerup", (e) => { if (greep !== null && e.clientY - greep > 60) { staat.gekozen = null; bewaarZicht(); render(); centreer(); } greep = null; });
 if ("speechSynthesis" in window) speechSynthesis.onvoiceschanged = () => { if (staat.gekozen) toonPaneel(); };
 
 /* ---------- gegevens ---------- */
