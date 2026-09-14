@@ -457,7 +457,7 @@ function tekenKaart() {
   teken(root);
   knopen = kernSvg(root) + knopen;
   $svg.innerHTML = `<g id="wereld" transform="translate(${staat.zoom.x} ${staat.zoom.y}) scale(${staat.zoom.k})"><circle r="${STRAAL[1] - 40}" fill="none" stroke="var(--lijn)"/><circle r="${STRAAL[1] + 55}" fill="none" stroke="var(--lijn)" stroke-dasharray="2 10"/>${takken}${knopen}</g>`;
-  if (!staat.eersteFit) { staat.eersteFit = true; centreer(); if (staat.gekozen) focusOp(vindKnoop(root, staat.gekozen)); }
+  if (!staat.eersteFit) { staat.eersteFit = true; centreer(); if (staat.gekozen && staat.gekozen !== "root") focusOp(vindKnoop(root, staat.gekozen)); }
 }
 function kernSvg(root) {
   const open = root.project ? openItems({ kinderen: root.kinderen.filter((k) => k.soort !== "project") }) : 0;
@@ -615,7 +615,8 @@ function focusOp(n) {
   // het overzicht terug.
   const k = Math.max(staat.zoom.k, 0.85);
   staat.zoom.k = k;
-  staat.zoom.x = -n.x * k; staat.zoom.y = -H * 0.30 - n.y * k;
+  // Onder de kop en de knoppenkolom (tot ~180 px), boven de schuifkaart.
+  staat.zoom.x = -n.x * k; staat.zoom.y = -H * 0.26 - n.y * k;
   pasZoomToe();
 }
 
