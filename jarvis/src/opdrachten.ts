@@ -1470,7 +1470,11 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
       const repo = await github(token, "GET", `/repos/${slug}`);
       const rechten = (repo.lading as { permissions?: { push?: boolean; admin?: boolean } } | null)?.permissions;
       if (repo.status !== 200) console.error(`jarvis pr: ${slug} is met dit token niet bereikbaar (${foutTekst(repo)}).`);
-      else if (!rechten?.push) console.error(`jarvis pr: ${slug} is leesbaar maar de bot heeft er geen schrijfrecht; nodig hem uit.`);
+      // Het token van een GitHub-App-installatie (de proxy van de cloud) krijgt geen
+      // permissions-veld terug, terwijl het wél kan schrijven (gemeten 2026-09-14:
+      // PR #17 en een branch vanuit de cloud). Dan is het recht onbekend, niet afwezig.
+      else if (rechten === undefined) console.log(`jarvis pr: ${slug} is leesbaar; het token meldt zijn rechten niet (app-installatie) — schrijfrecht onbekend, probeer gewoon.`);
+      else if (!rechten.push) console.error(`jarvis pr: ${slug} is leesbaar maar de bot heeft er geen schrijfrecht; nodig hem uit.`);
       else console.log(`jarvis pr: ${slug}: schrijfrecht ${rechten.admin ? "en admin (te veel!)" : "zonder admin"}.`);
     }
     return 0;
