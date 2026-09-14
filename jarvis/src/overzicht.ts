@@ -99,7 +99,18 @@ export type TaakItem = {
    */
   readonly scope: string | null;
   readonly scope_hash: string | null;
+  /**
+   * De volgende open stap is het akkoord van de eigenaar (DEC-0043): de taak
+   * wacht op hem, ook al staat er geen punt in zijn lijst. De interface toont
+   * dit als actie zolang er geen geldig akkoord op de huidige scope ligt.
+   */
+  readonly akkoord_nodig: boolean;
 };
+
+/** Een voortgangsstap die het akkoord van de eigenaar op de taak beschrijft. */
+export function isAkkoordStap(tekst: string): boolean {
+  return /\bakkoord\b/i.test(tekst) && /\beigenaar\b/i.test(tekst);
+}
 
 /** Na hoeveel dagen zonder commit een taak waar Jarvis aan zet is als stil geldt. */
 export const STIL_NA_DAGEN = 2;
@@ -719,7 +730,8 @@ export function leesTaken(
       const laatste = recent.filter((r) => r.taak === t.id).map((r) => r.datum).sort().pop() ?? null;
       const volgendeStap = stappen.find((s) => !s.gedaan)?.tekst ?? null;
       const actief = status === "actief" || status === "review";
-      const aan_zet: TaakItem["aan_zet"] = !actief ? "niemand" : openVoorEigenaar.length > 0 ? "eigenaar" : "jarvis";
+      const akkoord_nodig = actief && t.tekst !== undefined && volgendeStap !== null && isAkkoordStap(volgendeStap);
+      const aan_zet: TaakItem["aan_zet"] = !actief ? "niemand" : openVoorEigenaar.length > 0 || akkoord_nodig ? "eigenaar" : "jarvis";
       const dagenStil = laatste ? (nu.getTime() - new Date(laatste).getTime()) / 864e5 : Infinity;
       return {
         id: t.id,
@@ -730,11 +742,12 @@ export function leesTaken(
         gastheer,
         stappen,
         aan_zet,
-        wacht_op: aan_zet === "eigenaar" ? openVoorEigenaar[0].titel : volgendeStap,
+        wacht_op: openVoorEigenaar.length > 0 ? openVoorEigenaar[0].titel : volgendeStap,
         laatste_beweging: laatste,
         stil: aan_zet === "jarvis" && dagenStil >= STIL_NA_DAGEN,
         scope: actief && t.tekst !== undefined ? t.tekst.replace(/\r\n/g, "\n") : null,
         scope_hash: actief && t.tekst !== undefined ? scopeHash(t.tekst) : null,
+        akkoord_nodig,
       };
     })
     .sort((a, b) => a.id.localeCompare(b.id));
