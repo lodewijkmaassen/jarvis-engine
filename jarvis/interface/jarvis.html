@@ -377,10 +377,23 @@ const STRAAL = [0, 175, 300, 405, 490];
 const PLAT = 0.82;
 /* Hoeveel boog (px) een knoop langs zijn ring nodig heeft: de schijf plus de
    tekst, die vlak bij boven/onder horizontaal naast de buren komt te staan. */
+function tekstBreedte(n) {
+  return n.soort === "project" ? 100 : n.soort === "taak" ? Math.min(30, (n.taak.titel || "").length) * 6.4 + 24 : n.soort === "cluster" ? (n.label || "").length * 6.4 + 20 : Math.min(34, (n.item?.titel || "").length) * 6 + 20;
+}
+function schijfMaat(n) { return n.soort === "project" ? 80 : n.soort === "taak" ? 48 : n.soort === "cluster" ? 40 : 22; }
 function ruimteNodig(n, hoek) {
-  const tekst = n.soort === "project" ? 100 : n.soort === "taak" ? Math.min(30, (n.taak.titel || "").length) * 6.4 + 24 : n.soort === "cluster" ? (n.label || "").length * 6.4 + 20 : Math.min(34, (n.item?.titel || "").length) * 6 + 20;
-  const schijf = n.soort === "project" ? 80 : n.soort === "taak" ? 48 : n.soort === "cluster" ? 40 : 22;
-  return schijf + Math.abs(Math.sin(hoek)) * tekst;
+  return schijfMaat(n) + Math.abs(Math.sin(hoek)) * tekstBreedte(n);
+}
+/* Hoe ver (px) de schijf plus het label van een knoop radiaal naar buiten
+   reiken: aan de zijkanten steekt het label horizontaal uit, bij de polen
+   staat het onder of boven de schijf (labelPlek). De ring van de kinderen
+   moet daar voorbij liggen, anders valt een kind in het label van zijn
+   ouder (QA-bevinding PR #18, ronde 2). */
+function uitsteek(n) {
+  if (n.soort === "root") return 0;
+  const c = Math.abs(Math.cos(n.hoek || 0));
+  const schijf = schijfMaat(n) / 2;
+  return c < 0.35 ? schijf + 30 : (schijf + 6 + tekstBreedte(n)) * c + 12;
 }
 function gewicht(n) {
   if (n.soort === "item") return 1;
@@ -411,7 +424,7 @@ function legUit(root) {
       zichtbaar.forEach((k, i) => { const deel = (sector * aandelen[i]) / boogNodig; k.hoek = a + deel / 2; k.deel = deel; a += deel; });
     }
     const basis = STRAAL[Math.min(diepte, STRAAL.length - 1)];
-    const r = Math.max(basis, n.r + 95, boogNodig / (sector * PLAT));
+    const r = Math.max(basis, n.r + 95, n.r + uitsteek(n) + 60, boogNodig / (sector * PLAT));
     for (const k of zichtbaar) {
       k.r = r;
       k.x = Math.cos(k.hoek) * r; k.y = Math.sin(k.hoek) * r * PLAT;
@@ -945,7 +958,7 @@ async function geefAkkoordTaak(taakId) {
   const hash = await sha256Hex(t.scope);
   if (t.scope_hash && hash !== t.scope_hash) { staat.dbFout = "De getoonde scope komt niet overeen met het overzicht; ververs de pagina."; render(); return; }
   const rij = { soort: "taak", project: t.project ?? null, taak: t.id, scope_hash: hash, tekst: t.scope, bron: "interface" };
-  try { await staat.bron.autoriseer(rij); staat.dbFout = null; meldJarvis(`akkoord ${t.id}`); }
+  try { await staat.bron.autoriseer(rij); staat.autorisaties = [{ ...rij, op: new Date().toISOString() }, ...staat.autorisaties]; staat.dbFout = null; meldJarvis(`akkoord ${t.id}`); }
   catch (err) { staat.dbFout = `Akkoord niet vastgelegd (${err?.code ?? err?.message ?? "onbekend"}).`; }
   render();
 }
@@ -953,7 +966,7 @@ async function geefAkkoordPr(berichtId) {
   const b = staat.berichten.find((x) => x.id === berichtId); const v = b?.context?.akkoord_pr;
   if (!v) return;
   const rij = { soort: "pr", project: v.project ?? null, taak: v.taak ?? null, pr_repo: v.repo, pr_nummer: Number(v.nummer), commit_sha: v.commit_sha, tekst: b.tekst, bron: "interface" };
-  try { await staat.bron.autoriseer(rij); staat.dbFout = null; meldJarvis(`akkoord pr ${v.repo}#${v.nummer}`); }
+  try { await staat.bron.autoriseer(rij); staat.autorisaties = [{ ...rij, op: new Date().toISOString() }, ...staat.autorisaties]; staat.dbFout = null; meldJarvis(`akkoord pr ${v.repo}#${v.nummer}`); }
   catch (err) { staat.dbFout = `Akkoord niet vastgelegd (${err?.code ?? err?.message ?? "onbekend"}).`; }
   render();
 }
