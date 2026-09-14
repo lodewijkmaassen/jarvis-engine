@@ -189,6 +189,9 @@ describe("beoordeelAttestatie", () => {
   });
   it("weigert werk van een ander dan de bot", () => {
     expect(beoordeelAttestatie(feiten({ auteur: "iemand" }))[0]).toMatch(/niet de bot/);
+    // De cloud-uitvoerder opent onder de identiteit van het platform; die staat in de configuratie.
+    expect(beoordeelAttestatie(feiten({ auteur: "claude[bot]", uitvoerders: ["claude[bot]"] }))).toEqual([]);
+    expect(beoordeelAttestatie(feiten({ auteur: "claude[bot]" }))[0]).toMatch(/niet de bot/);
   });
   it("weigert zonder akkoord op de taak", () => {
     expect(beoordeelAttestatie(metTaak({ autorisatie: null }))).toContainEqual(expect.stringMatching(/geen akkoord/));

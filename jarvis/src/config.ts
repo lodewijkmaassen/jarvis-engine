@@ -85,13 +85,20 @@ export const configSchema = z.strictObject({
       /** De login van de bot die PR's opent; alleen diens werk wordt geattesteerd. */
       bot: z.string().trim().default(""),
       /**
+       * Andere logins waaronder Jarvis pull requests opent: de identiteit die
+       * het platform van de cloud-uitvoerder aan zijn verzoeken hangt (gemeten
+       * 2026-09-14: een PR uit de cloud staat op naam van `claude[bot]`, terwijl
+       * `/user` de bot noemt). Hun werk wordt ook geattesteerd.
+       */
+      uitvoerders: z.array(z.string().trim().min(1)).default([]),
+      /**
        * Paden of mapvoorvoegsels die in dit project een harde uitzondering
        * zijn (deployment, productie, secrets), bovenop de vaste lijst van de
        * engine. Bijvoorbeeld het deploymentbestand van de hostingpartij.
        */
       extra_paden: z.array(z.string().trim().min(1)).default([]),
     })
-    .default({ url: "", sleutel: "", bot: "", extra_paden: [] }),
+    .default({ url: "", sleutel: "", bot: "", uitvoerders: [], extra_paden: [] }),
   // Jarvis als eigen project in het overzicht: de kern op de kaart. Wat in
   // deze repository bij Jarvis hoort (paden voor de beweging) en welke tag op
   // een record "dit gaat over Jarvis" betekent, zegt de configuratie; leeg =

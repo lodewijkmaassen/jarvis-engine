@@ -176,6 +176,8 @@ export type AttestatieFeiten = {
   readonly nummer: number;
   readonly auteur: string;
   readonly botLogin: string;
+  /** Andere logins waaronder Jarvis opent (de platform-identiteit van de cloud-uitvoerder). */
+  readonly uitvoerders?: readonly string[];
   readonly kop: string;
   readonly repo: string;
   readonly taken: readonly TaakFeiten[];
@@ -206,7 +208,8 @@ export function isAdministratievePr(f: AttestatieFeiten): boolean {
 export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   const redenen: string[] = [];
 
-  if (f.auteur.toLowerCase() !== f.botLogin.toLowerCase()) {
+  const vanJarvis = [f.botLogin, ...(f.uitvoerders ?? [])].some((l) => l.toLowerCase() === f.auteur.toLowerCase());
+  if (!vanJarvis) {
     redenen.push(`de auteur is ${f.auteur}, niet de bot ${f.botLogin}; alleen werk van Jarvis wordt geattesteerd`);
   }
   redenen.push(...f.taakRedenen);
