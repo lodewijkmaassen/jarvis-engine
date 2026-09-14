@@ -123,6 +123,9 @@ export const TOETSING_KOP_SQL =
 
 export const TOETSING_ID_SQL = `select ${TOETSING_KOLOMMEN} from jarvis.toetsingen where id = $1`;
 
+/** Akkoorden sinds een tijdstip: waar `jarvis db wachten` op reageert. */
+export const AUTORISATIES_SINDS_SQL = `select ${AUTORISATIE_KOLOMMEN} from jarvis.autorisaties where op > $1 order by op`;
+
 /**
  * Dezelfde lezingen via de REST-API van PostgREST, voor de attestatieworkflow
  * die geen databaserol heeft: alleen de publieke sleutel en de leesbeelden
@@ -142,4 +145,32 @@ export function restPadToetsingKop(repo: string, nummer: number, kop: string): s
     `toetsingen_open?pr_repo=eq.${encodeURIComponent(repo)}&pr_nummer=eq.${nummer}` +
     `&commit_sha=eq.${encodeURIComponent(kop)}&oordeel=eq.GO&order=op.desc&limit=1`
   );
+}
+
+/** Wat de verbinding meldt bij `jarvis db wie`; ook een toegestaan statement. */
+export const WIE_SQL = "select current_user as gebruiker, current_setting('server_version') as versie";
+
+/**
+ * Alle statements die de engine op de eigen database uitvoert, letterlijk.
+ * De Edge Function `jarvis-db` (voor de cloud, die geen Postgres kan
+ * bereiken) voert uitsluitend deze teksten uit; zie jarvis/edge/jarvis-db.
+ */
+export function toegestaneSql(): readonly string[] {
+  return [
+    WIE_SQL,
+    ...TABELLEN.map(claimSql),
+    ...TABELLEN.map(verwerktSql),
+    NIEUWE_ANTWOORDEN_SQL,
+    NIEUWE_BERICHTEN_SQL,
+    BERICHT_VAN_JARVIS_SQL,
+    DOCUMENT_SQL,
+    AUTORISATIE_TAAK_SQL,
+    AUTORISATIE_PR_SQL,
+    AUTORISATIE_ID_SQL,
+    AUTORISATIES_SQL,
+    TOETSING_SQL,
+    TOETSING_KOP_SQL,
+    TOETSING_ID_SQL,
+    AUTORISATIES_SINDS_SQL,
+  ];
 }

@@ -18,7 +18,17 @@ const hier = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(hier, "..", "jarvis", "src", "cli.ts");
 const tsx = createRequire(import.meta.url).resolve("tsx/cli");
 
-const kind = spawn(process.execPath, [tsx, cli, ...process.argv.slice(2)], { stdio: "inherit" });
+// In een cloud-sessie loopt al het uitgaande verkeer via een HTTP-proxy uit
+// HTTPS_PROXY; curl volgt die vanzelf, Node's fetch niet. Met deze vlag doet
+// Node (24.5+) dat wel; oudere versies negeren haar en cli.ts vangt het op.
+// De experimentele-waarschuwing van undici's proxy-agent gaat via NODE_OPTIONS
+// uit: tsx start zelf nog een kindproces voor cli.ts en geeft een vlag op de
+// opdrachtregel daar niet aan door (QA-bevinding PR #16).
+const nodeOpties = [process.env.NODE_OPTIONS, "--disable-warning=UNDICI-EHPA"].filter(Boolean).join(" ");
+const kind = spawn(process.execPath, [tsx, cli, ...process.argv.slice(2)], {
+  stdio: "inherit",
+  env: { ...process.env, NODE_OPTIONS: nodeOpties, NODE_USE_ENV_PROXY: process.env.NODE_USE_ENV_PROXY ?? "1" },
+});
 kind.on("exit", (code, signal) => {
   process.exit(signal ? 1 : (code ?? 1));
 });

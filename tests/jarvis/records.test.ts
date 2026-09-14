@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import {
   RECORD_TYPES,
+  hoortInMap,
   isRecordType,
   recordTextFields,
   validateRecord,
@@ -28,6 +29,21 @@ describe("recordtypes", () => {
     expect(isRecordType("dec")).toBe(false);
     expect(isRecordType("XYZ")).toBe(false);
     expect(isRecordType(null)).toBe(false);
+  });
+});
+
+describe("hoortInMap — naam en id horen bij het type", () => {
+  it("aanvaardt <id>.md met een id van het eigen type, in welke map dan ook", () => {
+    expect(hoortInMap("CON", "CON-0001", "knowledge/CONSTRAINTS/CON-0001.md")).toBeNull();
+    expect(hoortInMap("CON", "CON-0001", "kennis/REGELS/CON-0001.md")).toBeNull();
+    expect(hoortInMap("DEC", "DEC-0044", "knowledge\\DECISIONS\\DEC-0044.md")).toBeNull();
+  });
+  it("weigert een id van een ander type en een afwijkende bestandsnaam", () => {
+    // Een randvoorwaarde die zich als besluit vermomt: de administratieve
+    // route herkent CON-records aan hun naam, dus die naam moet kloppen.
+    expect(hoortInMap("CON", "DEC-0099", "knowledge/DECISIONS/DEC-0099.md")).toMatch(/past niet bij type CON/);
+    expect(hoortInMap("CON", "CON-0099", "knowledge/DECISIONS/regel.md")).toMatch(/past niet bij id/);
+    expect(hoortInMap("RSK", "RSK-0001", "knowledge/RISKS/RSK-0001.markdown")).toMatch(/past niet bij id/);
   });
 });
 

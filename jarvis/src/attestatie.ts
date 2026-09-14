@@ -28,7 +28,7 @@
 // Alles hier is puur; de I/O (GitHub, database) staat in opdrachten.ts.
 
 import { createHash } from "node:crypto";
-import { ATTESTATIE_GEBRUIKER, type Check } from "./pr";
+import { ATTESTATIE_GEBRUIKER, laatstePerNaam, type Check } from "./pr";
 
 /** De identiteit waaronder de workflow de review afgeeft. */
 export const ATTESTATIE_LOGIN = ATTESTATIE_GEBRUIKER;
@@ -81,7 +81,8 @@ export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly
   { patroon: /(^|\/)\.env(\.|$)/, waarom: "omgevingsbestanden" },
   { patroon: /^jarvis\.config\.yml$/, waarom: "governanceconfiguratie" },
   { patroon: /^jarvis\/allowlist\.yml$/, waarom: "de allowlist van de sanitizer" },
-  { patroon: /^knowledge\/CONSTRAINTS\//, waarom: "harde randvoorwaarden" },
+  { patroon: /(^|\/)constraints\//i, waarom: "harde randvoorwaarden" },
+  { patroon: /(^|\/)CON-[^/]*\.md$/i, waarom: "een randvoorwaarde-record, waar het ook staat" },
   { patroon: /^jarvis\/roles\//, waarom: "rolcontracten (mandaat)" },
   { patroon: /^jarvis\/canonical\//, waarom: "de canonieke poort- en attestatieworkflow" },
   { patroon: /^\.claude\//, waarom: "agentconfiguratie" },
@@ -131,12 +132,14 @@ export function taakUitBoodschap(boodschap: string): string | null {
 }
 
 /**
- * Eén taak voor de hele PR. Elke commit moet dezelfde Jarvis-Task dragen;
- * een PR die twee taken mengt is niet aan één akkoord te koppelen.
+ * De taken van een PR: elke commit draagt precies één Jarvis-Task; samen
+ * mogen ze meer dan één taak noemen. Elke genoemde taak vraagt dan zijn
+ * eigen akkoord (DEC-0043): een PR die twee taken dient, is pas gedekt als
+ * de eigenaar op beide akkoord gaf.
  */
-export function taakUitCommits(
+export function takenUitCommits(
   commits: readonly { readonly sha: string; readonly boodschap: string }[],
-): { readonly taak: string | null; readonly redenen: readonly string[] } {
+): { readonly taken: readonly string[]; readonly redenen: readonly string[] } {
   const redenen: string[] = [];
   const taken = new Set<string>();
   if (commits.length === 0) redenen.push("de pull request heeft geen commits");
@@ -145,10 +148,29 @@ export function taakUitCommits(
     if (taak === null) redenen.push(`commit ${c.sha.slice(0, 7)} draagt geen of meer dan één Jarvis-Task-trailer`);
     else taken.add(taak);
   }
-  if (taken.size > 1) redenen.push(`de commits horen bij meer dan één taak: ${[...taken].sort().join(", ")}`);
-  const taak = taken.size === 1 && redenen.length === 0 ? [...taken][0]! : null;
-  return { taak, redenen };
+  return { taken: [...taken].sort(), redenen };
 }
+
+/**
+ * Een administratieve pull request raakt uitsluitend dossiers, kennisrecords
+ * (niet de randvoorwaarden), de kennisindex en het feitenblok. Dat is werk
+ * van klasse A dat de poort zelf toetst (lint, index, state, sanitize); de
+ * eigenaar tekent er niet voor (DEC-0044). De patronen komen van de
+ * aanroeper, uit de configuratie van de repository.
+ */
+export function isAdministratief(bestanden: readonly string[], patronen: readonly RegExp[]): boolean {
+  if (bestanden.length === 0 || patronen.length === 0) return false;
+  return bestanden.every((b) => patronen.some((p) => p.test(b.replace(/\\/g, "/"))));
+}
+
+/** Per taak van de PR: het akkoord en de scope op de kop. */
+export type TaakFeiten = {
+  readonly taak: string;
+  /** De laatste autorisatie van soort "taak" voor deze taak, of null. */
+  readonly autorisatie: Autorisatie | null;
+  /** De hash van tasks/<T>/opdracht.md op de kop, of null als het bestand ontbreekt. */
+  readonly scopeHashKop: string | null;
+};
 
 export type AttestatieFeiten = {
   readonly nummer: number;
@@ -156,23 +178,29 @@ export type AttestatieFeiten = {
   readonly botLogin: string;
   readonly kop: string;
   readonly repo: string;
-  readonly taak: string | null;
+  readonly taken: readonly TaakFeiten[];
   readonly taakRedenen: readonly string[];
-  /** De laatste autorisatie van soort "taak" voor deze taak, of null. */
-  readonly autorisatieTaak: Autorisatie | null;
-  /** De hash van tasks/<T>/opdracht.md op de kop, of null als het bestand ontbreekt. */
-  readonly scopeHashKop: string | null;
   /** De toetsing met oordeel GO op de kop, of null. */
   readonly toetsing: Toetsing | null;
   readonly gewijzigdeBestanden: readonly string[];
   /** Projectpaden uit jarvis.config.yml die ook als harde uitzondering gelden. */
   readonly extraPaden?: readonly string[];
+  /** Patronen van administratieve paden (dossiers, kennis, feitenblok); leeg = geen administratieve route. */
+  readonly administratiefPaden?: readonly RegExp[];
   readonly prTekst: string;
   /** Een autorisatie van soort "pr" op precies deze kop, of null. */
   readonly autorisatiePr: Autorisatie | null;
   readonly checks: readonly Check[];
   readonly verplichteCheck: string;
 };
+
+/** Is deze PR administratief (DEC-0044)? Dan is er geen taakakkoord en geen toetsing nodig. */
+export function isAdministratievePr(f: AttestatieFeiten): boolean {
+  return (
+    isAdministratief(f.gewijzigdeBestanden, f.administratiefPaden ?? []) &&
+    raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []).length === 0
+  );
+}
 
 /** Waarom er nu niet geattesteerd wordt. Leeg betekent: attesteer. */
 export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
@@ -182,33 +210,36 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     redenen.push(`de auteur is ${f.auteur}, niet de bot ${f.botLogin}; alleen werk van Jarvis wordt geattesteerd`);
   }
   redenen.push(...f.taakRedenen);
-  if (f.taak === null && f.taakRedenen.length === 0) redenen.push("geen taak bekend voor deze pull request");
   if (f.gewijzigdeBestanden.length === 0) redenen.push("de pull request wijzigt geen bestanden; er is niets te attesteren");
 
-  if (f.taak !== null) {
-    if (f.autorisatieTaak === null) {
-      redenen.push(`geen akkoord van de eigenaar op taak ${f.taak} in de database`);
-    } else if (f.autorisatieTaak.soort !== "taak" || f.autorisatieTaak.taak !== f.taak) {
-      redenen.push(`de gevonden autorisatie ${f.autorisatieTaak.id} is geen taakakkoord voor ${f.taak}`);
-    } else if (f.scopeHashKop === null) {
-      redenen.push(`tasks/${f.taak}/opdracht.md ontbreekt op de kop; zonder scope geen akkoord`);
-    } else if (f.autorisatieTaak.scope_hash !== f.scopeHashKop) {
-      redenen.push(
-        `de scope van ${f.taak} is veranderd sinds het akkoord van ${f.autorisatieTaak.op} ` +
-          `(akkoord op ${(f.autorisatieTaak.scope_hash ?? "?").slice(0, 12)}, kop ${f.scopeHashKop.slice(0, 12)}); opnieuw autoriseren`,
-      );
+  const administratief = isAdministratievePr(f);
+  if (!administratief) {
+    if (f.taken.length === 0 && f.taakRedenen.length === 0) redenen.push("geen taak bekend voor deze pull request");
+    for (const t of f.taken) {
+      if (t.autorisatie === null) {
+        redenen.push(`geen akkoord van de eigenaar op taak ${t.taak} in de database`);
+      } else if (t.autorisatie.soort !== "taak" || t.autorisatie.taak !== t.taak) {
+        redenen.push(`de gevonden autorisatie ${t.autorisatie.id} is geen taakakkoord voor ${t.taak}`);
+      } else if (t.scopeHashKop === null) {
+        redenen.push(`tasks/${t.taak}/opdracht.md ontbreekt op de kop; zonder scope geen akkoord`);
+      } else if (t.autorisatie.scope_hash !== t.scopeHashKop) {
+        redenen.push(
+          `de scope van ${t.taak} is veranderd sinds het akkoord van ${t.autorisatie.op} ` +
+            `(akkoord op ${(t.autorisatie.scope_hash ?? "?").slice(0, 12)}, kop ${t.scopeHashKop.slice(0, 12)}); opnieuw autoriseren`,
+        );
+      }
     }
-  }
 
-  if (f.toetsing === null) {
-    redenen.push(`geen toetsing met oordeel GO op de kop ${f.kop.slice(0, 7)}`);
-  } else if (
-    f.toetsing.oordeel !== "GO" ||
-    f.toetsing.commit_sha !== f.kop ||
-    f.toetsing.pr_repo.toLowerCase() !== f.repo.toLowerCase() ||
-    f.toetsing.pr_nummer !== f.nummer
-  ) {
-    redenen.push(`de toetsing ${f.toetsing.id} hoort niet bij deze pull request op deze kop, of is geen GO`);
+    if (f.toetsing === null) {
+      redenen.push(`geen toetsing met oordeel GO op de kop ${f.kop.slice(0, 7)}`);
+    } else if (
+      f.toetsing.oordeel !== "GO" ||
+      f.toetsing.commit_sha !== f.kop ||
+      f.toetsing.pr_repo.toLowerCase() !== f.repo.toLowerCase() ||
+      f.toetsing.pr_nummer !== f.nummer
+    ) {
+      redenen.push(`de toetsing ${f.toetsing.id} hoort niet bij deze pull request op deze kop, of is geen GO`);
+    }
   }
 
   const treffers = raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
@@ -230,7 +261,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     }
   }
 
-  const poort = f.checks.filter((c) => c.naam === f.verplichteCheck);
+  const poort = laatstePerNaam(f.checks).filter((c) => c.naam === f.verplichteCheck);
   if (poort.length === 0) redenen.push(`de check "${f.verplichteCheck}" ontbreekt op de kop`);
   for (const c of poort) {
     if (c.status !== "completed") redenen.push(`de poort is nog niet klaar (${c.status})`);
@@ -241,19 +272,36 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
 }
 
 export type AttestatieInhoud = {
-  readonly autorisatie: string;
-  readonly taak: string;
+  /** Taak-id's, met "+" verbonden; "administratief" voor een administratieve PR. */
+  readonly taken: string;
+  /** Autorisatie-id's in dezelfde volgorde, met "+" verbonden; "-" als er geen nodig waren. */
+  readonly autorisaties: string;
+  /** Scope-hashes in dezelfde volgorde, met "+" verbonden; "-" als er geen waren. */
   readonly scope: string;
+  /** Het id van de toetsing; "-" bij een administratieve PR. */
   readonly toetsing: string;
   readonly kop: string;
   readonly uitzonderingen: string;
 };
 
+/** De inhoud van de attestatie voor een schone beoordeling. */
+export function attestatieInhoud(f: AttestatieFeiten): AttestatieInhoud {
+  const administratief = isAdministratievePr(f);
+  return {
+    taken: administratief ? "administratief" : f.taken.map((t) => t.taak).join("+"),
+    autorisaties: administratief ? "-" : f.taken.map((t) => t.autorisatie?.id ?? "?").join("+"),
+    scope: administratief ? "-" : f.taken.map((t) => t.scopeHashKop ?? "?").join("+"),
+    toetsing: administratief ? "-" : (f.toetsing?.id ?? "?"),
+    kop: f.kop,
+    uitzonderingen: f.autorisatiePr === null ? "geen" : `apart akkoord ${f.autorisatiePr.id}`,
+  };
+}
+
 /** De reviewtekst: één regel, machinaal te lezen en voor mensen leesbaar. */
 export function attestatieTekst(i: AttestatieInhoud): string {
   return (
-    `${ATTESTATIE_VOORVOEGSEL} autorisatie ${i.autorisatie} · taak ${i.taak} · scope ${i.scope} · ` +
-    `toetsing ${i.toetsing} GO op ${i.kop} · uitzonderingen: ${i.uitzonderingen} · poort groen`
+    `${ATTESTATIE_VOORVOEGSEL} taken ${i.taken} · autorisaties ${i.autorisaties} · scope ${i.scope} · ` +
+    `toetsing ${i.toetsing} · kop ${i.kop} · uitzonderingen: ${i.uitzonderingen} · poort groen`
   );
 }
 
@@ -262,32 +310,46 @@ export function leesAttestatie(tekst: string): AttestatieInhoud | null {
   const eerste = tekst.replace(/\r\n/g, "\n").split("\n")[0] ?? "";
   if (!eerste.startsWith(ATTESTATIE_VOORVOEGSEL)) return null;
   const m =
-    /^Attestatie \(DEC-0043\): autorisatie (\S+) · taak (\S+) · scope ([0-9a-f]{64}) · toetsing (\S+) GO op ([0-9a-f]{40}) · uitzonderingen: (.+?) · poort groen$/.exec(
+    /^Attestatie \(DEC-0043\): taken (\S+) · autorisaties (\S+) · scope (\S+) · toetsing (\S+) · kop ([0-9a-f]{40}) · uitzonderingen: (.+?) · poort groen$/.exec(
       eerste,
     );
   if (!m) return null;
-  return { autorisatie: m[1]!, taak: m[2]!, scope: m[3]!, toetsing: m[4]!, kop: m[5]!, uitzonderingen: m[6]! };
+  const scope = m[3]!;
+  if (scope !== "-" && !/^[0-9a-f]{64}(\+[0-9a-f]{64})*$/.test(scope)) return null;
+  return { taken: m[1]!, autorisaties: m[2]!, scope, toetsing: m[4]!, kop: m[5]!, uitzonderingen: m[6]! };
 }
 
 /**
  * Klopt een attestatie met wat de database zegt? Dit is de tweede,
  * onafhankelijke verificatie vóór het samenvoegen: de workflow schreef de
  * tekst, `jarvis pr mergen` leest de rijen zelf terug via jarvis_werker.
+ * `autorisaties` bevat per id de rij (of null), `toetsing` de rij (of null).
  */
 export function verifieerAttestatie(
   inhoud: AttestatieInhoud,
   kop: string,
-  autorisatie: Autorisatie | null,
+  autorisaties: ReadonlyMap<string, Autorisatie | null>,
   toetsing: Toetsing | null,
 ): readonly string[] {
   const redenen: string[] = [];
   if (inhoud.kop !== kop) redenen.push(`de attestatie hoort bij ${inhoud.kop.slice(0, 7)}, de kop is ${kop.slice(0, 7)}`);
-  if (autorisatie === null) redenen.push(`autorisatie ${inhoud.autorisatie} bestaat niet in de database`);
-  else if (autorisatie.soort !== "taak" || autorisatie.taak !== inhoud.taak) {
-    redenen.push(`autorisatie ${inhoud.autorisatie} is geen taakakkoord voor ${inhoud.taak}`);
-  } else if ((autorisatie.scope_hash ?? "") !== inhoud.scope) {
-    redenen.push(`de scope in de attestatie wijkt af van de autorisatie`);
+  if (inhoud.taken === "administratief") {
+    if (inhoud.autorisaties !== "-" || inhoud.toetsing !== "-") redenen.push("een administratieve attestatie noemt geen autorisaties of toetsing");
+    return redenen;
   }
+  const taken = inhoud.taken.split("+");
+  const ids = inhoud.autorisaties.split("+");
+  const scopes = inhoud.scope.split("+");
+  if (taken.length === 0 || taken.length !== ids.length || taken.length !== scopes.length) {
+    redenen.push("de attestatie noemt taken, autorisaties en scopes niet paarsgewijs");
+    return redenen;
+  }
+  taken.forEach((taak, n) => {
+    const a = autorisaties.get(ids[n]!) ?? null;
+    if (a === null) redenen.push(`autorisatie ${ids[n]} bestaat niet in de database`);
+    else if (a.soort !== "taak" || a.taak !== taak) redenen.push(`autorisatie ${ids[n]} is geen taakakkoord voor ${taak}`);
+    else if ((a.scope_hash ?? "") !== scopes[n]) redenen.push(`de scope van ${taak} in de attestatie wijkt af van de autorisatie`);
+  });
   if (toetsing === null) redenen.push(`toetsing ${inhoud.toetsing} bestaat niet in de database`);
   else if (toetsing.oordeel !== "GO" || toetsing.commit_sha !== kop) {
     redenen.push(`toetsing ${inhoud.toetsing} is geen GO op de kop`);

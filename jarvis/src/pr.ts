@@ -2,13 +2,11 @@
 //
 // WIE DOET WAT
 //
-// De eigenaar beslist en autoriseert: hij beoordeelt de inhoud en geeft zijn
-// goedkeuring als review op GitHub. Dat is de enige handeling die niet van
-// hem weg kan: branch protection eist een goedkeurende review van iemand
-// anders dan de auteur, en een goedkeuring die een agent onder zijn naam zou
-// zetten is geen goedkeuring. Al het andere - de PR openen, de checks volgen,
-// de samenvoegmethode kiezen, samenvoegen - is techniek, en techniek is van
-// Jarvis (CON-0015).
+// De eigenaar beslist en autoriseert: per taak, in de Jarvis-app (DEC-0043);
+// de poort zet dat akkoord om in de goedkeurende review die branch protection
+// eist (attestatie.ts). Een review van de eigenaar zelf op GitHub blijft ook
+// geldig. Al het andere - de PR openen, de checks volgen, de samenvoegmethode
+// kiezen, samenvoegen - is techniek, en techniek is van Jarvis (CON-0015).
 //
 // Daarom werkt dit onder een eigen identiteit: de bot. Zou Jarvis de PR onder
 // de naam van de eigenaar openen, dan kan de eigenaar hem niet goedkeuren
@@ -45,7 +43,36 @@ export type Check = {
   readonly naam: string;
   readonly status: string;
   readonly conclusie: string | null;
+  /** Wanneer de run begon (ISO); bepaalt welke run van een naam de laatste is. */
+  readonly gestart?: string | null;
 };
+
+/**
+ * Laat alleen een OPGEVOLGDE, GEANNULEERDE run weg. GitHub bewaart alle runs
+ * van een commit: start een tweede run van dezelfde workflow (een
+ * review-event tijdens een lopende run), dan annuleert de concurrency-groep
+ * de eerste en blijft die als "cancelled" aan de commit hangen. Zo'n run
+ * zegt niets over de commit zodra er een later gestarte run met dezelfde naam
+ * is. Al het andere blijft staan en moet groen zijn: een rode run wordt
+ * nooit overstemd door een latere groene met dezelfde naam (QA-bevinding
+ * N-1 — anders kon een toegevoegde workflow met een job "poort" een echte
+ * rode poort onzichtbaar maken). Een run zonder starttijd geldt als eerder
+ * dan een run met starttijd; twee zonder starttijd volgen de lijstvolgorde.
+ */
+export function laatstePerNaam(checks: readonly Check[]): readonly Check[] {
+  const positie = new Map<Check, number>();
+  checks.forEach((c, i) => positie.set(c, i));
+  const later = (a: Check, b: Check): boolean => {
+    // Is b later gestart dan a?
+    const ta = a.gestart ?? "";
+    const tb = b.gestart ?? "";
+    if (ta !== tb) return tb > ta;
+    return (positie.get(b) ?? 0) > (positie.get(a) ?? 0);
+  };
+  return checks.filter(
+    (c) => !(c.status === "completed" && c.conclusie === "cancelled" && checks.some((d) => d !== c && d.naam === c.naam && later(c, d))),
+  );
+}
 
 export type PullRequestFeiten = {
   readonly nummer: number;
@@ -149,7 +176,8 @@ export function beoordeelSamenvoegen(
   );
   if (latereWijziging) redenen.push(`${eigenaar} vroeg wijzigingen op de huidige kop`);
 
-  const poort = pr.checks.filter((c) => c.naam === VERPLICHTE_CHECK);
+  const checks = laatstePerNaam(pr.checks);
+  const poort = checks.filter((c) => c.naam === VERPLICHTE_CHECK);
   if (poort.length === 0) {
     redenen.push(`de check "${VERPLICHTE_CHECK}" ontbreekt op de huidige kop; zonder poort wordt er niet samengevoegd`);
   }
@@ -157,7 +185,7 @@ export function beoordeelSamenvoegen(
     if (c.status !== "completed") redenen.push(`de poort is nog niet klaar (${c.status})`);
     else if (c.conclusie !== "success") redenen.push(`de poort is niet geslaagd (${c.conclusie ?? "onbekend"})`);
   }
-  for (const c of pr.checks) {
+  for (const c of checks) {
     if (c.naam === VERPLICHTE_CHECK) continue;
     if (c.status !== "completed") {
       redenen.push(`check ${c.naam} is nog niet klaar (${c.status})`);
