@@ -28,6 +28,7 @@
     "**/*.mts"
   ],
   "exclude": [
+    "jarvis/edge/**",
     "node_modules"
   ]
 }

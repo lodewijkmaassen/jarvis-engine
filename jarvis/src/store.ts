@@ -35,6 +35,7 @@ import path from "node:path";
 import { parseFrontMatter, type FrontMatter, type FrontMatterValue } from "./frontmatter";
 import {
   RECORD_TYPES,
+  hoortInMap,
   validateRecordSet,
   type KnowledgeRecord,
   type RecordSetValidation,
@@ -197,6 +198,12 @@ export async function laadRecordBestand(
       regel: null,
       boodschap: `onbekend of ontbrekend type "${String(type)}"`,
     });
+    return null;
+  }
+
+  const plaats = hoortInMap(type as RecordType, String(geparsed.data.id ?? ""), repoRelatiefPad);
+  if (plaats !== null) {
+    fouten.push({ bestand: repoRelatiefPad, regel: null, boodschap: plaats });
     return null;
   }
 

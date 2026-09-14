@@ -20,6 +20,22 @@ import { z } from "zod";
 export const RECORD_TYPES = ["DEC", "CON", "LRN", "RSK", "CFL"] as const;
 export type RecordType = (typeof RECORD_TYPES)[number];
 
+/**
+ * Past bestandsnaam en id bij het type? Een record heet `<id>.md` en het id
+ * begint met het type (`CON-0012`). Mapnamen zijn vrij (een project kiest
+ * zijn eigen kennismap en submappen; zie de portabiliteitstests), maar de
+ * naam niet: daarop herkent de administratieve route (DEC-0044) een
+ * randvoorwaarde zonder het bestand te openen. Een CON-record dat anders
+ * heet, wordt geweigerd (QA-bevinding op engine-PR #16).
+ */
+export function hoortInMap(type: RecordType, id: string, bestand: string): string | null {
+  const delen = bestand.replace(/\\/g, "/").split("/");
+  if (!id.startsWith(`${type}-`)) return `id "${id}" past niet bij type ${type}`;
+  const naam = delen[delen.length - 1] ?? "";
+  if (naam !== `${id}.md`) return `bestandsnaam "${naam}" past niet bij id "${id}"`;
+  return null;
+}
+
 export function isRecordType(value: unknown): value is RecordType {
   return (
     typeof value === "string" && (RECORD_TYPES as readonly string[]).includes(value)
