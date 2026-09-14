@@ -457,7 +457,8 @@ function tekenKaart() {
   teken(root);
   knopen = kernSvg(root) + knopen;
   $svg.innerHTML = `<g id="wereld" transform="translate(${staat.zoom.x} ${staat.zoom.y}) scale(${staat.zoom.k})"><circle r="${STRAAL[1] - 40}" fill="none" stroke="var(--lijn)"/><circle r="${STRAAL[1] + 55}" fill="none" stroke="var(--lijn)" stroke-dasharray="2 10"/>${takken}${knopen}</g>`;
-  if (!staat.eersteFit) { staat.eersteFit = true; centreer(); if (staat.gekozen && staat.gekozen !== "root") focusOp(vindKnoop(root, staat.gekozen)); }
+  // Eerste fit: de schuifkaart gaat zo open als er iets gekozen is; centreren rekent met die stand, anders komt de kaart eronder (QA #19).
+  if (!staat.eersteFit) { staat.eersteFit = true; $paneel.hidden = !staat.gekozen; centreer(); if (staat.gekozen && staat.gekozen !== "root") focusOp(vindKnoop(root, staat.gekozen)); }
 }
 function kernSvg(root) {
   const open = root.project ? openItems({ kinderen: root.kinderen.filter((k) => k.soort !== "project") }) : 0;
