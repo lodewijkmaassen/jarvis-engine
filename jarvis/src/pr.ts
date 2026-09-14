@@ -2,13 +2,11 @@
 //
 // WIE DOET WAT
 //
-// De eigenaar beslist en autoriseert: hij beoordeelt de inhoud en geeft zijn
-// goedkeuring als review op GitHub. Dat is de enige handeling die niet van
-// hem weg kan: branch protection eist een goedkeurende review van iemand
-// anders dan de auteur, en een goedkeuring die een agent onder zijn naam zou
-// zetten is geen goedkeuring. Al het andere - de PR openen, de checks volgen,
-// de samenvoegmethode kiezen, samenvoegen - is techniek, en techniek is van
-// Jarvis (CON-0015).
+// De eigenaar beslist en autoriseert: per taak, in de Jarvis-app (DEC-0043);
+// de poort zet dat akkoord om in de goedkeurende review die branch protection
+// eist (attestatie.ts). Een review van de eigenaar zelf op GitHub blijft ook
+// geldig. Al het andere - de PR openen, de checks volgen, de samenvoegmethode
+// kiezen, samenvoegen - is techniek, en techniek is van Jarvis (CON-0015).
 //
 // Daarom werkt dit onder een eigen identiteit: de bot. Zou Jarvis de PR onder
 // de naam van de eigenaar openen, dan kan de eigenaar hem niet goedkeuren

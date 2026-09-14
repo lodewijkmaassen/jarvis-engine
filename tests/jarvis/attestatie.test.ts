@@ -123,6 +123,15 @@ describe("administratieve PR (DEC-0044)", () => {
     const uit = beoordeelAttestatie(feiten({ gewijzigdeBestanden: ["knowledge/CONSTRAINTS/CON-1.md"], taken: [], toetsing: null }));
     expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
   });
+  it("herkent een randvoorwaarde aan haar naam, in elke map en elke kast (QA-bevinding PR #16)", () => {
+    for (const pad of ["knowledge/DECISIONS/CON-0099.md", "knowledge/constraints/regel.md", "kennis/REGELS/con-0001.md", "knowledge/x/y/CON-7.md"]) {
+      expect(raaktHardeUitzondering([pad]).length, pad).toBe(1);
+      const uit = beoordeelAttestatie(feiten({ gewijzigdeBestanden: [pad], taken: [], toetsing: null }));
+      expect(uit, pad).toContainEqual(expect.stringMatching(/harde uitzondering/));
+    }
+    // Een gewoon besluit blijft administratief.
+    expect(beoordeelAttestatie(feiten({ gewijzigdeBestanden: ["knowledge/DECISIONS/DEC-0044.md"], taken: [], toetsing: null }))).toEqual([]);
+  });
 });
 
 describe("meerdere taken in één PR", () => {

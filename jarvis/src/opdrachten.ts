@@ -1716,16 +1716,28 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       // De wekker van een uitvoerder: peilt elke twintig seconden en stopt
       // zodra er iets nieuws is (of na --max seconden, exitcode 3). Zo hangt
       // een laptopsessie niet meer aan een claude.ai-melding (DEC-0044).
-      const max = Number.parseInt(vlaggen.get("max") ?? "3600", 10);
+      const gevraagd = Number.parseInt(vlaggen.get("max") ?? "", 10);
+      const max = Number.isInteger(gevraagd) && gevraagd > 0 ? gevraagd : 3600;
       const sinds = new Date().toISOString();
       const start = Date.now();
+      let storingen = 0;
       while (Date.now() - start < max * 1000) {
-        const antwoorden = await sql.unsafe(NIEUWE_ANTWOORDEN_SQL);
-        const berichten = await sql.unsafe(NIEUWE_BERICHTEN_SQL);
-        const autorisaties = await sql.unsafe(AUTORISATIES_SINDS_SQL, [sinds]);
-        if (antwoorden.length + berichten.length + autorisaties.length > 0) {
-          console.log(JSON.stringify({ antwoorden, berichten, autorisaties }, null, 2));
-          return 0;
+        try {
+          const antwoorden = await sql.unsafe(NIEUWE_ANTWOORDEN_SQL);
+          const berichten = await sql.unsafe(NIEUWE_BERICHTEN_SQL);
+          const autorisaties = await sql.unsafe(AUTORISATIES_SINDS_SQL, [sinds]);
+          if (antwoorden.length + berichten.length + autorisaties.length > 0) {
+            console.log(JSON.stringify({ antwoorden, berichten, autorisaties }, null, 2));
+            return 0;
+          }
+          storingen = 0;
+        } catch (fout) {
+          // Een haperende verbinding is geen reden om de wacht op te geven;
+          // pas na tien peilingen op rij zonder antwoord stoppen we met fout.
+          storingen += 1;
+          const tekst = fout instanceof Error ? fout.message : String(fout);
+          console.error(`jarvis db wachten: peiling mislukt (${storingen}/10): ${tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
+          if (storingen >= 10) return 1;
         }
         await new Promise((klaar) => setTimeout(klaar, 20_000));
       }
