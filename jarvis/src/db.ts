@@ -65,10 +65,15 @@ export const NIEUWE_BERICHTEN_SQL =
 
 export const BERICHT_VAN_JARVIS_SQL =
   "insert into jarvis.berichten (id, van, tekst, status, context, verwerkt_op) " +
-  "values ($1, 'jarvis', $2, 'verwerkt', $3::jsonb, now()) returning id";
+  "values ($1, 'jarvis', $2, 'verwerkt', $3::text::jsonb, now()) returning id";
 
+// JSON-parameters gaan als tekst en worden pas in de database jsonb
+// ($n::text::jsonb). Met een kale $n::jsonb leidt de driver het type jsonb af
+// en serialiseert hij de al-geserialiseerde tekst nog eens: de kolom kreeg
+// dan een JSON-string in plaats van een object, en de interface zag niets
+// (gemeten 2026-09-14: overzicht/huidig en jarvis/status als string).
 export const DOCUMENT_SQL =
-  "insert into jarvis.documenten (id, inhoud, bijgewerkt) values ($1, $2::jsonb, now()) " +
+  "insert into jarvis.documenten (id, inhoud, bijgewerkt) values ($1, $2::text::jsonb, now()) " +
   "on conflict (id) do update set inhoud = excluded.inhoud, bijgewerkt = now() returning id";
 
 /** Een bericht-id dat leesbaar is en niet botst: prefix, tijd, korte willekeur. */

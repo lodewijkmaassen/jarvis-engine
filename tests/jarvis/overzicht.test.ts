@@ -506,6 +506,19 @@ describe("wie is aan zet", () => {
     expect(t.laatste_beweging).toBe(NU.toISOString());
     expect(t.stil).toBe(false);
   });
+  it("is de eigenaar als de volgende stap zijn akkoord op de taak is (DEC-0043)", () => {
+    const tekst = "---" + "\n" + "status: actief" + "\n" + "---" + "\n" + "Scope." + "\n";
+    const wacht = { ...dossier("T-20260901-d", "## Voortgang" + "\n" + "- [x] Gebouwd" + "\n" + "- [ ] Akkoord van de eigenaar op deze taak in de Jarvis-app → attestatie en merge" + "\n" + "- [ ] Uitrollen" + "\n"), tekst };
+    const bouwt = { ...dossier("T-20260901-e", "## Voortgang" + "\n" + "- [ ] Bouwen" + "\n" + "- [ ] Akkoord van de eigenaar" + "\n"), tekst };
+    const o = bouwOverzicht([project({ taken: [wacht, bouwt] })], NU);
+    const [a, b] = o.projecten[0].taken;
+    expect([a.aan_zet, a.akkoord_nodig, a.stil]).toEqual(["eigenaar", true, false]);
+    expect(a.wacht_op).toMatch(/^Akkoord van de eigenaar/);
+    expect([b.aan_zet, b.akkoord_nodig]).toEqual(["jarvis", false]);
+    // Zonder scope (geen opdrachttekst) is er niets om akkoord op te geven.
+    const zonder = dossier("T-20260901-f", "## Voortgang" + "\n" + "- [ ] Akkoord van de eigenaar" + "\n");
+    expect(bouwOverzicht([project({ taken: [zonder] })], NU).projecten[0].taken[0].akkoord_nodig).toBe(false);
+  });
   it("volgt een afhankelijkheid 'wacht op T-…', ook over projecten heen", () => {
     const eig = dossier("T-20260901-a", "## Wat de eigenaar nog moet doen" + "\n" + "1. Maak de repository aan." + "\n");
     const wacht = dossier("T-20260901-c", "## Voortgang" + "\n" + "- [ ] Inrichten — wacht op T-20260901-a" + "\n", { project: "b" });
