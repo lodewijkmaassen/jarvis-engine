@@ -35,6 +35,7 @@ import { ALLOWLIST_BESTANDSNAAM, LEGE_ALLOWLIST, laadAllowlist, scanTekst, type 
 import {
   RECENT_DAGEN,
   bouwOverzicht,
+  leesItemsOnder,
   type GitRegel,
   type ProjectInvoer,
   type ProjectOverzicht,
@@ -922,6 +923,8 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     voorStartpunt: voorStartpunt.has(c.hash),
   }));
 
+  const eigenaarsPunten = await leesEigenaarsPunten(wortel, config, bestanden);
+
   const resultaat = lint({
     config,
     lading,
@@ -929,6 +932,7 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     tekstCorpus: tekst,
     acks,
     commits,
+    eigenaarsPunten,
     statusCommitsSinds: Number.parseInt(statusCommits || "0", 10) || 0,
     statusImpactVerklaard: statusImpact,
     nieuweDecs,
@@ -982,6 +986,36 @@ async function opdrachtContext(vlaggen: ReadonlyMap<string, string>): Promise<nu
   }
   console.log(markdown);
   return 0;
+}
+
+/**
+ * De punten onder "Wat de eigenaar nog moet doen" van elk taakdossier dat deze
+ * wijziging raakt (resultaat.md in de takenmap), voor de poortregel
+ * eigenaarslijst_administratief (CON-0016).
+ */
+async function leesEigenaarsPunten(
+  wortel: string,
+  config: JarvisConfig,
+  bestanden: readonly string[],
+): Promise<readonly { bestand: string; tekst: string }[]> {
+  const takenMap = normaliseerPadTekst(config.taken_map).replace(/\/+$/, "");
+  const uit: { bestand: string; tekst: string }[] = [];
+  for (const b of bestanden) {
+    const pad = normaliseerPadTekst(b);
+    if (!pad.startsWith(`${takenMap}/`) || !/\/resultaat\.md$/.test(pad)) continue;
+    let inhoud: string;
+    try {
+      inhoud = await readFile(path.join(wortel, pad), "utf8");
+    } catch {
+      continue; // verwijderd in deze wijziging
+    }
+    for (const item of leesItemsOnder(inhoud, KOP_EIGENAAR_LIJST)) uit.push({ bestand: pad, tekst: item.toelichting });
+  }
+  return uit;
+}
+const KOP_EIGENAAR_LIJST = /^## Wat de eigenaar nog moet doen\s*$/m;
+function normaliseerPadTekst(p: string): string {
+  return p.replace(/\\/g, "/");
 }
 
 async function verzamelFeiten(
