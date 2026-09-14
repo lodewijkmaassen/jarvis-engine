@@ -990,8 +990,15 @@ async function verzamelFeiten(
   lading: KennisLading,
 ): Promise<StateFeiten> {
   const hoofdbranch = "main";
-  const commit = await git(wortel, ["rev-parse", "--short", `origin/${hoofdbranch}`]);
-  const datum = await git(wortel, ["log", "-1", "--format=%ad", "--date=short", `origin/${hoofdbranch}`]);
+  // De hoofdbranch zoals dit werk hem kent: het gemeenschappelijke punt van
+  // HEAD en origin/main. Op main zelf is dat de kop; op een branch blijft het
+  // stabiel zolang de branch niet wordt herbaseerd. Met de kop van origin/main
+  // werd het feitenblok van elke open pull request rood zodra een andere was
+  // samengevoegd (gemeten 2026-09-14 na engine #12), wat een keten van merges
+  // onmogelijk maakte zonder een verversingscommit per PR per merge.
+  const basis = (await git(wortel, ["merge-base", "HEAD", `origin/${hoofdbranch}`])) || `origin/${hoofdbranch}`;
+  const commit = await git(wortel, ["rev-parse", "--short", basis]);
+  const datum = await git(wortel, ["log", "-1", "--format=%ad", "--date=short", basis]);
   const migraties = config.migratie_pad ? await git(wortel, ["ls-files", config.migratie_pad]) : "";
   const hoogste =
     migraties
