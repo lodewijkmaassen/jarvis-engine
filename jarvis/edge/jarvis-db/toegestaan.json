@@ -14,5 +14,6 @@
   "select id, soort, project, taak, scope_hash, pr_repo, pr_nummer, commit_sha, op from jarvis.autorisaties order by op desc limit 200",
   "insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel, rapport, door) values ($1, $2, $3, $4, $5, $6) returning id",
   "select id, pr_repo, pr_nummer, commit_sha, oordeel, rapport, door, op from jarvis.toetsingen where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and oordeel = 'GO' order by op desc limit 1",
-  "select id, pr_repo, pr_nummer, commit_sha, oordeel, rapport, door, op from jarvis.toetsingen where id = $1"
+  "select id, pr_repo, pr_nummer, commit_sha, oordeel, rapport, door, op from jarvis.toetsingen where id = $1",
+  "select id, soort, project, taak, scope_hash, pr_repo, pr_nummer, commit_sha, op from jarvis.autorisaties where op > $1 order by op"
 ]

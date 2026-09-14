@@ -123,6 +123,9 @@ export const TOETSING_KOP_SQL =
 
 export const TOETSING_ID_SQL = `select ${TOETSING_KOLOMMEN} from jarvis.toetsingen where id = $1`;
 
+/** Akkoorden sinds een tijdstip: waar `jarvis db wachten` op reageert. */
+export const AUTORISATIES_SINDS_SQL = `select ${AUTORISATIE_KOLOMMEN} from jarvis.autorisaties where op > $1 order by op`;
+
 /**
  * Dezelfde lezingen via de REST-API van PostgREST, voor de attestatieworkflow
  * die geen databaserol heeft: alleen de publieke sleutel en de leesbeelden
@@ -168,5 +171,6 @@ export function toegestaneSql(): readonly string[] {
     TOETSING_SQL,
     TOETSING_KOP_SQL,
     TOETSING_ID_SQL,
+    AUTORISATIES_SINDS_SQL,
   ];
 }

@@ -50,8 +50,9 @@ zag. De goedkeurende review op GitHub is daarna techniek: de workflow
 elke repository die hem draagt) draait `jarvis attestatie --pr <n>` met het
 kortlevende `GITHUB_TOKEN` en keurt goed als, en alleen als:
 
-1. de auteur de bot is en elke commit dezelfde `Jarvis-Task` draagt;
-2. er een taakakkoord is en de scope op de kop dezelfde hash heeft;
+1. de auteur de bot is en elke commit precies één `Jarvis-Task` draagt
+   (meer taken in één PR mag; dan telt elk akkoord);
+2. er per taak een akkoord is en de scope op de kop dezelfde hash heeft;
 3. er een toetsing met oordeel GO op precies de kop staat
    (`jarvis db toetsing <repo> <n> <sha> GO --door <naam> --rapport <bestand>`);
 4. er geen harde uitzondering speelt (workflows, CODEOWNERS, migraties,
@@ -60,6 +61,12 @@ kortlevende `GITHUB_TOKEN` en keurt goed als, en alleen als:
    PR-tekst `Uitzonderingen: geen` zegt — anders is een apart akkoord van
    soort `pr` op precies deze kop vereist;
 5. de poort groen is.
+
+Een **administratieve** PR — alleen dossiers (`tasks/`), kennisrecords
+(niet `CONSTRAINTS/`), de kennisindex en het feitenblok — attesteert de
+poort zonder taakakkoord en zonder toetsing (DEC-0044): dat is klasse-A-werk
+dat de poort zelf toetst. De verklaring `Uitzonderingen: geen` en een groene
+poort blijven nodig.
 
 De bot vraagt de toets aan met `jarvis pr attesteren <n>`; `jarvis pr mergen`
 verifieert de attestatie daarna zelf nog eens tegen de database (rol
@@ -98,3 +105,12 @@ gelijkheid). Ze verbindt als `jarvis_werker` via het function-secret
 `JARVIS_DB_URL` en vergelijkt het token uit `JARVIS_API_TOKEN` in constante
 tijd. Uitrollen: `supabase functions deploy jarvis-db --no-verify-jwt` vanuit
 die map, of via de Supabase-MCP.
+
+## Wekken zonder claude.ai
+
+De eigen database is de enige bron (DEC-0044). Een uitvoerder die wacht op
+werk draait `jarvis db wachten [--max <seconden>]`: die peilt elke twintig
+seconden en stopt zodra er een nieuw antwoord, bericht of akkoord is
+(exitcode 0, JSON op stdout), of na `--max` seconden (exitcode 3). De laptop
+draait hem op de achtergrond; de cloud start op de brug (een push van de
+database naar GitHub) en op het vangnetrooster.

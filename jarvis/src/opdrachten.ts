@@ -53,14 +53,16 @@ import {
   type BestandsFeiten,
 } from "./workflow";
 import {
+  attestatieInhoud,
   attestatieTekst,
   beoordeelAttestatie,
   leesAttestatie,
   scopeHash,
-  taakUitCommits,
+  takenUitCommits,
   verifieerAttestatie,
   type AttestatieFeiten,
   type Autorisatie,
+  type TaakFeiten,
   type Toetsing,
 } from "./attestatie";
 import { bepaalModus, beoordeelEngine, ENGINE_MAP, leesEngineStand, type HoofdbranchVergelijking } from "./engine";
@@ -68,6 +70,7 @@ import {
   AUTORISATIE_ID_SQL,
   AUTORISATIE_PR_SQL,
   AUTORISATIE_TAAK_SQL,
+  AUTORISATIES_SINDS_SQL,
   AUTORISATIES_SQL,
   berichtId,
   BERICHT_VAN_JARVIS_SQL,
@@ -1286,7 +1289,7 @@ function help(): number {
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
       "  rollen   [--schrijf]              Genereert de providerafgeleiden van de rolcontracten;",
       "                                    zonder --schrijf een driftcontrole (zit in de poort)",
-      "  db <nieuw|claim|verwerkt|bericht|document|toetsing|autorisaties|wie> [opties]",
+      "  db <nieuw|wachten|claim|verwerkt|bericht|document|toetsing|autorisaties|wie> [opties]",
       "                                    De eigen database van Jarvis (schema jarvis): nieuwe",
       "                                    antwoorden en berichten lezen, claimen, verwerken, documenten zetten,",
       "                                    een QA-toetsing vastleggen, akkoorden van de eigenaar lezen.",
@@ -1683,6 +1686,7 @@ async function verbindDb(): Promise<{ readonly sql: DbClient; readonly bron: str
  *   verwerkt <tabel> <id> --verwerking <t> Zet een item op "verwerkt" met de toelichting.
  *   bericht --tekst <t> [--context <json>] Schrijft een bericht van Jarvis.
  *   document <id> --bestand <json>         Zet een document (overzicht/huidig, jarvis/status).
+ *   wachten [--max <seconden>]             Wacht tot er een nieuw antwoord, bericht of akkoord is; geeft dat als JSON.
  *   wie                                    Toont waar de verbinding vandaan komt en of ze werkt; nooit de reeks zelf.
  */
 async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
@@ -1707,6 +1711,26 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       const berichten = await sql.unsafe(NIEUWE_BERICHTEN_SQL);
       console.log(JSON.stringify({ antwoorden, berichten }, null, 2));
       return 0;
+    }
+    if (wat === "wachten") {
+      // De wekker van een uitvoerder: peilt elke twintig seconden en stopt
+      // zodra er iets nieuws is (of na --max seconden, exitcode 3). Zo hangt
+      // een laptopsessie niet meer aan een claude.ai-melding (DEC-0044).
+      const max = Number.parseInt(vlaggen.get("max") ?? "3600", 10);
+      const sinds = new Date().toISOString();
+      const start = Date.now();
+      while (Date.now() - start < max * 1000) {
+        const antwoorden = await sql.unsafe(NIEUWE_ANTWOORDEN_SQL);
+        const berichten = await sql.unsafe(NIEUWE_BERICHTEN_SQL);
+        const autorisaties = await sql.unsafe(AUTORISATIES_SINDS_SQL, [sinds]);
+        if (antwoorden.length + berichten.length + autorisaties.length > 0) {
+          console.log(JSON.stringify({ antwoorden, berichten, autorisaties }, null, 2));
+          return 0;
+        }
+        await new Promise((klaar) => setTimeout(klaar, 20_000));
+      }
+      console.log(`jarvis db: niets nieuws in ${max} seconden.`);
+      return 3;
     }
     if (wat === "claim" || wat === "verwerkt") {
       const tabel = losse[1] ?? "";
@@ -1820,7 +1844,7 @@ type AttestatieBron = {
   readonly taak: (taak: string) => Promise<Autorisatie | null>;
   readonly pr: (repo: string, nummer: number, kop: string) => Promise<Autorisatie | null>;
   readonly toetsing: (repo: string, nummer: number, kop: string) => Promise<Toetsing | null>;
-  readonly opId: (autorisatie: string, toetsing: string) => Promise<{ autorisatie: Autorisatie | null; toetsing: Toetsing | null }>;
+  readonly opId: (autorisaties: readonly string[], toetsing: string) => Promise<{ autorisaties: ReadonlyMap<string, Autorisatie | null>; toetsing: Toetsing | null }>;
 };
 
 /** Rij → Autorisatie, met pr_nummer als getal (PostgREST en postgres geven soms een string). */
@@ -1878,7 +1902,7 @@ function restBron(url: string, sleutel: string): AttestatieBron {
     taak: async (taak) => alsAutorisatie((await leesViaRest(url, sleutel, restPadAutorisatieTaak(taak)))[0]),
     pr: async (repo, nummer, kop) => alsAutorisatie((await leesViaRest(url, sleutel, restPadAutorisatiePr(repo, nummer, kop)))[0]),
     toetsing: async (repo, nummer, kop) => alsToetsing((await leesViaRest(url, sleutel, restPadToetsingKop(repo, nummer, kop)))[0]),
-    opId: async () => ({ autorisatie: null, toetsing: null }),
+    opId: async () => ({ autorisaties: new Map(), toetsing: null }),
   };
 }
 
@@ -1887,10 +1911,11 @@ function sqlBron(sql: PgClient): AttestatieBron {
     taak: async (taak) => alsAutorisatie((await sql.unsafe(AUTORISATIE_TAAK_SQL, [taak]))[0]),
     pr: async (repo, nummer, kop) => alsAutorisatie((await sql.unsafe(AUTORISATIE_PR_SQL, [repo, nummer, kop]))[0]),
     toetsing: async (repo, nummer, kop) => alsToetsing((await sql.unsafe(TOETSING_KOP_SQL, [repo, nummer, kop]))[0]),
-    opId: async (a, t) => ({
-      autorisatie: alsAutorisatie((await sql.unsafe(AUTORISATIE_ID_SQL, [a]))[0]),
-      toetsing: alsToetsing((await sql.unsafe(TOETSING_ID_SQL, [t]))[0]),
-    }),
+    opId: async (ids, t) => {
+      const autorisaties = new Map<string, Autorisatie | null>();
+      for (const id of ids) autorisaties.set(id, alsAutorisatie((await sql.unsafe(AUTORISATIE_ID_SQL, [id]))[0]));
+      return { autorisaties, toetsing: t === "-" ? null : alsToetsing((await sql.unsafe(TOETSING_ID_SQL, [t]))[0]) };
+    },
   };
 }
 
@@ -1919,6 +1944,20 @@ async function leesConfigVanRepo(token: string, slug: string): Promise<JarvisCon
   if (d.encoding !== "base64" || typeof d.content !== "string") return `jarvis.config.yml van ${slug} heeft een onverwachte vorm`;
   const uit = parseConfigTekst(Buffer.from(d.content, "base64").toString("utf8"));
   return uit.ok ? uit.config : uit.fouten.join("; ");
+}
+
+/**
+ * De paden die in deze repository administratief zijn (DEC-0044): dossiers,
+ * kennisrecords behalve de randvoorwaarden, de kennisindex en het
+ * feitenblok. Afgeleid van de configuratie, niet instelbaar op zichzelf.
+ */
+function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
+  const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\/$/, "");
+  return [
+    new RegExp(`^${esc(config.taken_map)}/`),
+    new RegExp(`^${esc(config.knowledge_map)}/(?!CONSTRAINTS/)`),
+    new RegExp(`^${esc(config.current_state)}$`),
+  ];
 }
 
 /**
@@ -1953,10 +1992,10 @@ async function verzamelAttestatieFeiten(
     return `de pull request telt ${prLading.changed_files} bestanden maar er zijn er ${bestanden.length} gelezen; zo'n pull request wordt niet geattesteerd`;
   }
 
-  const { taak, redenen: taakRedenen } = taakUitCommits(commits);
-  let scopeHashKop: string | null = null;
-  let autorisatieTaak: Autorisatie | null = null;
-  if (taak !== null) {
+  const { taken: taakIds, redenen: taakRedenen } = takenUitCommits(commits);
+  const taken: TaakFeiten[] = [];
+  for (const taak of taakIds) {
+    let scopeHashKop: string | null = null;
     const dossier = await github(
       token,
       "GET",
@@ -1968,7 +2007,7 @@ async function verzamelAttestatieFeiten(
         scopeHashKop = scopeHash(Buffer.from(d.content, "base64").toString("utf8"));
       }
     }
-    autorisatieTaak = await bron.taak(taak);
+    taken.push({ taak, autorisatie: await bron.taak(taak), scopeHashKop });
   }
   return {
     nummer,
@@ -1976,13 +2015,12 @@ async function verzamelAttestatieFeiten(
     botLogin: config.attestatie.bot,
     kop: feiten.kop,
     repo: slug,
-    taak,
+    taken,
     taakRedenen,
-    autorisatieTaak,
-    scopeHashKop,
     toetsing: await bron.toetsing(slug, nummer, feiten.kop),
     gewijzigdeBestanden: bestanden,
     extraPaden: config.attestatie.extra_paden,
+    administratiefPaden: administratievePatronen(config),
     prTekst,
     autorisatiePr: await bron.pr(slug, nummer, feiten.kop),
     checks: feiten.checks,
@@ -2024,15 +2062,19 @@ async function geverifieerdeAttestaties(
         continue;
       }
       const inhoud = leesAttestatie(r.tekst ?? "")!;
-      const rijen = await bron.opId(inhoud.autorisatie, inhoud.toetsing);
-      const redenen = [...verifieerAttestatie(inhoud, r.commit, rijen.autorisatie, rijen.toetsing)];
+      const ids = inhoud.autorisaties === "-" ? [] : inhoud.autorisaties.split("+");
+      const rijen = await bron.opId(ids, inhoud.toetsing);
+      const redenen = [...verifieerAttestatie(inhoud, r.commit, rijen.autorisaties, rijen.toetsing)];
       if (redenen.length === 0) {
         const f = await verzamelAttestatieFeiten(token, slug, feiten.nummer, feiten, config, bron);
         if (typeof f === "string") redenen.push(f);
         else {
           redenen.push(...beoordeelAttestatie(f));
-          if (f.autorisatieTaak?.id !== inhoud.autorisatie) redenen.push("de attestatie noemt een andere autorisatie dan de laatste voor deze taak");
-          if (f.toetsing?.id !== inhoud.toetsing) redenen.push("de attestatie noemt een andere toetsing dan de laatste GO op de kop");
+          // De tekst moet precies zeggen wat de feiten nu ook zeggen.
+          const nu = attestatieInhoud(f);
+          if (nu.taken !== inhoud.taken || nu.autorisaties !== inhoud.autorisaties || nu.scope !== inhoud.scope || nu.toetsing !== inhoud.toetsing) {
+            redenen.push("de attestatie noemt andere taken, autorisaties, scopes of toetsing dan de huidige feiten");
+          }
         }
       }
       if (redenen.length === 0) koppen.push(r.commit);
@@ -2106,14 +2148,7 @@ async function opdrachtAttestatie(vlaggen: ReadonlyMap<string, string>): Promise
     console.error(`jarvis attestatie: #${nummer} op ${feiten.kop.slice(0, 7)} niet geattesteerd.`);
     return 1;
   }
-  const tekst = attestatieTekst({
-    autorisatie: f.autorisatieTaak!.id,
-    taak: f.taak!,
-    scope: f.scopeHashKop!,
-    toetsing: f.toetsing!.id,
-    kop: feiten.kop,
-    uitzonderingen: f.autorisatiePr === null ? "geen" : `apart akkoord ${f.autorisatiePr.id}`,
-  });
+  const tekst = attestatieTekst(attestatieInhoud(f));
   const alBestaand = feiten.reviews.some(
     (r) => r.staat === "APPROVED" && r.gebruiker.toLowerCase() === ATTESTATIE_GEBRUIKER && r.commit === feiten.kop && r.tekst === tekst,
   );

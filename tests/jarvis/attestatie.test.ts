@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
+  attestatieInhoud,
   attestatieTekst,
   beoordeelAttestatie,
+  isAdministratief,
   leesAttestatie,
   leesUitzonderingenRegel,
   raaktHardeUitzondering,
   scopeHash,
-  taakUitCommits,
+  takenUitCommits,
   verifieerAttestatie,
   type AttestatieFeiten,
   type Autorisatie,
@@ -49,18 +51,22 @@ function feiten(over: Partial<AttestatieFeiten> = {}): AttestatieFeiten {
     botLogin: "de-bot",
     kop: KOP,
     repo: "eigenaar/proef",
-    taak: "T-20260913-proef",
+    taken: [{ taak: "T-20260913-proef", autorisatie, scopeHashKop: scopeHash(SCOPE) }],
     taakRedenen: [],
-    autorisatieTaak: autorisatie,
-    scopeHashKop: scopeHash(SCOPE),
     toetsing,
     gewijzigdeBestanden: ["jarvis/src/iets.ts", "tests/jarvis/iets.test.ts"],
     prTekst: "## Wat\n\nIets.\n\nUitzonderingen: geen\n",
     autorisatiePr: null,
     checks: [{ naam: "poort", status: "completed", conclusie: "success" }],
     verplichteCheck: "poort",
+    administratiefPaden: [/^tasks\//, /^knowledge\/(?!CONSTRAINTS\/)/, /^docs\/CURRENT_STATE\.md$/],
     ...over,
   };
+}
+/** Dezelfde feiten met één veld van de enige taak anders. */
+function metTaak(over: Partial<AttestatieFeiten["taken"][number]>, rest: Partial<AttestatieFeiten> = {}): AttestatieFeiten {
+  const basis = feiten();
+  return { ...basis, taken: [{ ...basis.taken[0]!, ...over }], ...rest };
 }
 
 describe("scopeHash", () => {
@@ -72,27 +78,70 @@ describe("scopeHash", () => {
   });
 });
 
-describe("taakUitCommits", () => {
-  it("geeft de ene taak die alle commits dragen", () => {
-    const uit = taakUitCommits([
-      { sha: KOP, boodschap: "Iets\n\nJarvis-Role: developer\nJarvis-Task: T-1\n" },
+describe("takenUitCommits", () => {
+  it("geeft de taken die de commits dragen, elk één keer, gesorteerd", () => {
+    const uit = takenUitCommits([
+      { sha: KOP, boodschap: "Iets\n\nJarvis-Role: developer\nJarvis-Task: T-2\n" },
       { sha: ANDERE, boodschap: "Nog iets\n\nJarvis-Task: T-1\n" },
+      { sha: "c".repeat(40), boodschap: "Nog iets\n\nJarvis-Task: T-1\n" },
     ]);
-    expect(uit).toEqual({ taak: "T-1", redenen: [] });
+    expect(uit).toEqual({ taken: ["T-1", "T-2"], redenen: [] });
   });
-  it("weigert een commit zonder trailer en een mix van taken", () => {
-    expect(taakUitCommits([{ sha: KOP, boodschap: "Zonder" }]).redenen[0]).toMatch(/geen of meer dan/);
-    // Twee trailers in één commit: bij geen van beide taken.
-    expect(taakUitCommits([{ sha: KOP, boodschap: "Jarvis-Task: T-1\nJarvis-Task: T-2\n" }]).taak).toBeNull();
-    const mix = taakUitCommits([
-      { sha: KOP, boodschap: "Jarvis-Task: T-1" },
-      { sha: ANDERE, boodschap: "Jarvis-Task: T-2" },
-    ]);
-    expect(mix.taak).toBeNull();
-    expect(mix.redenen[0]).toMatch(/meer dan één taak/);
+  it("weigert een commit zonder trailer of met twee trailers", () => {
+    expect(takenUitCommits([{ sha: KOP, boodschap: "Zonder" }]).redenen[0]).toMatch(/geen of meer dan/);
+    const twee = takenUitCommits([{ sha: KOP, boodschap: "Jarvis-Task: T-1\nJarvis-Task: T-2\n" }]);
+    expect(twee.taken).toEqual([]);
+    expect(twee.redenen).toHaveLength(1);
   });
   it("weigert een lege PR", () => {
-    expect(taakUitCommits([]).redenen).toEqual(["de pull request heeft geen commits"]);
+    expect(takenUitCommits([]).redenen).toEqual(["de pull request heeft geen commits"]);
+  });
+});
+
+describe("administratieve PR (DEC-0044)", () => {
+  const patronen = [/^tasks\//, /^knowledge\/(?!CONSTRAINTS\/)/, /^docs\/CURRENT_STATE\.md$/];
+  it("herkent dossiers, kennis, index en feitenblok; niet de randvoorwaarden of code", () => {
+    expect(isAdministratief(["tasks/T-1/resultaat.md", "knowledge/INDEX.json", "knowledge/DECISIONS/DEC-1.md", "docs/CURRENT_STATE.md"], patronen)).toBe(true);
+    expect(isAdministratief(["tasks/T-1/resultaat.md", "knowledge/CONSTRAINTS/CON-1.md"], patronen)).toBe(false);
+    expect(isAdministratief(["tasks/T-1/resultaat.md", "src/a.ts"], patronen)).toBe(false);
+    expect(isAdministratief([], patronen)).toBe(false);
+    expect(isAdministratief(["tasks/T-1/resultaat.md"], [])).toBe(false);
+  });
+  it("attesteert zonder taakakkoord en zonder toetsing, met poort groen en een verklaring", () => {
+    const admin = feiten({ gewijzigdeBestanden: ["tasks/T-1/resultaat.md", "knowledge/INDEX.json"], taken: [], toetsing: null });
+    expect(beoordeelAttestatie(admin)).toEqual([]);
+    expect(attestatieInhoud(admin)).toMatchObject({ taken: "administratief", autorisaties: "-", scope: "-", toetsing: "-" });
+    // Zonder verklaring of zonder groene poort blijft ook een administratieve PR staan.
+    expect(beoordeelAttestatie({ ...admin, prTekst: "niets" })).toContainEqual(expect.stringMatching(/verklaart niets/));
+    expect(beoordeelAttestatie({ ...admin, checks: [] })).toContainEqual(expect.stringMatching(/ontbreekt/));
+    // Eén codebestand erbij en het is geen administratie meer: dan telt het akkoord.
+    expect(beoordeelAttestatie({ ...admin, gewijzigdeBestanden: [...admin.gewijzigdeBestanden, "src/a.ts"] })).toContainEqual(
+      expect.stringMatching(/geen taak bekend/),
+    );
+  });
+  it("laat een dossier-PR die ook de randvoorwaarden raakt niet door als administratie", () => {
+    const uit = beoordeelAttestatie(feiten({ gewijzigdeBestanden: ["knowledge/CONSTRAINTS/CON-1.md"], taken: [], toetsing: null }));
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+});
+
+describe("meerdere taken in één PR", () => {
+  const tweede: Autorisatie = { ...autorisatie, id: "44444444-4444-4444-4444-444444444444", taak: "T-20260913-twee", scope_hash: scopeHash("twee") };
+  it("vraagt voor elke taak een akkoord met ongewijzigde scope", () => {
+    const beide = feiten({ taken: [...feiten().taken, { taak: "T-20260913-twee", autorisatie: tweede, scopeHashKop: scopeHash("twee") }] });
+    expect(beoordeelAttestatie(beide)).toEqual([]);
+    expect(attestatieInhoud(beide).taken).toBe("T-20260913-proef+T-20260913-twee");
+    expect(attestatieInhoud(beide).autorisaties).toBe(`${autorisatie.id}+${tweede.id}`);
+    const half = feiten({ taken: [...feiten().taken, { taak: "T-20260913-twee", autorisatie: null, scopeHashKop: scopeHash("twee") }] });
+    expect(beoordeelAttestatie(half)).toContainEqual(expect.stringMatching(/geen akkoord van de eigenaar op taak T-20260913-twee/));
+  });
+  it("verifieert een attestatie met twee taken paarsgewijs", () => {
+    const beide = feiten({ taken: [...feiten().taken, { taak: "T-20260913-twee", autorisatie: tweede, scopeHashKop: scopeHash("twee") }] });
+    const inhoud = attestatieInhoud(beide);
+    const rijen = new Map<string, Autorisatie | null>([[autorisatie.id, autorisatie], [tweede.id, tweede]]);
+    expect(verifieerAttestatie(inhoud, KOP, rijen, toetsing)).toEqual([]);
+    expect(verifieerAttestatie(inhoud, KOP, new Map([[autorisatie.id, autorisatie]]), toetsing)).toContainEqual(expect.stringMatching(/bestaat niet/));
+    expect(verifieerAttestatie({ ...inhoud, scope: `${scopeHash(SCOPE)}` }, KOP, rijen, toetsing)).toContainEqual(expect.stringMatching(/paarsgewijs/));
   });
 });
 
@@ -133,14 +182,14 @@ describe("beoordeelAttestatie", () => {
     expect(beoordeelAttestatie(feiten({ auteur: "iemand" }))[0]).toMatch(/niet de bot/);
   });
   it("weigert zonder akkoord op de taak", () => {
-    expect(beoordeelAttestatie(feiten({ autorisatieTaak: null }))).toContainEqual(expect.stringMatching(/geen akkoord/));
+    expect(beoordeelAttestatie(metTaak({ autorisatie: null }))).toContainEqual(expect.stringMatching(/geen akkoord/));
   });
   it("weigert wanneer de scope sinds het akkoord veranderde", () => {
-    const uit = beoordeelAttestatie(feiten({ scopeHashKop: scopeHash(`${SCOPE}\nMeer.\n`) }));
+    const uit = beoordeelAttestatie(metTaak({ scopeHashKop: scopeHash(`${SCOPE}\nMeer.\n`) }));
     expect(uit).toContainEqual(expect.stringMatching(/scope .* is veranderd/));
   });
   it("weigert zonder dossier op de kop", () => {
-    expect(beoordeelAttestatie(feiten({ scopeHashKop: null }))).toContainEqual(expect.stringMatching(/opdracht\.md ontbreekt/));
+    expect(beoordeelAttestatie(metTaak({ scopeHashKop: null }))).toContainEqual(expect.stringMatching(/opdracht\.md ontbreekt/));
   });
   it("weigert zonder GO op precies de kop", () => {
     expect(beoordeelAttestatie(feiten({ toetsing: null }))).toContainEqual(expect.stringMatching(/geen toetsing/));
@@ -152,9 +201,9 @@ describe("beoordeelAttestatie", () => {
     );
   });
   it("weigert zonder taak, zonder bestanden, met een akkoord voor een andere taak, en met een pr-akkoord op een ander nummer", () => {
-    expect(beoordeelAttestatie(feiten({ taak: null, taakRedenen: [] }))).toContainEqual(expect.stringMatching(/geen taak bekend/));
+    expect(beoordeelAttestatie(feiten({ taken: [], taakRedenen: [] }))).toContainEqual(expect.stringMatching(/geen taak bekend/));
     expect(beoordeelAttestatie(feiten({ gewijzigdeBestanden: [] }))).toContainEqual(expect.stringMatching(/geen bestanden/));
-    expect(beoordeelAttestatie(feiten({ autorisatieTaak: { ...autorisatie, taak: "T-anders" } }))).toContainEqual(
+    expect(beoordeelAttestatie(metTaak({ autorisatie: { ...autorisatie, taak: "T-anders" } }))).toContainEqual(
       expect.stringMatching(/geen taakakkoord voor/),
     );
     const apart: Autorisatie = { ...autorisatie, id: "3", soort: "pr", pr_repo: "eigenaar/proef", pr_nummer: 8, commit_sha: KOP };
@@ -192,14 +241,8 @@ describe("beoordeelAttestatie", () => {
 });
 
 describe("attestatietekst", () => {
-  const inhoud = {
-    autorisatie: autorisatie.id,
-    taak: "T-20260913-proef",
-    scope: scopeHash(SCOPE),
-    toetsing: toetsing.id,
-    kop: KOP,
-    uitzonderingen: "geen",
-  };
+  const inhoud = attestatieInhoud(feiten());
+  const rijen = new Map<string, Autorisatie | null>([[autorisatie.id, autorisatie]]);
   it("is na schrijven weer te lezen", () => {
     expect(leesAttestatie(attestatieTekst(inhoud))).toEqual(inhoud);
   });
@@ -214,15 +257,19 @@ describe("attestatietekst", () => {
     expect(leesAttestatie(`x ${attestatieTekst(inhoud)}`)).toBeNull();
   });
   it("verifieert tegen de database", () => {
-    expect(verifieerAttestatie(inhoud, KOP, autorisatie, toetsing)).toEqual([]);
-    expect(verifieerAttestatie(inhoud, ANDERE, autorisatie, toetsing)[0]).toMatch(/hoort bij/);
-    expect(verifieerAttestatie(inhoud, KOP, null, toetsing)).toContainEqual(expect.stringMatching(/bestaat niet/));
-    expect(verifieerAttestatie(inhoud, KOP, { ...autorisatie, scope_hash: "x" }, toetsing)).toContainEqual(
+    expect(inhoud).toMatchObject({ taken: "T-20260913-proef", autorisaties: autorisatie.id, scope: scopeHash(SCOPE), toetsing: toetsing.id, kop: KOP, uitzonderingen: "geen" });
+    expect(verifieerAttestatie(inhoud, KOP, rijen, toetsing)).toEqual([]);
+    expect(verifieerAttestatie(inhoud, ANDERE, rijen, toetsing)[0]).toMatch(/hoort bij/);
+    expect(verifieerAttestatie(inhoud, KOP, new Map([[autorisatie.id, null]]), toetsing)).toContainEqual(expect.stringMatching(/bestaat niet/));
+    expect(verifieerAttestatie(inhoud, KOP, new Map([[autorisatie.id, { ...autorisatie, scope_hash: "x" }]]), toetsing)).toContainEqual(
       expect.stringMatching(/scope/),
     );
-    expect(verifieerAttestatie(inhoud, KOP, autorisatie, { ...toetsing, oordeel: "NO-GO" })).toContainEqual(
+    expect(verifieerAttestatie(inhoud, KOP, rijen, { ...toetsing, oordeel: "NO-GO" })).toContainEqual(
       expect.stringMatching(/geen GO/),
     );
+    // Een administratieve attestatie noemt niets en heeft niets nodig.
+    expect(verifieerAttestatie({ ...inhoud, taken: "administratief", autorisaties: "-", scope: "-", toetsing: "-" }, KOP, new Map(), null)).toEqual([]);
+    expect(verifieerAttestatie({ ...inhoud, taken: "administratief" }, KOP, new Map(), null)[0]).toMatch(/administratieve attestatie/);
   });
 });
 
