@@ -891,9 +891,19 @@ function bronArtifact(db, artifact) {
 const alsObject = (x) => { if (typeof x !== "string") return x; try { return JSON.parse(x); } catch { return null; } };
 function bronSupabase(client) {
   const tabel = (naam) => client.schema("jarvis").from(naam);
+  // Realtime is de snelle weg, maar op een telefoon valt het kanaal weg zodra de
+  // app op de achtergrond staat; wie dan terugkomt zag verouderde knoppen en
+  // tikte op een vervallen akkoordverzoek (gemeten 2026-09-14). Daarom laadt
+  // alles opnieuw als de pagina weer zichtbaar wordt, en elke twee minuten.
+  const laders = [];
   const luister = (naam, laad) => {
+    laders.push(laad);
     client.channel(`jarvis-${naam}`).on("postgres_changes", { event: "*", schema: "jarvis", table: naam }, () => laad()).subscribe();
   };
+  const ververs = () => { for (const laad of laders) laad(); };
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") ververs(); });
+  window.addEventListener("online", ververs);
+  setInterval(() => { if (document.visibilityState === "visible") ververs(); }, 120_000);
   return {
     soort: "supabase",
     overzicht(cb, fout) {
