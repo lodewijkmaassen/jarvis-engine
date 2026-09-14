@@ -32,6 +32,7 @@ export const LINT_CODES = [
   "commits_afgekapt",
   "commitlog_onleesbaar",
   "ack_bron_onbetrouwbaar",
+  "eigenaarslijst_administratief",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -63,6 +64,11 @@ export type LintInvoer = {
   readonly rolControleVanafBasis?: string;
   /** Aantal commits dat buiten de rolcontrole viel doordat de lijst is afgekapt. */
   readonly commitsAfgekapt?: number;
+  /**
+   * De punten onder "Wat de eigenaar nog moet doen" van de taakdossiers die
+   * deze wijziging raakt: bestand en de tekst per punt.
+   */
+  readonly eigenaarsPunten?: readonly { readonly bestand: string; readonly tekst: string }[];
   /**
    * De commitlog was niet volledig en eenduidig te lezen (een record zonder
    * geldige vorm, of een verschil met de lijst uit rev-list). Blokkerend: een
@@ -337,9 +343,41 @@ export function toetsRandvoorwaarden(
 }
 
 /** Alle controles samen. Volgorde is vast, zodat uitvoer vergelijkbaar blijft. */
+/**
+ * Is dit punt op de eigenaarslijst een administratieve bevestiging? Het lezen,
+ * valideren of bevestigen van documentatie, een feitenblok, een status, een
+ * dossier of een narratief is werk van de kennisbeheerder of QA, nooit van de
+ * eigenaar (CON-0016; de eigenaar, 2026-09-14). Een punt dat daarnaast een
+ * echte eigenaarshandeling noemt — inloggen, een credential, een instelling,
+ * een betaling, een akkoord of beslissing — blijft staan.
+ */
+export function isAdministratieveBevestiging(tekst: string): boolean {
+  const t = tekst.replace(/`/g, "").replace(/\s+/g, " ");
+  const werkwoord = /\b(bevestig\w*|valideer\w*|controleer\w*|lees|nalezen|doorlezen|nakijken|kijk\w* na|goedkeur\w* (?:de|het) (?:tekst|documentatie))\b/i;
+  const onderwerp = /\b(narratief|documentatie|feitenblok|CURRENT_STATE|statusdocument|dossier|INDEX\.json|kennisrecord|LRN-\d+|DEC-\d+ (?:tekst|record))\b/i;
+  const echtEigenaar = /\b(inlog\w*|authentic\w*|credential\w*|wachtwoord|token|secret|instelling\w*|GitHub-instelling|betaal\w*|betaling|abonnement|factuur|akkoord|beslis\w*|keuze|kies|toestemming|uitnodig\w*|account)\b/i;
+  return werkwoord.test(t) && onderwerp.test(t) && !echtEigenaar.test(t);
+}
+
 export function lint(invoer: LintInvoer): LintResultaat {
   const { config, lading } = invoer;
   const bevindingen: LintBevinding[] = [];
+
+  // De eigenaarslijst bevat alleen wat werkelijk alleen de eigenaar kan of mag
+  // doen (CON-0016). Een documentatie- of statusbevestiging die daar belandt,
+  // komt als actie op zijn telefoon; de poort houdt dat tegen.
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (!isAdministratieveBevestiging(punt.tekst)) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_administratief",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 90)}${punt.tekst.length > 90 ? "…" : ""}" is een documentatie- of statusbevestiging; ` +
+          `die doet Jarvis zelf (kennisbeheer of QA) en hoort niet in "Wat de eigenaar nog moet doen" (CON-0016).`,
+      ),
+    );
+  }
 
   // Een ack uit een onbetrouwbare bron telt niet, en verdwijnt niet stilzwijgend.
   // Zonder deze stap kan de agent die de PR opent zichzelf toestemming geven voor

@@ -10,6 +10,7 @@ import type { JarvisConfig } from "@/jarvis/src/config";
 import {
   ackBronIsVertrouwd,
   bevatTriggerwoord,
+  isAdministratieveBevestiging,
   lint,
   parseerAcks,
   rolSchrijfrechten,
@@ -69,6 +70,25 @@ function basis(l: KennisLading) {
     acks: [] as readonly string[],
   };
 }
+
+describe("eigenaarslijst_administratief — documentatie bevestigt Jarvis zelf (CON-0016)", () => {
+  it("herkent een documentatie- of statusbevestiging en laat echte eigenaarshandelingen staan", () => {
+    expect(isAdministratieveBevestiging("Het bijgewerkte narratief in `docs/CURRENT_STATE.md` bevestigen.")).toBe(true);
+    expect(isAdministratieveBevestiging("Lees het feitenblok na en bevestig dat het klopt")).toBe(true);
+    expect(isAdministratieveBevestiging("Controleer of het dossier de stand goed beschrijft")).toBe(true);
+    expect(isAdministratieveBevestiging("Zet in de cloudomgeving de API credential voor de database (Settings → Environment)")).toBe(false);
+    expect(isAdministratieveBevestiging("Akkoord geven op de scope van deze taak in de Jarvis-app")).toBe(false);
+    expect(isAdministratieveBevestiging("Log in op Vercel en koppel het project")).toBe(false);
+    expect(isAdministratieveBevestiging("Beslis of Kasboek een eigen repository krijgt")).toBe(false);
+  });
+  it("is een fout in de poort zodra zo'n punt in een geraakt dossier staat", async () => {
+    const l = await lading();
+    const uit = lint({ ...basis(l), eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Het narratief in docs/CURRENT_STATE.md bevestigen." }] });
+    expect(uit.bevindingen.some((b) => b.code === "eigenaarslijst_administratief" && b.severity === "fout")).toBe(true);
+    const ok = lint({ ...basis(l), eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Vink in GitHub de instelling aan en geef akkoord." }] });
+    expect(ok.bevindingen.some((b) => b.code === "eigenaarslijst_administratief")).toBe(false);
+  });
+});
 
 describe("bevatTriggerwoord", () => {
   it("matcht op woordgrens, hoofdletterongevoelig", () => {
