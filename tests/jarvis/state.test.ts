@@ -35,9 +35,10 @@ describe("genereerFeitenblok", () => {
     expect(blok.trimEnd().endsWith(FEITEN_EIND)).toBe(true);
   });
 
-  it("bevat de afleidbare feiten", () => {
+  it("bevat de afleidbare feiten, maar niet de commit van de hoofdbranch (die verandert bij elke merge)", () => {
     const blok = genereerFeitenblok(FEITEN);
-    expect(blok).toContain("a225bd8");
+    expect(blok).toContain("| Hoofdbranch | `main` |");
+    expect(blok).not.toContain("a225bd8");
     expect(blok).toContain("0011_review_flow.sql");
     expect(blok).toContain("DEC 20");
     expect(blok).toContain("CFL-0001");
@@ -61,11 +62,11 @@ describe("genereerFeitenblok", () => {
 describe("vervangFeitenblok", () => {
   it("vervangt een bestaand blok en laat de rest ongemoeid", () => {
     const document = `# Titel\n\n${genereerFeitenblok(FEITEN)}\n\n## Narratief\nDit blijft staan.\n`;
-    const nieuw = genereerFeitenblok({ ...FEITEN, hoofdbranchCommit: "beefcafe" });
+    const nieuw = genereerFeitenblok({ ...FEITEN, hoogsteMigratie: "0012_iets.sql" });
     const resultaat = vervangFeitenblok(document, nieuw);
     if (!resultaat.ok) throw new Error(resultaat.boodschap);
-    expect(resultaat.tekst).toContain("beefcafe");
-    expect(resultaat.tekst).not.toContain("a225bd8");
+    expect(resultaat.tekst).toContain("0012_iets.sql");
+    expect(resultaat.tekst).not.toContain("0011_review_flow.sql");
     expect(resultaat.tekst).toContain("Dit blijft staan.");
   });
 
@@ -116,8 +117,13 @@ describe("leesFeitenblok en blokIsActueel", () => {
 
   it("ziet een handmatig gemanipuleerd blok", () => {
     const a = genereerFeitenblok(FEITEN);
-    const gemanipuleerd = a.replace("a225bd8", "deadbee");
+    const gemanipuleerd = a.replace("0011_review_flow.sql", "0099_verzonnen.sql");
     expect(blokIsActueel(gemanipuleerd, a)).toBe(false);
+  });
+  it("telt een ouder blok met de commit in de Hoofdbranch-regel als actueel", () => {
+    const a = genereerFeitenblok(FEITEN);
+    const oud = a.replace("| Hoofdbranch | `main` |", "| Hoofdbranch | `main` op `a225bd8` (2026-09-09) |");
+    expect(blokIsActueel(oud, a)).toBe(true);
   });
 });
 

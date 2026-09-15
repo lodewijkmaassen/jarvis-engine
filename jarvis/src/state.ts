@@ -20,6 +20,13 @@ export type OpenTaak = {
 export type StateFeiten = {
   readonly gegenereerdOp: string;
   readonly hoofdbranch: string;
+  /**
+   * Bewust NIET in het feitenblok: de commit en datum van de hoofdbranch
+   * veranderen bij elke merge. Met die waarde in het blok was elke open pull
+   * request rood zodra een andere was samengevoegd, en botste elke merge van
+   * main op precies die regel (gemeten 2026-09-14/15: een verversingscommit
+   * plus een QA-ronde per PR per merge). De velden blijven voor rapportage.
+   */
   readonly hoofdbranchCommit: string;
   readonly hoofdbranchDatum: string;
   readonly hoogsteMigratie: string | null;
@@ -58,7 +65,7 @@ export function genereerFeitenblok(feiten: StateFeiten): string {
     "",
     "| Feit | Waarde |",
     "|---|---|",
-    `| Hoofdbranch | \`${feiten.hoofdbranch}\` op \`${feiten.hoofdbranchCommit}\` (${feiten.hoofdbranchDatum}) |`,
+    `| Hoofdbranch | \`${feiten.hoofdbranch}\` |`,
     `| Hoogste migratie | ${feiten.hoogsteMigratie ?? "onbekend"} |`,
     `| Testbestanden | ${feiten.aantalTestbestanden ?? "onbekend"} |`,
     `| Kennisrecords | ${tellingen} |`,
@@ -138,7 +145,12 @@ export function leesFeitenblok(document: string): string | null {
  * hebben opgeschreven.
  */
 export function blokIsActueel(opgeslagen: string, herberekend: string): boolean {
-  const strip = (s: string) => s.replace(/_Gegenereerd op [^_]*_/g, "").replace(/\s+/g, " ").trim();
+  // Een ouder blok dat de commit nog in de Hoofdbranch-regel draagt telt als
+  // actueel zolang de rest klopt; de regel verdwijnt bij de volgende --schrijf.
+  const strip = (s: string) => s
+    .replace(/_Gegenereerd op [^_]*_/g, "")
+    .replace(/\| Hoofdbranch \| (`[^`]+`) op `[0-9a-f]+` \([^)]*\) \|/g, "| Hoofdbranch | $1 |")
+    .replace(/\s+/g, " ").trim();
   return strip(opgeslagen) === strip(herberekend);
 }
 
