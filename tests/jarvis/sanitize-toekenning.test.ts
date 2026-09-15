@@ -1,148 +1,239 @@
-// Probeset voor het toekenningspatroon (RSK-0019).
+// Probeset voor T-20260912-sanitizer-toekenning: het toekenningspatroon
+// (RSK-0019 — een credential korter dan tweeentwintig tekens glipt langs de
+// vormpatronen), het patroon voor Nederlandse postadressen, en de gedeelde
+// uitzondering voor Jarvis-ids in het entropiepatroon.
 //
-// De eerdere poging aan dit risico is teruggedraaid omdat hij een nieuwe klasse
-// vals-positieven gaf. Daarom staat de probeset hier als TWEE lijsten die even
-// zwaar wegen: TREFFERS moeten alle vier gevonden worden, NIET_TREFFERS mogen
-// geen van alle een bevinding geven. Een patroonwijziging die de eerste lijst
-// haalt maar de tweede breekt, is geen verbetering.
+// De acceptatie-eis uit de opdracht is tweezijdig: alle treffers gevonden, geen
+// enkele niet-treffer gevlagd. De niet-treffers zijn daarom geen bijzaak maar de
+// helft van de proef — de vorige poging is juist op die helft teruggedraaid.
 //
-// De niet-treffers zijn niet verzonnen: het zijn regels zoals ze in ToVas Flow,
-// Kasboek en deze repository voorkomen — YAML-sleutels, Nederlandse proza over
-// sleutels en tokens, paden, taak-ids en documentatieplaatshouders.
+// Alle waarden hieronder zijn verzonnen; tests/ valt buiten sanitize_paden.
 import { describe, expect, it } from "vitest";
 import {
   LEGE_ALLOWLIST,
   VOORBEELD_MARKERING,
-  isCredentialWaarde,
+  isCredentialNaam,
+  isEchteToekenning,
+  isJarvisId,
+  isVerdachteEntropie,
   scanTekst,
-} from "../../jarvis/src/sanitize";
+  type PatroonNaam,
+} from "@/jarvis/src/sanitize";
 
-/** Alleen de bevindingen van dit patroon; de rest heeft eigen tests. */
-function toekenningen(tekst: string, bestand = "docs/PROEF.md") {
-  return scanTekst(tekst, LEGE_ALLOWLIST, bestand).filter(
-    (b) => b.patroon === "credential_toekenning",
-  );
+function patronen(tekst: string): PatroonNaam[] {
+  return scanTekst(tekst, LEGE_ALLOWLIST, "proef.md").map((t) => t.patroon);
 }
 
-// Elk van deze regels kent een credential toe met een waarde die te KORT of te
-// vormloos is voor de entropie- en base64-patronen. Precies het gat van
-// RSK-0019: zonder dit patroon geeft geen van deze regels een bevinding.
-const TREFFERS: readonly (readonly [string, string])[] = [
-  ["omgevingsvariabele", "WACHTWOORD=Zomer2026!"],
-  ["dubbele punt met spatie", "PASSWORD: hunter2reeks"],
-  ["toekenning met aanhalingstekens", 'const secret = "kort1234";'],
-  ["liggend streepje voor het woord", "SESSION_SECRET=abcd1234efgh"],
-  ["hoofdletterongevoelig", "Api_Key: qwerty987zz"],
-  ["yaml zonder aanhalingstekens", "  smtp_pass: Tr0ub4dor"],
-  ["export in een shellregel", "export DB_PASSWORD=p4ssw0rd!x"],
-  ["bearer in een header", "Authorization: Bearer kortToken12"],
-];
+function vlagtToekenning(tekst: string): boolean {
+  return patronen(tekst).includes("toekenning_secret");
+}
 
-// Geen van deze regels mag iets opleveren. Ze bevatten allemaal een
-// credentialwoord gevolgd door ":" of "=" — het patroon moet ze op de WAARDE
-// afwijzen, niet doordat het de toekenning niet ziet.
-const NIET_TREFFERS: readonly (readonly [string, string])[] = [
-  ["plaatshouder in punthaken", "WACHTWOORD=<jouw wachtwoord>"],
-  ["shell-verwijzing", "PASSWORD=${SUPABASE_PASSWORD}"],
-  ["omgevingsvariabele als verwijzing", "api_key: $ANTHROPIC_API_KEY"],
-  ["documentatieplaatshouder", "password: changeme"],
-  ["puntjes", "SECRET: ..."],
-  ["instelling in plaats van waarde", "auth: true"],
-  ["vereistheid", "token: vereist"],
-  ["getal", "auth_timeout: 3600"],
-  ["pad naar een bestand", "secret in docs/JARVIS.md"],
-  ["pad als waarde", "key: src/db/server.ts"],
-  ["bestandsnaam", "sleutel: sanitize.ts"],
-  ["taak-id", "token: T-20260912-sanitizer-toekenning"],
-  ["besluit-id", "sleutel: DEC-0043"],
-  ["gedateerde identifier", "key: 20260913120100_jarvis_leesbeelden"],
-  ["datum", "token verloopt: 2026-09-15"],
-  ["tijdstip", "token: 2026-09-15T13:06:45Z"],
-  ["kort woord uit een zin", "sleutel: nodig"],
-  ["sterretjes", "wachtwoord: ********"],
-  ["streepje als leeg veld", "secret: -"],
-];
-
-describe("credential_toekenning — probeset", () => {
-  describe("treffers: alle vier moeten gevonden worden", () => {
-    for (const [naam, regel] of TREFFERS) {
-      it(`vlagt ${naam}`, () => {
-        const bevindingen = toekenningen(regel);
-        expect(bevindingen).toHaveLength(1);
-        expect(bevindingen[0].severity).toBe("kritiek");
-      });
+describe("isCredentialNaam", () => {
+  it("herkent het sleutelwoord als heel segment", () => {
+    for (const naam of [
+      "PASSWORD",
+      "SMTP_PASS",
+      "apiKey",
+      "db.password",
+      "WACHTWOORD",
+      "SESSION_SECRET",
+      "GITHUB_TOKEN",
+      "authToken",
+      "X_API_KEY",
+      "credentials",
+    ]) {
+      expect(isCredentialNaam(naam), naam).toBe(true);
     }
   });
 
-  describe("niet-treffers: geen enkele mag afgaan", () => {
-    for (const [naam, regel] of NIET_TREFFERS) {
-      it(`zwijgt bij ${naam}`, () => {
-        expect(toekenningen(regel)).toEqual([]);
-      });
+  it("slaat niet aan op een woord dat het sleutelwoord alleen bevat", () => {
+    for (const naam of ["bypass", "monkey", "keyboard", "passage", "tokenizer", "authors", "passief"]) {
+      expect(isCredentialNaam(naam), naam).toBe(false);
+    }
+  });
+});
+
+describe("toekenningspatroon — treffers", () => {
+  // Stuk voor stuk korter dan de tweeentwintig tekens van base64_geheim en de
+  // tweeendertig van hoge_entropie: precies het gat dat RSK-0019 beschrijft.
+  const treffers = [
+    "WACHTWOORD=hunter2!",
+    "PASSWORD: s3cr3tje",
+    'secret = "abc123xyz"',
+    "SMTP_PASS=Zomer2026",
+    "api_key: k9f2m4qp",
+    "db.password='Tr0ub4dour'",
+    "SESSION_SECRET=q8w7e6r5t4",
+    "AUTH_TOKEN: bx91kd02",
+    'apiKey: "aZ4tR7nQ"',
+    "GEHEIM=paardenbloem9",
+  ];
+
+  for (const regel of treffers) {
+    it(`vlagt ${regel.split(/[:=]/)[0]}`, () => {
+      expect(vlagtToekenning(regel), regel).toBe(true);
+    });
+  }
+
+  it("vlagt een korte waarde die geen enkel vormpatroon haalt", () => {
+    const regel = "SMTP_PASS=Zomer2026";
+    const gevonden = patronen(regel);
+    expect(gevonden).toContain("toekenning_secret");
+    expect(gevonden).not.toContain("hoge_entropie");
+    expect(gevonden).not.toContain("base64_geheim");
+  });
+});
+
+describe("toekenningspatroon — niet-treffers", () => {
+  const nietTreffers = [
+    // Plaatshouders en verwijzingen naar een andere bewaarplaats.
+    "PASSWORD=<jouw wachtwoord>",
+    "SMTP_PASS=${SMTP_PASS}",
+    "password: $DB_PASSWORD",
+    "API_KEY=%API_KEY%",
+    "secret: changeme",
+    "password = your_password",
+    "TOKEN=xxxxxxxx",
+    "wachtwoord: ........",
+    "GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}",
+    "password = process.env.DB_PASSWORD",
+    "apiKey: config.apiKey",
+    'secret = getSecret("smtp")',
+    // Typeaanduidingen uit schema's en code.
+    "password: string",
+    "api_key: null",
+    "authToken?: string",
+    "secret: boolean",
+    "credentials: required",
+    // Namen die een sleutelwoord alleen bevatten.
+    "bypass=true12345",
+    "monkey = bananen42",
+    "tokenizer: wordpiece",
+    // Een Jarvis-id rechts van de dubbele punt.
+    "secret: T-20260912-sanitizer-toekenning",
+    "token: DEC-0043",
+    // Te kort om ooit een credential te zijn.
+    "PASSWORD=ab",
+    "secret: 123",
+  ];
+
+  for (const regel of nietTreffers) {
+    it(`laat ${regel} met rust`, () => {
+      expect(vlagtToekenning(regel), regel).toBe(false);
+    });
+  }
+
+  // De drie klassen die de eerste versie van dit patroon in de eigen
+  // repositories opleverde. Ze staan hier apart omdat elk een eigen regel in
+  // isEchteToekenning afdwingt; verdwijnt die regel, dan valt hier één test om
+  // en niet de hele scan.
+  describe("de klassen die de eerste versie wél vlagde", () => {
+    it("laat een HTTP-header in vercel.json met rust (waarde is een configuratiewoord)", () => {
+      const json = [
+        '{ "key": "X-Frame-Options", "value": "DENY" },',
+        '{ "key": "Referrer-Policy", "value": "no-referrer" },',
+        '{ "key": "X-Content-Type-Options", "value": "nosniff" },',
+        '{ "key": "Cache-Control", "value": "no-store" }',
+      ].join("\n");
+      expect(patronen(json)).not.toContain("toekenning_secret");
+    });
+
+    it("laat een afgekapte waarde uit documentatie met rust", () => {
+      expect(vlagtToekenning("  sleutel: sb_publishable_…              # publieke sleutel")).toBe(false);
+      expect(vlagtToekenning('window.JARVIS = { key: "sb_publishable_…" };')).toBe(false);
+      expect(vlagtToekenning("api_key: sk-ant-...")).toBe(false);
+    });
+
+    it("laat lopende tekst met rust waar een woord aan de naam voorafgaat", () => {
+      expect(vlagtToekenning("- Geen nieuw account, geen nieuw token: `GITHUB_TOKEN` bestaat alleen")).toBe(false);
+      expect(vlagtToekenning("Het wachtwoord: bewaar het in de kluis.")).toBe(false);
+    });
+
+    it("ziet een declaratie in code nog steeds wél", () => {
+      expect(vlagtToekenning('export const apiKey = "aZ4tR7nQ";')).toBe(true);
+      expect(vlagtToekenning("  SMTP_PASS=Zomer2026")).toBe(true);
+      expect(vlagtToekenning("- SESSION_SECRET=q8w7e6r5t4")).toBe(true);
+    });
+
+    it("laat een waarde met rust die zelf een credentialnaam is", () => {
+      expect(vlagtToekenning("PASSWORD=SMTP_PASSWORD")).toBe(false);
+    });
+  });
+
+  it("meldt een leverancierssleutel onder zijn eigen naam, niet als toekenning", () => {
+    const gevonden = patronen("ANTHROPIC_API_KEY=sk-ant-abcdefghijklmnop12345");
+    expect(gevonden).toContain("anthropic_api_key");
+    expect(gevonden).not.toContain("toekenning_secret");
+  });
+
+  it("scant ook binnen een voorbeeldblok: een sleutel is nooit een legitiem voorbeeld", () => {
+    const tekst = [VOORBEELD_MARKERING, "```", "SMTP_PASS=Zomer2026", "```"].join("\n");
+    expect(vlagtToekenning(tekst)).toBe(true);
+  });
+});
+
+describe("isEchteToekenning", () => {
+  it("weigert een fragment dat geen toekenning is", () => {
+    expect(isEchteToekenning("gewoon wat tekst")).toBe(false);
+  });
+});
+
+describe("postadres_nl", () => {
+  const adressen = [
+    "Kerkstraat 12, 1234 AB",
+    "Lange Voorhout 5a 2514EA",
+    "Prins Hendrikkade 104, 1011 AJ",
+    "Van der Helstplein 3, 1072 PH",
+  ];
+
+  for (const adres of adressen) {
+    it(`vlagt ${adres}`, () => {
+      expect(patronen(`Bezoekadres: ${adres} Amsterdam`), adres).toContain("postadres_nl");
+    });
+  }
+
+  const geenAdres = [
+    // Een losse postcode is geen woonadres.
+    "De postcode 1234 AB valt binnen het verzorgingsgebied.",
+    // Een jaartal met twee hoofdletters erachter.
+    "In 2026 AB Testing afgerond.",
+    // Een huisnummer zonder postcode.
+    "Kerkstraat 12 in Utrecht",
+    // Een versienummer.
+    "Release 3.2 1024 KB groot",
+  ];
+
+  for (const regel of geenAdres) {
+    it(`laat "${regel}" met rust`, () => {
+      expect(patronen(regel), regel).not.toContain("postadres_nl");
+    });
+  }
+
+  it("zwijgt over een adres in een gemarkeerd voorbeeldblok", () => {
+    const tekst = [VOORBEELD_MARKERING, "```", "Kerkstraat 12, 1234 AB Utrecht", "```"].join("\n");
+    expect(patronen(tekst)).not.toContain("postadres_nl");
+  });
+});
+
+describe("Jarvis-id in het entropiepatroon", () => {
+  it("herkent de vorm", () => {
+    for (const id of ["T-20260911-engine-repository", "DEC-0038", "RSK-0019-2fa-token", "LRN-0014"]) {
+      expect(isJarvisId(id), id).toBe(true);
     }
   });
 
-  it("vlagt geen van de niet-treffers wanneer ze in één document staan", () => {
-    const document = NIET_TREFFERS.map(([, regel]) => regel).join("\n");
-    expect(toekenningen(document)).toEqual([]);
+  it("stelt een taak-id met een cijfer-lettersegment vrij", () => {
+    // `2fa` is geen louter-cijfer- en geen louter-lettersegment, dus
+    // isIdentifierVorm liet dit id door; isJarvisId vangt het nu wel.
+    expect(isVerdachteEntropie("RSK-0019-2fa-token-rotatie-2026")).toBe(false);
   });
 
-  it("vindt elke treffer wanneer ze in één document staan", () => {
-    const document = TREFFERS.map(([, regel]) => regel).join("\n");
-    expect(toekenningen(document)).toHaveLength(TREFFERS.length);
-  });
-});
-
-describe("credential_toekenning — grenzen van het patroon", () => {
-  it("meldt alleen de waarde, niet de naam van de variabele", () => {
-    const bevindingen = toekenningen("WACHTWOORD=Zomer2026!");
-    // Gemaskeerd fragment: kop van drie tekens. Die kop komt uit de WAARDE, dus
-    // begint hij met "Zom" en niet met "WAC".
-    expect(bevindingen[0].fragment.startsWith("Zom")).toBe(true);
+  it("vlagt het id niet op een regel die over een credential gaat", () => {
+    const regel = "De taak RSK-0019-2fa-token-rotatie-2026 gaat over het roteren van de secret key.";
+    expect(patronen(regel)).not.toContain("hoge_entropie");
   });
 
-  it("laat een herkenbaar leverancierssecret bij zijn eigen patroon", () => {
-    const bevindingen = scanTekst(
-      "SUPABASE_KEY=sb_secret_abcdefghijklmnop",
-      LEGE_ALLOWLIST,
-      "docs/PROEF.md",
-    );
-    expect(bevindingen.map((b) => b.patroon)).toContain("supabase_secret_key");
-    expect(bevindingen.map((b) => b.patroon)).not.toContain("credential_toekenning");
-  });
-
-  it("zwijgt in een als voorbeeld gemarkeerd codeblok", () => {
-    const document = [VOORBEELD_MARKERING, "```", "WACHTWOORD=Zomer2026!", "```"].join("\n");
-    expect(toekenningen(document)).toEqual([]);
-  });
-
-  it("scant een gewoon codeblok wel", () => {
-    const document = ["```", "WACHTWOORD=Zomer2026!", "```"].join("\n");
-    expect(toekenningen(document)).toHaveLength(1);
-  });
-
-  it("vervangt niet automatisch — de poort dwingt een menselijke keuze af", () => {
-    const bevindingen = toekenningen("WACHTWOORD=Zomer2026!");
-    expect(bevindingen).toHaveLength(1);
-    // vervangbaar: false betekent dat de tekst ongemoeid blijft; dat is hier de
-    // gewenste uitkomst en wordt in sanitize.test.ts per patroon gecontroleerd.
-  });
-
-  it("laat een waarde toe die in de allowlist staat, per pad", () => {
-    const allowlist = { ...LEGE_ALLOWLIST, tokens: ["Zomer2026! in docs/PROEF.md"] };
-    const bevindingen = scanTekst("WACHTWOORD=Zomer2026!", allowlist, "docs/PROEF.md");
-    expect(bevindingen.filter((b) => b.patroon === "credential_toekenning")).toEqual([]);
-  });
-});
-
-describe("isCredentialWaarde", () => {
-  it("wijst alles onder de minimumlengte af", () => {
-    expect(isCredentialWaarde("kort")).toBe(false);
-    expect(isCredentialWaarde("abcdefgh")).toBe(true);
-  });
-
-  it("negeert een afsluitend leesteken bij het oordeel", () => {
-    expect(isCredentialWaarde("abcdefgh.")).toBe(true);
-    expect(isCredentialWaarde("kort123.")).toBe(false);
+  it("stelt een gewone lange sleutel niet vrij", () => {
+    expect(isJarvisId("A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6")).toBe(false);
   });
 });

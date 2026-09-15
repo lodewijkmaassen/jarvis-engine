@@ -53,10 +53,11 @@ export const PATROON_NAMEN = [
   "email",
   "telefoon_e164",
   "telefoon_nl",
+  "postadres_nl",
   "prive_sleutel",
   "hoge_entropie",
   "base64_geheim",
-  "credential_toekenning",
+  "toekenning_secret",
   // Geen tekstpatroon maar een leesfout. Een poort die stilzwijgend over een
   // onleesbaar bestand heen stapt, is geen poort.
   "bestand_onleesbaar",
@@ -241,73 +242,19 @@ export function isPlaatshouderVerbinding(waarde: string): boolean {
   return PLAATSHOUDERS.test(match[1]);
 }
 
-// ---------------------------------------------------------------------------
-// Toekenning: de plek in plaats van de vorm
-// ---------------------------------------------------------------------------
-
 /**
- * Vanaf hoeveel tekens een toegekende waarde als credential telt.
+ * Een record- of taak-id van Jarvis zelf: een vast voorvoegsel in hoofdletters,
+ * een datum of volgnummer, en daarna een slug — `T-20260911-engine-repository`,
+ * `DEC-0038`, `RSK-0019-2fa-token`.
  *
- * De vormpatronen hierboven beginnen pas bij tweeentwintig (base64) of
- * tweeendertig (entropie) tekens; precies dat gat is RSK-0019. Acht is de
- * ondergrens waaronder de waarde vrijwel altijd een woord uit een zin of een
- * korte instelling is (`nodig`, `vereist`, `ja`), en waarboven een
- * daadwerkelijk wachtwoord begint. Korter dan acht wordt hier bewust NIET
- * gevlagd: een poort die op elk woord achter een dubbele punt afgaat wordt
- * genegeerd, en dat is een groter gat dan het gat dat hij dicht.
+ * Deze vorm is nooit een sleutel. Ze stond eerder alleen in `isVerdachtBase64`,
+ * waardoor een taak-id met een cijfer-letter-segment (`…-2fa-token`) op een
+ * credentialregel via het entropiepatroon alsnog werd gevlagd: `isIdentifierVorm`
+ * eist per segment louter cijfers óf louter letters en laat `2fa` niet toe.
+ * Beide patronen delen nu dezelfde uitzondering.
  */
-export const CREDENTIAL_WAARDE_MINIMUM_LENGTE = 8;
-
-/** Waarden die een instelling aanduiden in plaats van een geheim. */
-const CREDENTIAL_NIETWAARDEN =
-  /^(?:true|false|null|nil|none|undefined|ja|nee|yes|no|geen|onbekend|verplicht|vereist|optioneel|n\/a|tbd|todo|\.{3}|…|-+|\*+)$/i;
-
-/** Vormen waarin een waarde naar iets anders verwijst in plaats van het te zijn. */
-const CREDENTIAL_VERWIJZINGEN =
-  /^(?:<[^>]*>|\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*|%[^%]+%|\{\{.*\}\}|\[\[GEREDIGEERD:.*)$/;
-
-/**
- * Is de toegekende waarde een echt geheim, of documentatie eromheen?
- *
- * Het toekenningspatroon levert alles op wat achter `WACHTWOORD=` of
- * `secret:` staat, ongeacht lengte of vorm — dat is juist het punt. Daarmee
- * verschuift het hele onderscheid naar deze functie, en dus is hij bewust
- * afwijzend: elke twijfelvorm valt af. Wat overblijft is een aaneengesloten
- * waarde van minstens acht tekens die geen plaatshouder, verwijzing,
- * instelling, getal, pad of bestandsnaam is.
- *
- * Wat hier NIET in staat is even belangrijk. Er is geen vormregel die
- * "leesbare" waarden vrijstelt: een wachtwoord uit drie gekoppelde woorden
- * heeft precies die vorm, en zo'n regel is eerder uit dit bestand verwijderd
- * (zie de opmerking bij isIdentifierVorm). Een vals-positief hoort in
- * `allowlist.yml` onder `tokens`, per waarde en per pad.
- */
-export function isCredentialWaarde(waarde: string): boolean {
-  // Eerst de ONGESNOEIDE waarde: een verwijzing eindigt zelf op een sluitteken
-  // (`${SUPABASE_PASSWORD}`, `<jouw wachtwoord>`), en dat wegknippen zou juist
-  // de vorm vernielen waaraan hij te herkennen is.
-  if (PLAATSHOUDERS.test(waarde)) return false;
-  if (CREDENTIAL_VERWIJZINGEN.test(waarde)) return false;
-  // Afsluitend leesteken hoort bij de zin, niet bij de waarde: `secret: abcdefgh.`
-  const kaal = waarde.replace(/["'`)\]}>,;.:!?]+$/, "");
-  if (kaal.length < CREDENTIAL_WAARDE_MINIMUM_LENGTE) return false;
-  if (PLAATSHOUDERS.test(kaal)) return false;
-  if (CREDENTIAL_NIETWAARDEN.test(kaal)) return false;
-  if (CREDENTIAL_VERWIJZINGEN.test(kaal)) return false;
-  // Getallen zijn poortnummers, geldigheidsduren en versies, nooit sleutels.
-  if (/^[0-9][0-9_.,-]*$/.test(kaal)) return false;
-  // Een pad of URL: `key: src/db/server.ts`, `token in docs/JARVIS.md`.
-  if (kaal.includes("/") || kaal.includes("\\")) return false;
-  // Een bestandsnaam of domeinnaam: een punt met een kort staartje erachter.
-  if (/\.[A-Za-z]{2,4}$/.test(kaal)) return false;
-  // Een Jarvis-id of een gedateerde identifier — dezelfde uitzondering als bij
-  // entropie, en om dezelfde reden: een taak over een token noemt dat woord en
-  // haar eigen id in een zin (`... token, zie T-20260912-sanitizer-toekenning`).
-  if (/^[A-Z]{1,4}-\d{4,8}(?:-[a-z0-9]+)*$/.test(kaal)) return false;
-  if (isIdentifierVorm(kaal)) return false;
-  // Een datum of tijdstip: `token verloopt: 2026-09-15T13:06:45Z`.
-  if (/^\d{4}-\d{2}-\d{2}(?:[T ].*)?$/.test(kaal)) return false;
-  return true;
+export function isJarvisId(token: string): boolean {
+  return /^[A-Z]{1,4}-\d{4,8}(?:-[a-z0-9]+)*$/.test(token);
 }
 
 export function isVerdachtBase64(token: string, regel = ""): boolean {
@@ -328,11 +275,10 @@ export function isVerdachtBase64(token: string, regel = ""): boolean {
   // een credential gaat - juist secretsdocumentatie staat vol rotatienamen naast
   // het woord "key".
   if (/^[a-z0-9]+(?:[-_][a-z0-9]+)+$/.test(token)) return false;
-  // Een record- of taak-id van Jarvis zelf (`T-20260911-engine-repository`,
-  // `DEC-0038`): een vast voorvoegsel in hoofdletters, een datum of nummer, en
-  // een slug. Nooit een sleutel, ook niet op een regel die over een credential
-  // gaat - een taak over een token noemt dat woord en haar eigen id in één zin.
-  if (/^[A-Z]{1,4}-\d{4,8}(?:-[a-z0-9]+)*$/.test(token)) return false;
+  // Een record- of taak-id van Jarvis zelf. Nooit een sleutel, ook niet op een
+  // regel die over een credential gaat - een taak over een token noemt dat
+  // woord en haar eigen id in één zin.
+  if (isJarvisId(token)) return false;
   // Streepjes en liggende streepjes zijn wat door mensen gemaakte slugs
   // kenmerkt: `mijnapp-prod-2026-08`, `T-20260910-review-reminder`,
   // `docs/CLAUDE_ARCHIEF_2026-09-10.md`. Sleutels hebben ze zelden, en dan nog
@@ -364,6 +310,7 @@ export function isVerdachteEntropie(token: string, minimumLengte = ENTROPIE_MINI
   if (!/[A-Za-z]/.test(token)) return false;
   if (isHash(token)) return false;
   if (isIdentifierVorm(token)) return false;
+  if (isJarvisId(token)) return false;
   return shannonEntropie(token) >= ENTROPIE_DREMPEL_BITS;
 }
 
@@ -383,6 +330,135 @@ export function isIdentifierVorm(token: string): boolean {
   if (!kop) return false;
   const rest = token.slice(kop[0].length + 1).split(/[_-]/);
   return rest.length >= 1 && rest.every((s) => /^[0-9]+$/.test(s) || /^[a-z]+$/.test(s));
+}
+
+// ---------------------------------------------------------------------------
+// Toekenning van een credential
+// ---------------------------------------------------------------------------
+
+/**
+ * De sleutelwoorden die een naam tot credentialnaam maken. Bewust dezelfde
+ * woorden als CREDENTIALWOORDEN, maar hier per SEGMENT vergeleken in plaats van
+ * ergens in de regel: `bypass=true` en `monkey=3` mogen niet aanslaan, en dat
+ * doen ze met een losse deelstringtest wel.
+ */
+const TOEKENNING_SLEUTELWOORDEN = new Set([
+  "key",
+  "token",
+  "secret",
+  "password",
+  "passwd",
+  "pass",
+  "pwd",
+  "auth",
+  "credential",
+  "credentials",
+  "sleutel",
+  "wachtwoord",
+  "geheim",
+  "apikey",
+  "dsn",
+]);
+
+/**
+ * Waarden die documentatie invult waar een credential hoort. Ruimer dan
+ * PLAATSHOUDERS: hier komen ook verwijzingen naar een andere bewaarplaats
+ * (`process.env.X`, `${{ secrets.Y }}`, `vault:…`) en typeaanduidingen uit
+ * schema's en code (`string`, `null`, `true`) bij.
+ */
+const TOEKENNING_NIET_GEHEIM =
+  /^(?:<[^>]*>|\$\{?\{?[^}]*\}?\}?|%[A-Za-z_][A-Za-z0-9_]*%|\*+|x+|\.+|-+|_+|\?+|n\/a|geen|leeg|empty|none|nil|null|true|false|undefined|string|number|boolean|text|str|int|bool|any|required|optional|process\.env(?:\.[A-Za-z0-9_]+)?|env(?:\.[A-Za-z0-9_]+)?|Deno\.env.*|os\.environ.*|secrets\..*|vault:.*|changeme|change_me|your[_-]?\w*|my[_-]?\w*|example\w*|dummy\w*|placeholder|redacted|hidden|zie\b.*|tbd|todo)$/i;
+
+/** Het minimum waaronder een toegekende waarde praktisch nooit een credential is. */
+export const TOEKENNING_MINIMUM_LENGTE = 6;
+
+/**
+ * Een naam als `SMTP_PASS`, `apiKey` of `db.password` — het sleutelwoord moet
+ * een heel segment zijn. camelCase telt daarbij als scheidingsteken, anders
+ * mist `apiKey` het woord "key".
+ */
+export function isCredentialNaam(naam: string): boolean {
+  const segmenten = naam
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .split(/[_.\-[\]"']+/)
+    .filter((s) => s.length > 0)
+    .map((s) => s.toLowerCase());
+  return segmenten.some((s) => TOEKENNING_SLEUTELWOORDEN.has(s));
+}
+
+/**
+ * Herkent de TOEKENNING in plaats van de waarde: `WACHTWOORD=hunter2`,
+ * `PASSWORD: s3cr3t`, `secret = "abc123"`. Dat vangt precies wat RSK-0019
+ * beschrijft — een credential dat te kort is voor het entropie- of
+ * base64-patroon glipt erlangs, ongeacht zijn vorm.
+ *
+ * De eerdere poging is teruggedraaid omdat ze een nieuwe klasse
+ * vals-positieven gaf. Daarom staat de drempel hier niet op de vorm van de
+ * waarde maar op drie harde eisen: de naam moet een credentialnaam zijn, de
+ * waarde mag geen plaatshouder of verwijzing naar een andere bewaarplaats
+ * zijn, en ze moet minstens TOEKENNING_MINIMUM_LENGTE tekens tellen.
+ */
+// Geen backtick-variant: een inline codespan achter een dubbele punt is in
+// Markdown vrijwel altijd een NAAM ("geen nieuw token: `GITHUB_TOKEN`"), niet
+// een waarde. Die variant leverde meteen een vals-positief op.
+const TOEKENNING = /([A-Za-z_][A-Za-z0-9_.\-[\]"']{0,63})\s*[:=]\s*(?:"([^"\n]{1,200})"|'([^'\n]{1,200})'|([^\s"'`,;)\]}]{1,200}))/;
+
+/**
+ * Wat er links van de naam mag staan. Een echte toekenning opent zijn clausule:
+ * regelbegin, een lijststreepje, een accolade van een object, een quote. In
+ * lopende tekst gaat er een gewoon woord aan vooraf — "geen nieuw token: …" —
+ * en dat is de grootste bron van ruis. De declaratiewoorden staan er apart bij,
+ * zodat `export const apiKey = "…"` wél wordt gezien.
+ */
+const DECLARATIEWOORDEN =
+  /\b(?:export|const|let|var|public|private|protected|readonly|static|final|val|def|self|this)\b[\s.]*/g;
+
+function opentClausule(voorTreffer: string): boolean {
+  // Alles ná de laatste clausule-opener. Staat daar nog een gewoon woord, dan
+  // is dit lopende tekst en geen toekenning. Bewust op de HELE voorkant en niet
+  // op het laatste teken: "…geen langlevend credential:" eindigt ook op een
+  // spatie, en juist die vorm gaf een vals-positief in een gegenereerd
+  // JSON-overzicht, waar de markdown tot één regel is samengevoegd.
+  const rest = voorTreffer.replace(/^[\s\S]*[{,([|"'>#*]/, "");
+  return !/[A-Za-z0-9]/.test(rest.replace(DECLARATIEWOORDEN, ""));
+}
+
+/**
+ * Een waarde die uit louter letterwoorden bestaat: `no-referrer`, `nosniff`,
+ * `DENY`, `X-Frame-Options`, `Cache-Control`. Dat is de vorm van een
+ * configuratiewoord, niet van een sleutel.
+ *
+ * Bewust een geaccepteerde vals-negatief: een wachtwoord dat uitsluitend uit
+ * letters bestaat glipt hierdoor langs dit patroon. De acceptatie-eis van deze
+ * taak is tweezijdig en de stille kant weegt zwaarder — een poort die op elke
+ * `"key": "Cache-Control"` afgaat, wordt genegeerd en bewaakt dan niets meer.
+ */
+const LOUTER_LETTERWOORDEN = /^[A-Za-z]+(?:[-_][A-Za-z]+)*$/;
+
+/** Is dit fragment een toekenning van een échte geheime waarde? */
+export function isEchteToekenning(fragment: string, regelVoorTreffer = ""): boolean {
+  const match = new RegExp(`^${TOEKENNING.source}$`).exec(fragment);
+  if (!match) return false;
+  const naam = match[1];
+  const waarde = match[2] ?? match[3] ?? match[4] ?? "";
+  if (!isCredentialNaam(naam)) return false;
+  if (!opentClausule(regelVoorTreffer)) return false;
+  if (waarde.length < TOEKENNING_MINIMUM_LENGTE) return false;
+  if (TOEKENNING_NIET_GEHEIM.test(waarde)) return false;
+  // Een afgekapte waarde uit documentatie: `sb_publishable_…`, `sk-ant-...`.
+  if (waarde.includes("…") || waarde.includes("...")) return false;
+  // De waarde is zelf een credentialNAAM: een verwijzing, geen geheim.
+  if (isCredentialNaam(waarde)) return false;
+  // Een configuratiewoord in plaats van een sleutel.
+  if (LOUTER_LETTERWOORDEN.test(waarde)) return false;
+  // Een verwijzing naar code of naar een andere waarde, geen letterlijk geheim:
+  // `password = row.wachtwoord`, `secret: config.get("x")`.
+  if (/^[A-Za-z_$][A-Za-z0-9_$]*(?:\.[A-Za-z0-9_$]+)+$/.test(waarde)) return false;
+  if (/[([]/.test(waarde)) return false;
+  // Een Jarvis-id of een gedateerde identifier is nooit een sleutel, ook niet
+  // rechts van een dubbele punt.
+  if (isJarvisId(waarde) || isIdentifierVorm(waarde)) return false;
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -688,6 +764,19 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     vervangbaar: true,
   },
   {
+    // Straat + huisnummer + postcode. Bewust alle drie tegelijk: een losse
+    // postcode staat in elk vestigingsadres en elke voorbeeldfactuur, maar de
+    // combinatie met een straatnaam en een huisnummer wijst een woonadres aan
+    // en dat is een persoonsgegeven.
+    naam: "postadres_nl",
+    categorie: "pii",
+    patroon:
+      /[A-Z][A-Za-zÀ-ÿ'’.]+(?:[ -][A-Za-zÀ-ÿ'’.]+){0,3}\s+\d{1,5}\s*[A-Za-z]?\s*,?\s+[1-9][0-9]{3}\s?[A-Z]{2}/,
+    linkerGrens: /[A-Za-z0-9]/,
+    rechterGrens: /[A-Za-z0-9]/,
+    vervangbaar: true,
+  },
+  {
     // De header alleen is genoeg. Regelgebaseerd scannen ziet de body van een
     // PEM-blok als losse regels die elk onder de drempel kunnen blijven; bij
     // een 2048-bits sleutel bleven zo zeven van de achtentwintig regels
@@ -722,36 +811,18 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     vervangbaar: false,
   },
   {
-    // De TOEKENNING in plaats van de waarde. Elk patroon hierboven herkent een
-    // secret aan zijn vorm, en daarmee glipt alles erdoor wat kort of vormloos
-    // is — RSK-0019. Wat een credential verraadt is niet zijn vorm maar zijn
-    // plek: rechts van `WACHTWOORD=`, `PASSWORD:` of `secret = "…"` staat per
-    // definitie een credential, hoe kort ook.
-    //
-    // Staat NA de leverancierspatronen en na verbindingsreeks: die zijn
-    // specifieker en moeten de treffer houden (het bereik wordt bezet, zie
-    // zoekTreffers), zodat `SUPABASE_KEY=sb_secret_…` als supabase_secret_key
-    // wordt gemeld en niet als naamloze toekenning. Staat VOOR hoge_entropie
-    // en base64_geheim, want daar is dit patroon juist het vangnet van.
-    //
-    // De lookbehind vangt de naam, de match is alleen de WAARDE: zo blijft het
-    // gemaskeerde fragment het geheim en lekt de melding niet alsnog de rest
-    // van de regel. Het liggend streepje hoort bij de linkergrens van de naam
-    // (`SESSION_SECRET=`), niet bij een woordgrens — dezelfde val als bij
-    // CREDENTIALWOORDEN.
-    naam: "credential_toekenning",
+    // Staat BEWUST als laatste. De treffer beslaat de hele toekenning, dus een
+    // leverancierspatroon dat dezelfde waarde al claimde houdt voorrang via de
+    // bezet-controle in de scanlus; anders zou `SMTP_PASS=sk-ant-…` als
+    // naamloze toekenning worden gemeld in plaats van als Anthropic-sleutel.
+    naam: "toekenning_secret",
     categorie: "secret",
-    patroon:
-      /(?<=(?:^|[^A-Za-z0-9])(?:key|token|secret|password|passwd|pwd|pass|auth|authorization|authentication|credential|bearer|sleutel|wachtwoord|geheim)["'`\]]?[ \t]*[:=][ \t]*["'`]?(?:bearer[ \t]+|basic[ \t]+)?)[^\s"'`]+/i,
-    // De waarde staat per definitie achter "=", ":" of een aanhalingsteken;
-    // een letter of cijfer ervoor betekent dat de lookbehind iets anders ving.
-    linkerGrens: /[A-Za-z0-9]/,
-    rechterGrens: TOKEN_GRENS,
-    // Bewust NIET automatisch vervangen. Dit patroon oordeelt over een plek en
-    // niet over een vorm; het is daarmee het minst zekere secretpatroon dat er
-    // is. Een vals-positief automatisch overschrijven beschadigt echte tekst,
-    // dus dwingt de poort hier een menselijke keuze af — weghalen, of bewust in
-    // de allowlist. Zelfde afweging als bij hoge_entropie.
+    patroon: TOEKENNING,
+    linkerGrens: /[A-Za-z0-9_.-]/,
+    rechterGrens: /[A-Za-z0-9_-]/,
+    // De treffer bevat de naam van de sleutel; die automatisch overschrijven
+    // maakt de regel onleesbaar. Zoals bij hoge_entropie dwingt de poort hier
+    // een menselijke keuze af.
     vervangbaar: false,
   },
 ];
@@ -774,11 +845,9 @@ function herkenLeveranciersSecret(waarde: string): PatroonNaam | null {
   for (const def of PATROON_DEFS) {
     if (def.categorie !== "secret") continue;
     if (def.naam === "hoge_entropie" || def.naam === "base64_geheim") continue;
-    // credential_toekenning oordeelt over een REGEL en niet over een waarde:
-    // los van zijn regel heeft een allowlist-item geen toekenning om achter te
-    // staan. Meelopen zou hem hier nooit laten aanslaan en wel de allowlist
-    // afsluiten voor waarden die er juist in horen.
-    if (def.naam === "credential_toekenning") continue;
+    // Een vormpatroon over een hele regel, geen waardepatroon: op een losse
+    // waarde uit de allowlist zegt het niets.
+    if (def.naam === "toekenning_secret") continue;
     if (new RegExp(def.patroon.source).test(waarde)) return def.naam;
   }
   return null;
@@ -950,7 +1019,7 @@ function isToegestaan(
     case "prive_sleutel":
     case "base64_geheim":
     case "hoge_entropie":
-    case "credential_toekenning":
+    case "toekenning_secret":
       return inAllowlist(index.tokens, waarde.trim(), bestand);
     default:
       return false;
@@ -975,13 +1044,10 @@ function zoekTreffers(
 
   for (let regelIndex = 0; regelIndex < regels.length; regelIndex += 1) {
     const regel = regels[regelIndex];
-    // Een voorbeeldmarkering onderdrukt contactgegevens en het
-    // toekenningspatroon. Herkenbare secrets en identificatienummers blijven
-    // altijd scannen: een echte sleutel is nooit een legitiem voorbeeld, en wie
-    // er een in een voorbeeldblok zet heeft juist dan een poort nodig.
-    // credential_toekenning hoort wel in die uitzondering, want een
-    // gemarkeerd blok is precies de plek waar `WACHTWOORD=<jouw wachtwoord>`
-    // hoort te staan; dat is de vorm die de opdrachtgever expliciet vrijstelde.
+    // Een voorbeeldmarkering onderdrukt UITSLUITEND contactgegevens. Secrets en
+    // identificatienummers blijven altijd scannen: een sleutel is nooit een
+    // legitiem voorbeeld, en wie er een in een voorbeeldblok zet heeft juist
+    // dan een poort nodig.
     const alleenContactgegevensOverslaan = overslaan[regelIndex];
     const bezet: [number, number][] = [];
 
@@ -991,15 +1057,13 @@ function zoekTreffers(
         (def.naam === "email" ||
           def.naam === "telefoon_e164" ||
           def.naam === "telefoon_nl" ||
-          def.naam === "credential_toekenning")
+          def.naam === "postadres_nl")
       ) {
         continue;
       }
-      // Vlaggen van de definitie meenemen, niet alleen "g". Zonder dit valt de
-      // hoofdletterongevoeligheid van credential_toekenning weg en ziet het
-      // patroon `WACHTWOORD=` niet — precies de normaalvorm van een
-      // omgevingsvariabele. "g" en "y" worden vervangen door de "g" die deze
-      // lus zelf nodig heeft; de andere vlaggen zijn van het patroon.
+      // "g" is wat de lus zelf nodig heeft; de andere vlaggen zijn van het
+      // patroon. Ze laten vallen maakte elk hoofdletterongevoelig patroon
+      // stilzwijgend hoofdlettergevoelig.
       const zoeker = new RegExp(def.patroon.source, `g${def.patroon.flags.replace(/[gy]/g, "")}`);
       let match = zoeker.exec(regel);
       while (match !== null) {
@@ -1024,8 +1088,8 @@ function zoekTreffers(
             ? isVerdachteEntropie(waarde)
             : def.naam === "base64_geheim"
               ? isVerdachtBase64(waarde, regel)
-              : def.naam === "credential_toekenning"
-                ? isCredentialWaarde(waarde)
+              : def.naam === "toekenning_secret"
+                ? isEchteToekenning(waarde, regel.slice(0, start))
                 : true;
 
         if (linksOk && rechtsOk && entropieOk && !overlapt(bezet, start, eind)) {
