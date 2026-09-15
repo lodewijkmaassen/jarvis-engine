@@ -9,6 +9,7 @@ import {
   ROLLEN_START,
   genereerAfgeleiden,
   genereerAgentdefinitie,
+  genereerManifest,
   leesRolcontract,
   vervangOverzichtsblok,
   vindDrift,
@@ -40,6 +41,7 @@ const CONFIG: AfgeleidenConfig = {
   map: "agents",
   voorvoegsel: "j-",
   overzicht: "INSTAP.md",
+  manifest: "",
   gereedschap: { lezen: "Lees, Zoek", schrijven: "Schrijf, Bewerk", rapporteren: "Schrijf", uitvoeren: "Voer" },
 };
 
@@ -134,5 +136,62 @@ describe("afgeleiden en drift", () => {
     const a = genereerAfgeleiden([r.contract], CONFIG, "rollen", null);
     const b = genereerAfgeleiden([r.contract], CONFIG, "rollen", null);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+// Het manifest is de tweede afgeleide: de vorm waarmee een ander gereedschap
+// de rollen kan overnemen. Deze tests zetten vast wat die wissel mogelijk
+// maakt - het contract volledig, de vermogens neutraal - en wat hem juist zou
+// blokkeren: gereedschapsnamen van één omgeving die erin lekken.
+describe("leveranciersneutraal manifest", () => {
+  it("draagt elk contract volledig, met de neutrale vermogens", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    const manifest = JSON.parse(genereerManifest([r.contract], "rollen"));
+    expect(manifest.versie).toBe(1);
+    expect(manifest.bron).toBe("rollen");
+    expect(manifest.rollen).toHaveLength(1);
+    const qa = manifest.rollen[0];
+    expect(qa.rol).toBe("qa");
+    expect(qa.titel).toBe("Rolcontract — QA");
+    expect(qa.samenvatting).toBe("Toetst onafhankelijk.");
+    expect(qa.vermogens).toEqual(["lezen", "uitvoeren", "rapporteren"]);
+    expect(qa.agent).toBe(true);
+    expect(qa.bron).toBe("rollen/qa.md");
+    expect(qa.contract).toContain("## 1. Doel");
+    expect(qa.contract.trim()).toBe(r.contract.tekst.trim());
+  });
+
+  it("bevat geen gereedschapsnaam van een werkomgeving", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    const uit = genereerManifest([r.contract], "rollen");
+    for (const naam of ["Lees", "Zoek", "Schrijf", "Bewerk", "Voer", "tools:", "name:"]) {
+      expect(uit).not.toContain(naam);
+    }
+  });
+
+  it("neemt ook een rol zonder eigen agentdefinitie mee, op vaste volgorde", () => {
+    const qa = leesRolcontract("qa.md", CONTRACT);
+    const orch = leesRolcontract("orchestrator.md", "---\nsamenvatting: Stuurt.\nvermogens:\n  - lezen\nagent: nee\n---\n# Rolcontract — Orchestrator\n");
+    if (!qa.ok || !orch.ok) throw new Error("fixture");
+    const manifest = JSON.parse(genereerManifest([qa.contract, orch.contract], "rollen"));
+    expect(manifest.rollen.map((r: { rol: string }) => r.rol)).toEqual(["orchestrator", "qa"]);
+    expect(manifest.rollen[0].agent).toBe(false);
+  });
+
+  it("wordt alleen gegenereerd als de configuratie een pad noemt, en telt mee in de driftcontrole", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    expect(genereerAfgeleiden([r.contract], CONFIG, "rollen", null).map((a) => a.pad)).not.toContain("rollen.json");
+    const metManifest = genereerAfgeleiden([r.contract], { ...CONFIG, manifest: "rollen.json" }, "rollen", null);
+    expect(metManifest.map((a) => a.pad)).toEqual(["agents/j-qa.md", "INSTAP.md", "rollen.json"]);
+    expect(vindDrift(metManifest, new Map([["rollen.json", "{}"]]))).toContainEqual({ pad: "rollen.json", reden: "wijkt af van de bron" });
+  });
+
+  it("is deterministisch", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    expect(genereerManifest([r.contract], "rollen")).toBe(genereerManifest([r.contract], "rollen"));
   });
 });

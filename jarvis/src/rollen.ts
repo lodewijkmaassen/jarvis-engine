@@ -41,9 +41,14 @@ export type AfgeleidenConfig = {
   readonly voorvoegsel: string;
   /** Instapdocument met een gegenereerd blok; leeg = geen overzicht. */
   readonly overzicht: string;
+  /** Leveranciersneutraal manifest; leeg = geen manifest. */
+  readonly manifest: string;
   /** Vermogen -> door komma's gescheiden gereedschapsnamen van de omgeving. */
   readonly gereedschap: Readonly<Partial<Record<Vermogen, string>>>;
 };
+
+/** Vorm van het manifest; verhoog bij een wijziging die een lezer breekt. */
+export const MANIFEST_VERSIE = 1;
 
 export const ROLLEN_START = "<!-- jarvis:rollen:start -->";
 export const ROLLEN_EIND = "<!-- jarvis:rollen:eind -->";
@@ -128,6 +133,49 @@ export function genereerOverzichtsblok(contracten: readonly Rolcontract[], rolle
   return regels.join("\n");
 }
 
+/**
+ * Het leveranciersneutrale manifest: alle contracten in één machineleesbaar
+ * bestand.
+ *
+ * De agentdefinities hierboven zijn de vorm van één werkomgeving, en juist de
+ * twee stukken die per leverancier verschillen - de front-matter en de
+ * gereedschapsnamen - zitten erin verweven. Wie naar een ander gereedschap wil
+ * wisselen, moet de contracten dan opnieuw met de hand vertalen, en dat is
+ * precies het handwerk waardoor de enige bestaande afgeleide ging driften.
+ *
+ * Het manifest draagt daarom alleen wat van de leverancier onafhankelijk is:
+ * sleutel, titel, samenvatting, de neutrale vermogens, of de rol een eigen
+ * agentdefinitie hoort te krijgen, het bronpad en de volledige contracttekst.
+ * Bewust géén gereedschapsnamen - die horen bij de omgeving, niet bij het
+ * contract. Een tweede gereedschap leest dit bestand, vertaalt `vermogens`
+ * naar wat het zelf kent, en heeft verder niets van deze engine nodig.
+ *
+ * Deterministisch: vaste volgorde op rol, geen tijdstip, geen omgeving.
+ */
+export function genereerManifest(contracten: readonly Rolcontract[], rollenMap: string): string {
+  const rollen = [...contracten]
+    .sort((a, b) => a.rol.localeCompare(b.rol))
+    .map((c) => ({
+      rol: c.rol,
+      titel: c.titel,
+      samenvatting: c.samenvatting.replace(/\s+/g, " "),
+      vermogens: [...c.vermogens],
+      agent: c.agent,
+      bron: `${rollenMap}/${c.rol}.md`,
+      contract: c.tekst.trimEnd(),
+    }));
+  const manifest = {
+    versie: MANIFEST_VERSIE,
+    gegenereerd_door: "jarvis rollen",
+    bron: rollenMap,
+    toelichting:
+      "Leveranciersneutrale afgeleide van de rolcontracten. De bron wint; wijzig dit bestand nooit met de hand. " +
+      "Vermogens zijn neutraal (lezen, schrijven, rapporteren, uitvoeren); vertaal ze naar de gereedschapsnamen van je eigen omgeving.",
+    rollen,
+  };
+  return `${JSON.stringify(manifest, null, 2)}\n`;
+}
+
 /** Vervangt het gegenereerde blok in een bestaand document, of voegt het onderaan toe. */
 export function vervangOverzichtsblok(document: string, blok: string): string {
   const tekst = document.replace(/\r\n/g, "\n");
@@ -163,6 +211,9 @@ export function genereerAfgeleiden(
   if (config.overzicht) {
     const blok = genereerOverzichtsblok(contracten, rollenMap);
     uit.push({ pad: config.overzicht, inhoud: vervangOverzichtsblok(bestaandOverzicht ?? "", blok) });
+  }
+  if (config.manifest) {
+    uit.push({ pad: config.manifest, inhoud: genereerManifest(contracten, rollenMap) });
   }
   return uit;
 }

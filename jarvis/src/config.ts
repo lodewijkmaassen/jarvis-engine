@@ -110,6 +110,10 @@ export const configSchema = z.strictObject({
   rol_afgeleiden_map: z.string().trim().default(""),
   rol_afgeleiden_voorvoegsel: z.string().trim().default(""),
   rol_overzicht: z.string().trim().default(""),
+  // Leveranciersneutrale afgeleide: één machineleesbaar bestand met alle
+  // contracten, zonder gereedschapsnamen, zodat een ander gereedschap de
+  // rollen kan overnemen zonder handwerk. Leeg = niet genereren.
+  rol_manifest: z.string().trim().default(""),
   rol_gereedschap: z
     .strictObject({
       lezen: z.string().trim().default(""),
