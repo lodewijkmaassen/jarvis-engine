@@ -2244,9 +2244,9 @@ async function verzamelAttestatieFeiten(
   if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
   const prLading = pr.lading as { body?: string | null; commits?: number; changed_files?: number };
   const prTekst = String(prLading.body ?? "");
-  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string } }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10);
+  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string }; parents?: readonly unknown[] }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10);
   if (typeof commitsRuw === "string") return commitsRuw;
-  const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message }));
+  const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message, ouders: Array.isArray(c.parents) ? c.parents.length : 1 }));
   const bestandenRuw = await leesAllePaginas<{ filename: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10);
   if (typeof bestandenRuw === "string") return bestandenRuw;
   const bestanden = bestandenRuw.map((f) => f.filename);
