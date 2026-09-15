@@ -3,12 +3,15 @@
 // tests zetten vast dat de afgeleide het contract volledig draagt, dat de
 // gereedschapsnamen uit de configuratie komen en niet uit de engine, en dat
 // drift wordt gezien.
-import { describe, expect, it } from "vitest";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import {
   ROLLEN_EIND,
   ROLLEN_START,
   genereerAfgeleiden,
   genereerAgentdefinitie,
+  genereerManifest,
   leesRolcontract,
   vervangOverzichtsblok,
   vindDrift,
@@ -40,6 +43,7 @@ const CONFIG: AfgeleidenConfig = {
   map: "agents",
   voorvoegsel: "j-",
   overzicht: "INSTAP.md",
+  manifest: "",
   gereedschap: { lezen: "Lees, Zoek", schrijven: "Schrijf, Bewerk", rapporteren: "Schrijf", uitvoeren: "Voer" },
 };
 
@@ -134,5 +138,100 @@ describe("afgeleiden en drift", () => {
     const a = genereerAfgeleiden([r.contract], CONFIG, "rollen", null);
     const b = genereerAfgeleiden([r.contract], CONFIG, "rollen", null);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+// Het manifest is de tweede afgeleide: de vorm waarmee een ander gereedschap
+// de rollen kan overnemen. Deze tests zetten vast wat die wissel mogelijk
+// maakt - het contract volledig, de vermogens neutraal - en wat hem juist zou
+// blokkeren: gereedschapsnamen van één omgeving die erin lekken.
+describe("leveranciersneutraal manifest", () => {
+  it("draagt elk contract volledig, met de neutrale vermogens", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    const manifest = JSON.parse(genereerManifest([r.contract], "rollen"));
+    expect(manifest.versie).toBe(1);
+    expect(manifest.bron).toBe("rollen");
+    expect(manifest.rollen).toHaveLength(1);
+    const qa = manifest.rollen[0];
+    expect(qa.rol).toBe("qa");
+    expect(qa.titel).toBe("Rolcontract — QA");
+    expect(qa.samenvatting).toBe("Toetst onafhankelijk.");
+    expect(qa.vermogens).toEqual(["lezen", "uitvoeren", "rapporteren"]);
+    expect(qa.agent).toBe(true);
+    expect(qa.bron).toBe("rollen/qa.md");
+    expect(qa.contract).toContain("## 1. Doel");
+    expect(qa.contract.trim()).toBe(r.contract.tekst.trim());
+  });
+
+  // Zoeken naar de gereedschapsnamen van de fixture toetst niets: die kunnen per
+  // constructie niet in de uitvoer staan, en een mutatie die de échte namen van een
+  // werkomgeving toevoegt komt er gewoon langs. Pin daarom de sleutelverzameling
+  // zelf - dan valt elk nieuw veld op, of het nu `gereedschap` heet of `gegenereerd_op`.
+  it("draagt precies deze sleutels, zodat er niets van een omgeving bij kan sluipen", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    const manifest = JSON.parse(genereerManifest([r.contract], "rollen"));
+    expect(Object.keys(manifest)).toEqual(["versie", "gegenereerd_door", "bron", "toelichting", "rollen"]);
+    expect(Object.keys(manifest.rollen[0])).toEqual(["rol", "titel", "samenvatting", "vermogens", "agent", "bron", "contract"]);
+  });
+
+  it("neemt ook een rol zonder eigen agentdefinitie mee, op vaste volgorde", () => {
+    const qa = leesRolcontract("qa.md", CONTRACT);
+    const orch = leesRolcontract("orchestrator.md", "---\nsamenvatting: Stuurt.\nvermogens:\n  - lezen\nagent: nee\n---\n# Rolcontract — Orchestrator\n");
+    if (!qa.ok || !orch.ok) throw new Error("fixture");
+    const manifest = JSON.parse(genereerManifest([qa.contract, orch.contract], "rollen"));
+    expect(manifest.rollen.map((r: { rol: string }) => r.rol)).toEqual(["orchestrator", "qa"]);
+    expect(manifest.rollen[0].agent).toBe(false);
+  });
+
+  it("wordt alleen gegenereerd als de configuratie een pad noemt, en telt mee in de driftcontrole", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    expect(genereerAfgeleiden([r.contract], CONFIG, "rollen", null).map((a) => a.pad)).not.toContain("rollen.json");
+    const metManifest = genereerAfgeleiden([r.contract], { ...CONFIG, manifest: "rollen.json" }, "rollen", null);
+    expect(metManifest.map((a) => a.pad)).toEqual(["agents/j-qa.md", "INSTAP.md", "rollen.json"]);
+    expect(vindDrift(metManifest, new Map([["rollen.json", "{}"]]))).toContainEqual({ pad: "rollen.json", reden: "wijkt af van de bron" });
+  });
+
+  // Twee aanroepen na elkaar vallen in dezelfde milliseconde, dus een tijdstempel
+  // glipt erdoor. Zet de klok tussen de twee generaties een jaar vooruit.
+  it("is deterministisch, ook als de klok verspringt", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      const eerste = genereerManifest([r.contract], "rollen");
+      vi.setSystemTime(new Date("2027-06-30T12:34:56Z"));
+      expect(genereerManifest([r.contract], "rollen")).toBe(eerste);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Elke fixture hierboven is een paar regels lang; de echte contracten zijn ruim
+  // elfduizend tekens. Precies de fout die deze taak veroorzaakte - twee ontbrekende
+  // secties - heeft die ordegrootte en zou op een korte fixture onzichtbaar zijn.
+  // Deze test draait de generator daarom op de bron zelf.
+  it("draagt de echte contracten volledig, teken voor teken", async () => {
+    const rollenMap = path.join(__dirname, "..", "..", "jarvis", "roles");
+    const namen = (await readdir(rollenMap)).filter((n) => /\.md$/i.test(n)).sort();
+    expect(namen.length).toBeGreaterThanOrEqual(5);
+    const contracten = [];
+    for (const naam of namen) {
+      const gelezen = leesRolcontract(naam, await readFile(path.join(rollenMap, naam), "utf8"));
+      if (!gelezen.ok) throw new Error(gelezen.fout);
+      contracten.push(gelezen.contract);
+    }
+    const manifest = JSON.parse(genereerManifest(contracten, "jarvis/roles"));
+    expect(manifest.rollen).toHaveLength(namen.length);
+    for (const contract of contracten) {
+      const uit = manifest.rollen.find((r: { rol: string }) => r.rol === contract.rol);
+      expect(uit, `rol ${contract.rol} ontbreekt in het manifest`).toBeDefined();
+      // Geen toContain en geen trim-vergelijking: byte voor byte, anders is afkappen onzichtbaar.
+      expect(uit.contract).toBe(contract.tekst.trimEnd());
+      expect(uit.contract.length).toBeGreaterThan(1000);
+    }
   });
 });

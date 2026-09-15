@@ -30,6 +30,19 @@ staat de canonieke workflow in `jarvis/canonical/`, bij een consumer komt hij
 mee met de geïnstalleerde engine; de stap `engine` controleert bij een consumer
 dat de gepinde, geïnstalleerde engine-SHA op `main` van deze repository staat.
 
+De rolcontracten in `jarvis/roles/` zijn de bron; `jarvis rollen` genereert de
+afgeleiden en de poort ziet drift. Er zijn er twee: de agentdefinities plus het
+instapdocument van één werkomgeving (`rol_afgeleiden_map`, `rol_overzicht`), en
+sinds 2026-09-15 een leveranciersneutraal manifest (`rol_manifest`) — alle
+contracten in één machineleesbaar bestand, zonder gereedschapsnamen, zodat een
+ander gereedschap de rollen kan overnemen zonder de contracten met de hand te
+vertalen. Beide zijn optioneel: een lege configuratiewaarde laat het gedrag
+ongewijzigd.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.
+
+Voor het manifest: een consumer zet `rol_manifest` aan en toont daarmee aan dat
+een rol van leverancier kan wisselen zonder kennisverlies (AC-6, tot nu toe
+PENDING-LIVE).

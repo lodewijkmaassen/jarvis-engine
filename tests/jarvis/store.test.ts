@@ -48,6 +48,7 @@ const CONFIG: JarvisConfig = {
   rol_afgeleiden_map: "",
   rol_afgeleiden_voorvoegsel: "",
   rol_overzicht: "",
+  rol_manifest: "",
   rol_gereedschap: { lezen: "", schrijven: "", rapporteren: "", uitvoeren: "" },
 };
 
