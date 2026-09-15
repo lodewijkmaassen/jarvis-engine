@@ -99,7 +99,8 @@ export function rolVoorStap(tekst: string): Rol {
 }
 
 const WACHT_OP_TAAK = /wacht(?:en)?\s+op\s+(T-\d{8}-[a-z0-9-]+)/i;
-const WACHT_OP_PR = /wacht(?:en)?\s+op\s+(?:pr|pull request)\s*#?(\d+)/i;
+// "wacht op PR #26", "wacht op pull request lodewijkmaassen/jarvis-engine#26".
+const WACHT_OP_PR = /wacht(?:en)?\s+op\s+(?:pr|pull request)\s*(?:([\w.-]+\/[\w.-]+))?#?(\d+)/i;
 const AKKOORD_STAP = /\bakkoord\b.*\beigenaar\b|\beigenaar\b.*\bakkoord\b/i;
 
 type Uitvoering = {
@@ -135,9 +136,27 @@ function laatsteActiviteit(taak: string, activiteit: readonly Activiteit[]): str
   return best;
 }
 
-function afgerond(overzicht: Overzicht, taakId: string): boolean {
-  const t = overzicht.projecten.flatMap((p) => p.taken).find((x) => x.id === taakId);
-  return t !== undefined && t.status === "afgerond";
+function vindTaak(overzicht: Overzicht, taakId: string): TaakItem | undefined {
+  return overzicht.projecten.flatMap((p) => p.taken).find((x) => x.id === taakId);
+}
+
+/**
+ * Is pull request #nummer al samengevoegd? Twee onafhankelijke bronnen: de
+ * merge-activiteit die `jarvis pr mergen` wegschrijft (verwijzing `slug#n`),
+ * en de mergecommit in de recente git-historie van het overzicht ("Merge pull
+ * request #n …"). Zonder repository in de stap telt elk project mee; met
+ * repository alleen die.
+ */
+export function prGemerged(overzicht: Overzicht, activiteit: readonly Activiteit[], nummer: string, repo: string | null): boolean {
+  const naam = repo?.split("/").pop()?.toLowerCase() ?? null;
+  const viaActiviteit = activiteit.some((a) =>
+    a.soort === "merge" && a.verwijzing !== null && a.verwijzing.endsWith(`#${nummer}`) &&
+    (repo === null || a.verwijzing.toLowerCase() === `${repo.toLowerCase()}#${nummer}`));
+  if (viaActiviteit) return true;
+  const onderwerp = new RegExp(`^Merge pull request #${nummer}\\b`, "i");
+  return overzicht.projecten.some((p) =>
+    (naam === null || p.id.toLowerCase() === naam || p.naam.toLowerCase() === naam) &&
+    p.recent.some((r) => r.soort === "merge" && onderwerp.test(r.onderwerp)));
 }
 
 function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date): TaakRegie {
@@ -164,15 +183,27 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
   }
   if (volgende !== null) {
     const taakDep = WACHT_OP_TAAK.exec(volgende);
-    if (taakDep && !afgerond(overzicht, taakDep[1])) {
-      return { ...basis, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: false, wacht_op: taakDep[1],
-        waarom: `wacht op taak ${taakDep[1]}, die nog niet is afgerond; de controller hervat zodra dat wel zo is` };
+    if (taakDep) {
+      const dep = vindTaak(overzicht, taakDep[1]);
+      if (dep === undefined) {
+        // Een dependency die nergens bestaat wacht anders eeuwig: dat is een afwijking, geen wachttoestand.
+        return { ...basis, toestand: "AFWIJKING", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: true, wacht_op: taakDep[1],
+          volgende_stap: `De verwijzing naar ${taakDep[1]} in het dossier herstellen`,
+          waarom: `de stap wacht op taak ${taakDep[1]}, maar die taak bestaat in geen enkel project` };
+      }
+      if (dep.status !== "afgerond") {
+        return { ...basis, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: false, wacht_op: taakDep[1],
+          waarom: `wacht op taak ${taakDep[1]}, die nog niet is afgerond; de controller hervat zodra dat wel zo is` };
+      }
+      // Afgerond: de stap is weer gewoon uitvoerbaar werk (valt hieronder door).
     }
     const prDep = WACHT_OP_PR.exec(volgende);
-    if (prDep) {
-      return { ...basis, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: false, wacht_op: `PR #${prDep[1]}`,
-        waarom: `wacht op pull request #${prDep[1]}; de controller hervat na de merge` };
+    if (prDep && !prGemerged(overzicht, activiteit, prDep[2], prDep[1] ?? null)) {
+      const label = prDep[1] ? `${prDep[1]}#${prDep[2]}` : `PR #${prDep[2]}`;
+      return { ...basis, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: false, wacht_op: label,
+        waarom: `wacht op pull request ${label}, die nog niet is samengevoegd; de controller hervat na de merge` };
     }
+    // Een gemergede PR is geen wachtreden meer: de stap wordt weer uitvoerbaar werk.
   }
   if (open.length === 0 && stappen.length > 0) {
     return { ...basis, toestand: "DONE", verantwoordelijke: "knowledge-manager", uitvoerder: null, sinds: laatste, uitvoerbaar: true,

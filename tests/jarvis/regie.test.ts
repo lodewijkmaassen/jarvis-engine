@@ -56,6 +56,24 @@ describe("regie — toestand per open taak", () => {
     const klaar = bepaalRegie(overzicht([taak("T-20260901-a", { status: "afgerond" }), wacht]), [], NU);
     expect(klaar.taken.find((t) => t.id === "T-20260901-b")?.toestand).toBe("QUEUED");
   });
+  it("AFWIJKING als de taak waarop gewacht wordt in geen enkel project bestaat", () => {
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: "Inrichten — wacht op T-20260101-spook", gedaan: false }] })]), [], NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "AFWIJKING", uitvoerbaar: true, wacht_op: "T-20260101-spook" });
+  });
+  it("WAITING_FOR_DEPENDENCY op een pull request tot die is samengevoegd (merge-activiteit of mergecommit)", () => {
+    const wacht = taak("T-1", { stappen: [{ tekst: "Herpinnen — wacht op PR #26", gedaan: false }], wacht_op: "Herpinnen — wacht op PR #26" });
+    const open = bepaalRegie(overzicht([wacht]), [], NU);
+    expect(open.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", wacht_op: "PR #26", uitvoerbaar: false });
+    const merge = act({ soort: "merge", rol: "orchestrator", taak: null, verwijzing: "lodewijkmaassen/jarvis-engine#26", tekst: "pull request #26 samengevoegd" });
+    expect(bepaalRegie(overzicht([wacht]), [merge], NU).taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerbaar: true });
+    // Een andere PR met hetzelfde nummer telt niet als de stap de repository noemt.
+    const precies = taak("T-1", { stappen: [{ tekst: "Herpinnen — wacht op PR lodewijkmaassen/tovas-flow#26", gedaan: false }] });
+    expect(bepaalRegie(overzicht([precies]), [merge], NU).taken[0].toestand).toBe("WAITING_FOR_DEPENDENCY");
+    // De mergecommit in de recente historie volstaat ook.
+    const o = overzicht([wacht]);
+    (o.projecten[0] as unknown as { recent: unknown[] }).recent = [{ datum: iso(1), hash: "abc1234", onderwerp: "Merge pull request #26 from x/jarvis/regie", rol: null, taak: null, soort: "merge" }];
+    expect(bepaalRegie(o, [], NU).taken[0].toestand).toBe("QUEUED");
+  });
   it("DONE als alle stappen af zijn: de afronding is uitvoerbaar werk voor de kennisbeheerder", () => {
     const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: "Klaar", gedaan: true }] })]), [], NU);
     expect(r.taken[0]).toMatchObject({ toestand: "DONE", verantwoordelijke: "knowledge-manager", uitvoerbaar: true });

@@ -1641,6 +1641,9 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
     const uit = samen.lading as { sha: string };
     const grond = attestaties.koppen.includes(feiten.kop) ? "een geverifieerde attestatie van de poort" : `goedkeuring van ${eigenaar}`;
     console.log(`jarvis pr: #${nummer} samengevoegd in ${feiten.basis} als ${uit.sha.slice(0, 7)} (mergecommit), op grond van ${grond}.`);
+    // De regie ziet hieraan dat een "wacht op PR #n"-stap niet langer wacht.
+    await schrijfActiviteit({ uitvoerder: dezeUitvoerder(), rol: "orchestrator", taak: null, project: null, soort: "merge",
+      tekst: `pull request #${nummer} samengevoegd in ${feiten.basis} als ${uit.sha.slice(0, 7)}`, verwijzing: `${slug}#${nummer}` });
     return 0;
   }
 
