@@ -563,4 +563,19 @@ describe("openTakenUitDossiers", () => {
   it("valt terug op het id als titel, zodat een taak nooit onzichtbaar wordt", () => {
     expect(openTakenUitDossiers([d("T-a", "actief")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
   });
+
+  it("valt ook terug op het id bij een lege of alleen-witruimte-titel", () => {
+    // `titel:` zonder waarde geeft een lege string, niet `undefined`; die
+    // glipte langs de nullish-terugval en gaf een lege cel in het feitenblok.
+    expect(openTakenUitDossiers([d("T-a", "actief", ""), d("T-b", "review", "   ")])).toEqual([
+      { id: "T-a", titel: "T-a", status: "actief" },
+      { id: "T-b", titel: "T-b", status: "review" },
+    ]);
+  });
+
+  it("laat spaties om een titel heen weg", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief", "  Eerste  ")])).toEqual([
+      { id: "T-a", titel: "Eerste", status: "actief" },
+    ]);
+  });
 });

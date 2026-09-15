@@ -67,6 +67,35 @@ describe("genereerFeitenblok", () => {
     expect(leesFeitenblok(`# Titel\n\n${blok}\n\n## Narratief\nBlijft staan.\n`)).toBe(blok);
   });
 
+  it("houdt de rij op drie kolommen als er al een backslash vóór de pijp staat", () => {
+    const blok = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "pad\\|rest", status: "actief" }],
+    });
+    const rij = blok.split("\n").find((r) => r.startsWith("| T-0001 "));
+    expect(rij).toBeDefined();
+    // Tel de pijpen die markdown werkelijk als kolomscheiding leest: een pijp
+    // met een oneven aantal backslashes ervoor is ontsnapt, en telt dus niet.
+    const scheidingen = [...rij!.matchAll(/\|/g)].filter((m) => {
+      const backslashes = /(\\*)$/.exec(rij!.slice(0, m.index))![1].length;
+      return backslashes % 2 === 0;
+    });
+    // Drie kolommen betekent vier scheidingen: begin, twee tussen, eind.
+    expect(scheidingen).toHaveLength(4);
+  });
+
+  it("ontsnapt de commentaarmarkering omkeerbaar, zodat `&lt;!--` en `<!--` uit elkaar te houden blijven", () => {
+    const alsTitel = (titel: string) =>
+      genereerFeitenblok({ ...FEITEN, openTaken: [{ id: "T-0001", titel, status: "actief" }] })
+        .split("\n")
+        .find((r) => r.startsWith("| T-0001 "))!;
+    // Zonder de `&`-ontsnapping leverden deze twee titels dezelfde rij op, en
+    // was uit het feitenblok niet meer af te leiden wat er in het dossier stond.
+    expect(alsTitel("<!-- echt")).not.toBe(alsTitel("&lt;!-- letterlijk"));
+    expect(alsTitel("<!-- echt")).toContain("&lt;!-- echt");
+    expect(alsTitel("&lt;!-- letterlijk")).toContain("&amp;lt;!-- letterlijk");
+  });
+
   it("vouwt regeleindes in een taaktitel op tot spaties, zodat de rij één regel blijft", () => {
     const blok = genereerFeitenblok({
       ...FEITEN,
