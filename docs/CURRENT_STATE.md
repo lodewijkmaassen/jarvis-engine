@@ -30,6 +30,13 @@ staat de canonieke workflow in `jarvis/canonical/`, bij een consumer komt hij
 mee met de geïnstalleerde engine; de stap `engine` controleert bij een consumer
 dat de gepinde, geïnstalleerde engine-SHA op `main` van deze repository staat.
 
+De rolcontracten in `jarvis/roles/` zijn de bron; `jarvis rollen` leidt er drie
+vormen uit af en bewaakt ze op drift: de agentdefinities en het rollenblok van
+de werkomgeving, en een leveranciersneutrale, machineleesbare vorm zonder
+front-matter of gereedschapsnamen, zodat een tweede gereedschap dezelfde
+contracten kan inlezen. Die derde vorm komt alleen mee als een project hem
+configureert (`rol_neutraal`); deze repository laat hem leeg.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.
