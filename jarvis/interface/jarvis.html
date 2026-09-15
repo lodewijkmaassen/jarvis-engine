@@ -337,7 +337,7 @@ const SOORT = { beslissing: "beslissing", conflict: "conflict", actie: "actie", 
 const ROLNAAM = { orchestrator: "Jarvis · Orchestrator", "task-controller": "Task Controller", architect: "Architect", developer: "Engineering", qa: "QA", "knowledge-manager": "Knowledge Manager" };
 const ROLWAT = { orchestrator: "verdeelt het werk en bewaakt de regels", "task-controller": "bewaakt dat uitvoerbaar werk doorloopt", architect: "onderzoekt en ontwerpt vóór de bouw", developer: "bouwt, test en opent pull requests", qa: "toetst onafhankelijk wat gebouwd is", "knowledge-manager": "houdt dossiers, kennis en de stand bij" };
 const TOESTAND_TEKST = { QUEUED: "wacht op een uitvoerder", RUNNING: "in uitvoering", BLOCKED: "geblokkeerd", WAITING_FOR_USER: "wacht op jou", WAITING_FOR_DEPENDENCY: "wacht op iets anders", DONE: "klaar, afronding volgt", AFWIJKING: "afwijking, in onderzoek" };
-const ACT_TEKST = { claim: "pakt op", stap: "stap gezet", heartbeat: "nog bezig", pr: "pull request", toetsing: "toetsing", attestatie: "attestatie", merge: "samengevoegd", fout: "fout", klaar: "klaar", vrijgave: "losgelaten", regie: "regieronde" };
+const ACT_TEKST = { claim: "pakt op", stap: "stap gezet", heartbeat: "nog bezig", pr: "pull request", toetsing: "toetsing", attestatie: "attestatie", merge: "samengevoegd", fout: "fout", klaar: "klaar", vrijgave: "losgelaten", regie: "regieronde", herstel: "herstel" };
 function duur(iso) { const m = Math.round((Date.now() - new Date(iso).getTime()) / 6e4); if (m < 1) return "net"; if (m < 60) return `${m} min`; const u = Math.floor(m / 60); return u < 48 ? `${u} u ${m % 60} min` : `${Math.round(u / 24)} d`; }
 function regieVan(taakId) { return (staat.regie?.taken ?? []).find((t) => t.id === taakId) ?? null; }
 const URG = { hoog: 0, midden: 1, laag: 2 };
@@ -754,8 +754,9 @@ function actiesHtml() {
 /* ---------- team: wie werkt waaraan (uit regie/huidig en jarvis.activiteit) ---------- */
 function rolKaartHtml(r) {
   const naam = ROLNAAM[r.rol] ?? r.rol;
-  const wat = r.wat ?? (r.status === "beschikbaar" ? ROLWAT[r.rol] : "");
-  return `<button class="rolkaart s-${esc(r.status)}" data-actie="rol" data-id="${esc(r.rol)}"><span class="naam">${esc(naam)}</span><span class="st">${esc(r.status)}</span><span class="wat">${esc(wat)}${r.taak ? ` <span class="mono" style="color:var(--cyaan)">· ${esc(r.taak)}</span>` : ""}</span><span class="meta">${r.project ? esc(r.project) + " · " : ""}${r.sinds ? "sinds " + esc(duur(r.sinds)) + " · " : ""}${r.laatste_activiteit ? "laatste activiteit " + esc(relatief(r.laatste_activiteit)) : "nog geen activiteit"}${r.volgende_stap ? " · volgende: " + esc(kort(r.volgende_stap, 60)) : ""}${r.wachtrij ? ` · wachtrij ${r.wachtrij}` : ""}</span></button>`;
+  // Alleen wat de regie meldt; geen verzonnen activiteit. Zonder regiedata zegt de kaart dat eerlijk.
+  const wat = r.wat ?? "geen activiteit bekend";
+  return `<button class="rolkaart s-${esc(r.status)}" data-actie="rol" data-id="${esc(r.rol)}"><span class="naam">${esc(naam)}</span><span class="st">${esc(r.status)}</span><span class="wat">${esc(wat)}${r.taak ? ` <span class="mono" style="color:var(--cyaan)">· ${esc(r.taak)}</span>` : ""}</span><span class="meta">${r.project ? esc(r.project) + " · " : ""}${r.sinds ? "sinds " + esc(duur(r.sinds)) + " · " : ""}${r.laatste_activiteit ? "laatste activiteit " + esc(relatief(r.laatste_activiteit)) : "nog geen activiteit"}${r.volgende_stap ? " · volgende: " + esc(kort(r.volgende_stap, 60)) : ""}${r.wachtrij ? ` · wachtrij ${esc(String(r.wachtrij))}` : ""}</span></button>`;
 }
 function activiteitHtml(rijen) {
   if (!rijen.length) return `<div class="leeg"><strong>Nog geen activiteit</strong>Zodra een uitvoerder iets doet, verschijnt het hier.</div>`;
