@@ -43,6 +43,14 @@ export type AfgeleidenConfig = {
   readonly overzicht: string;
   /** Vermogen -> door komma's gescheiden gereedschapsnamen van de omgeving. */
   readonly gereedschap: Readonly<Partial<Record<Vermogen, string>>>;
+  /**
+   * Bestand voor de leveranciersneutrale afgeleide (JSON); leeg = niet
+   * genereren. Anders dan de agentdefinities draagt deze vorm geen enkele
+   * gereedschaps-, model- of leveranciersnaam: alleen de contracten en de
+   * neutrale vermogens. Een tweede werkomgeving leest dit en maakt er zelf
+   * haar eigen vorm van, zonder handwerk in de contracten.
+   */
+  readonly neutraal?: string;
 };
 
 export const ROLLEN_START = "<!-- jarvis:rollen:start -->";
@@ -128,6 +136,49 @@ export function genereerOverzichtsblok(contracten: readonly Rolcontract[], rolle
   return regels.join("\n");
 }
 
+/**
+ * Versie van het neutrale uitwisselingsformaat. Een lezer mag op deze sleutel
+ * afgaan: bij een breuk in de vorm loopt het getal op.
+ */
+export const NEUTRAAL_FORMAAT = "jarvis.rollen/1";
+
+/**
+ * De leveranciersneutrale afgeleide: één JSON-document met alle contracten,
+ * hun neutrale vermogens en hun volledige tekst.
+ *
+ * Dit is de tweede afgeleide naast de agentdefinities, en het punt ervan is
+ * wisselbaarheid (AC-6): de agentdefinities dragen de gereedschapsnamen van
+ * één werkomgeving, dit document draagt er geen enkele. Wie een rol onder een
+ * andere provider wil draaien, leest dit bestand en vertaalt `vermogens` naar
+ * de gereedschappen van die omgeving — de contracten hoeven niet te worden
+ * overgeschreven en kunnen dus ook niet driften.
+ *
+ * Deterministisch: rollen op sleutel gesorteerd, vaste inspringing, sluitende
+ * regelovergang, zodat de driftcontrole van `jarvis rollen` erop werkt.
+ */
+export function genereerNeutraleAfgeleide(contracten: readonly Rolcontract[], rollenMap: string): string {
+  const document = {
+    formaat: NEUTRAAL_FORMAAT,
+    toelichting:
+      "Gegenereerd door `jarvis rollen` uit de rolcontracten. Niet met de hand wijzigen: de bron wint, en de poort vergelijkt. " +
+      "Deze vorm is leveranciersneutraal: vertaal `vermogens` zelf naar de gereedschappen van je omgeving.",
+    bron: rollenMap,
+    vermogens: [...VERMOGENS],
+    rollen: [...contracten]
+      .sort((a, b) => a.rol.localeCompare(b.rol))
+      .map((c) => ({
+        rol: c.rol,
+        titel: c.titel,
+        samenvatting: c.samenvatting.replace(/\s+/g, " "),
+        vermogens: [...c.vermogens],
+        agent: c.agent,
+        bron: `${rollenMap}/${c.rol}.md`,
+        contract: c.tekst.trimEnd(),
+      })),
+  };
+  return `${JSON.stringify(document, null, 2)}\n`;
+}
+
 /** Vervangt het gegenereerde blok in een bestaand document, of voegt het onderaan toe. */
 export function vervangOverzichtsblok(document: string, blok: string): string {
   const tekst = document.replace(/\r\n/g, "\n");
@@ -163,6 +214,9 @@ export function genereerAfgeleiden(
   if (config.overzicht) {
     const blok = genereerOverzichtsblok(contracten, rollenMap);
     uit.push({ pad: config.overzicht, inhoud: vervangOverzichtsblok(bestaandOverzicht ?? "", blok) });
+  }
+  if (config.neutraal) {
+    uit.push({ pad: config.neutraal, inhoud: genereerNeutraleAfgeleide(contracten, rollenMap) });
   }
   return uit;
 }

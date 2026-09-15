@@ -110,6 +110,12 @@ export const configSchema = z.strictObject({
   rol_afgeleiden_map: z.string().trim().default(""),
   rol_afgeleiden_voorvoegsel: z.string().trim().default(""),
   rol_overzicht: z.string().trim().default(""),
+  /**
+   * Pad van de leveranciersneutrale afgeleide (JSON). Leeg = niet genereren.
+   * Deze tweede afgeleide draagt geen gereedschaps- of leveranciersnaam, zodat
+   * een andere werkomgeving de contracten kan lezen zonder handwerk.
+   */
+  rol_neutraal: z.string().trim().default(""),
   rol_gereedschap: z
     .strictObject({
       lezen: z.string().trim().default(""),
