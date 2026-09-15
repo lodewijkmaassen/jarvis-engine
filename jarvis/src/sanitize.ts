@@ -53,9 +53,17 @@ export const PATROON_NAMEN = [
   "email",
   "telefoon_e164",
   "telefoon_nl",
+  "postadres_nl",
   "prive_sleutel",
   "hoge_entropie",
   "base64_geheim",
+  // Sluit de rij, ACHTER de vangnetten. Dit patroon bestaat voor precies één
+  // groep: waarden die te kort of te gewoon van vorm zijn om door hoge_entropie
+  // of base64_geheim te worden gezien (RSK-0019). Zou het ervóór staan, dan
+  // kaapt het de treffer van elk secret dat al gevonden werd en verandert het
+  // de categorie van wat er vandaag uit komt — winst nul, en een hoop
+  // bestaande bevindingen die ineens anders heten.
+  "credential_toekenning",
   // Geen tekstpatroon maar een leesfout. Een poort die stilzwijgend over een
   // onleesbaar bestand heen stapt, is geen poort.
   "bestand_onleesbaar",
@@ -239,6 +247,145 @@ export function isPlaatshouderVerbinding(waarde: string): boolean {
   if (!match) return false;
   return PLAATSHOUDERS.test(match[1]);
 }
+
+// ---------------------------------------------------------------------------
+// Toekenning: de sleutel in plaats van de waarde
+// ---------------------------------------------------------------------------
+
+/**
+ * Credentialwoorden zoals ze in een SLEUTEL voorkomen.
+ *
+ * Bewust niet dezelfde lijst als CREDENTIALWOORDEN: "basic" staat er niet in.
+ * Dat woord komt in gewone tekst voor ("basic auth", "de basic-variant") en is
+ * als sleutelnaam zeldzaam; het meenemen leverde in de eerdere poging ruis op
+ * zonder ooit een echt credential te vangen.
+ */
+const TOEKENNING_SLEUTELWOORDEN = [
+  "key",
+  "token",
+  "secret",
+  "password",
+  "passwd",
+  "pass",
+  "pwd",
+  "auth",
+  "credential",
+  "bearer",
+  "sleutel",
+  "wachtwoord",
+  "geheim",
+] as const;
+
+/**
+ * Dezelfde woorden, maar met de hoofdletterongevoeligheid in het patroon zelf
+ * in plaats van in een vlag.
+ *
+ * zoekTreffers bouwt per gebruik een verse `new RegExp(def.patroon.source, "g")`
+ * en laat daarbij ALLE andere vlaggen vallen. Een patroon dat op `i` leunt werkt
+ * daardoor wel in een losse test en niet in de scanner — een stil gat, precies
+ * het soort dat deze poort niet mag hebben.
+ */
+const TOEKENNING_SLEUTELWOORDEN_PATROON = TOEKENNING_SLEUTELWOORDEN.map((woord) =>
+  [...woord].map((teken) => `[${teken}${teken.toUpperCase()}]`).join(""),
+).join("|");
+
+/**
+ * Voorvoegsels die in een header vóór de eigenlijke waarde staan.
+ *
+ * `Authorization: Bearer eyJ…` — zonder dit zou de treffer het woord "Bearer"
+ * zijn en het token erachter ongemoeid blijven.
+ */
+const WAARDE_VOORVOEGSELS = ["Bearer", "Basic", "Token", "Digest"] as const;
+
+const WAARDE_VOORVOEGSEL = new RegExp(`^(?:${WAARDE_VOORVOEGSELS.join("|")})\\s+`, "i");
+
+/** Zie TOEKENNING_SLEUTELWOORDEN_PATROON: de scanner laat de `i`-vlag vallen. */
+const WAARDE_VOORVOEGSEL_PATROON = WAARDE_VOORVOEGSELS.map((woord) =>
+  [...woord].map((teken) => `[${teken.toLowerCase()}${teken.toUpperCase()}]`).join(""),
+).join("|");
+
+/**
+ * Minimale lengte van een KALE (niet-aangehaalde) waarde.
+ *
+ * Dit is de hele reden dat de eerdere poging is teruggedraaid. Nederlandse
+ * documentatie staat vol regels als `Wachtwoord: staat in de kluis` en
+ * `token: zie het dashboard`; zonder lengte-eis is elk van die regels een
+ * bevinding en verliest de poort zijn gezag. Acht tekens laat gewone
+ * voorzetsels en werkwoorden vallen en houdt elk realistisch credential over —
+ * korter dan acht is geen credential maar een probleem van een andere orde.
+ */
+export const TOEKENNING_MINIMUM_LENGTE = 8;
+
+/**
+ * Is deze waarde achter een credentialsleutel verdacht?
+ *
+ * `aangehaald` is het onderscheid dat de lengte-eis overbodig maakt: wie
+ * `secret = "abc"` schrijft, kent een waarde toe in code. Wie
+ * `secret: abc` schrijft in een zin, doet dat mogelijk niet — daar beslist de
+ * vorm van de waarde.
+ */
+export function isVerdachteToekenningWaarde(waarde: string, aangehaald: boolean): boolean {
+  const schoon = waarde.trim();
+  if (schoon.length === 0) return false;
+  // Een plaatshouder is juist het bewijs dat er géén credential staat.
+  if (PLAATSHOUDERS.test(schoon)) return false;
+  // Een eerder geredigeerde waarde opnieuw vlaggen maakt de poort onpasseerbaar.
+  if (/^\[\[GEREDIGEERD:/.test(schoon)) return false;
+  // Een record- of taak-id van Jarvis zelf is nooit een credential, ook niet op
+  // een regel die "secret" of "token" in de sleutel heeft staan.
+  if (/^[A-Z]{1,4}-\d{4,8}(?:-[a-z0-9]+)*$/.test(schoon)) return false;
+  if (isIdentifierVorm(schoon)) return false;
+  // Een verwijzing naar een plek waar het credential wél staat — `zie
+  // docs/SECRETS.md`, `1Password`, `$SUPABASE_KEY` — is documentatie.
+  if (/^(?:https?:\/\/|\.{0,2}\/)/.test(schoon)) return false;
+  // Een betrekkelijk pad dat op een bestandsextensie eindigt — `docs/SECRETS.md`.
+  // Bewust smal: een base64-sleutel bevat ook schuine strepen, maar eindigt niet
+  // op een puntje met drie letters.
+  if (/^[\w.-]+(?:\/[\w.-]+)*\/[\w-]+\.[A-Za-z]{1,6}$/.test(schoon)) return false;
+  // Een verwijzing naar een omgevingsvariabele is een plaatshouder, hoe hij ook
+  // is afgekapt: `$API_KEY`, `${SMTP_PASS}`, `%PASSWORD%`.
+  if (/^[$%]\{?[A-Za-z_][A-Za-z0-9_]*\}?%?$/.test(schoon)) return false;
+  // Een codespan die alleen een NAAM bevat: "de sleutel: `GITHUB_TOKEN`".
+  // Markdown-documentatie benoemt zo welke variabele gezet moet worden; de
+  // waarde staat er juist niet. Alleen een kale identifier telt hier — staat er
+  // iets anders tussen de backticks, dan blijft het patroon gewoon kijken.
+  const codespan = /^`([A-Za-z_][A-Za-z0-9_.-]*)`$/.exec(schoon);
+  if (codespan !== null) return false;
+  // Een ontsnappingsreeks betekent dat we naar INGEPAKTE tekst kijken: een
+  // markdownlap die als JSON-string in een overzicht of manifest staat. Daar is
+  // de "waarde" achter de dubbele punt gewoon de volgende zin. Geen enkel
+  // credential bevat een letterlijke `\n` of `\"`.
+  if (/\\[nrt"\\]/.test(schoon)) return false;
+  // Een afgekapte waarde is een plaatshouder: `sb_publishable_…`, `abc...`.
+  // Documentatie schrijft een sleutel zo op om zijn VORM te tonen zonder hem te
+  // noemen — het beletselteken is het bewijs dat de rest ontbreekt.
+  if (/(?:\u2026|\.\.\.)["'`]?$/.test(schoon)) return false;
+  // Een uitdrukking in plaats van een letterlijke waarde:
+  // `password: String(f.get("wachtwoord"))`. Code die een wachtwoord DOORGEEFT
+  // bevat het niet; vlaggen zou elke inlogfunctie in de codebase raken en de
+  // poort precies daar stuk maken waar hij het vaakst langskomt.
+  if (schoon.includes("(")) return false;
+  if (aangehaald) return true;
+  if (schoon.length < TOEKENNING_MINIMUM_LENGTE) return false;
+  // Twee tekenklassen: gegenereerde waarden mengen letters met cijfers of
+  // leestekens, Nederlandse woorden niet. `hetzelfde`, `onbekend` en
+  // `dashboard` vallen hierop af; `hunter2secret` en `p@ssw0rd!` niet.
+  const klassen = [/[a-z]/, /[A-Z]/, /[0-9]/, /[^A-Za-z0-9]/].filter((r) => r.test(schoon)).length;
+  return klassen >= 2;
+}
+
+/** Splitst een ruwe treffer in de waarde zelf en of hij aangehaald stond. */
+export function ontleedToekenning(ruw: string): { waarde: string; aangehaald: boolean } {
+  // Backticks tellen bewust NIET als toekenning. In Markdown is `X` een
+  // codespan die iets BENOEMT — "de sleutel: `GITHUB_TOKEN`" zegt hoe de
+  // variabele heet, niet wat zijn waarde is. Ze meerekenen maakt van elke
+  // documentatieregel die een omgevingsvariabele noemt een bevinding.
+  const aanhaling = /^(["'])([\s\S]*)\1$/.exec(ruw.trim());
+  const kern = (aanhaling ? aanhaling[2] : ruw).replace(WAARDE_VOORVOEGSEL, "");
+  return { waarde: kern.trim(), aangehaald: aanhaling !== null };
+}
+
+// ---------------------------------------------------------------------------
 
 export function isVerdachtBase64(token: string, regel = ""): boolean {
   const credentialRegel = lijktOpCredentialRegel(regel);
@@ -618,6 +765,19 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     vervangbaar: true,
   },
   {
+    naam: "postadres_nl",
+    categorie: "pii",
+    // Straatnaam (maximaal vier woorden), huisnummer met optionele toevoeging,
+    // dan de postcode. De postcode alleen is bewust NIET genoeg: `1234 AB` is
+    // ook een tabelcel of een versieaanduiding, en pas de combinatie met een
+    // straat en huisnummer maakt er een adres van.
+    patroon:
+      /[A-Z][A-Za-z.'-]+(?:\s+[A-Za-z.'-]+){0,3}\s+\d{1,4}\s*[a-zA-Z]?(?:\s*[-/]\s*\d{1,4})?\s*,?\s*\d{4}\s?[A-Z]{2}/,
+    linkerGrens: /[A-Za-z0-9]/,
+    rechterGrens: /[A-Za-z0-9]/,
+    vervangbaar: true,
+  },
+  {
     // De header alleen is genoeg. Regelgebaseerd scannen ziet de body van een
     // PEM-blok als losse regels die elk onder de drempel kunnen blijven; bij
     // een 2048-bits sleutel bleven zo zeven van de achtentwintig regels
@@ -650,6 +810,39 @@ const PATROON_DEFS: readonly PatroonDef[] = [
     linkerGrens: /[A-Za-z0-9+/_-]/,
     rechterGrens: /[A-Za-z0-9+/_-]/,
     vervangbaar: false,
+  },
+  {
+    // Het patroon dat de TOEKENNING herkent in plaats van de waarde.
+    //
+    // Elk ander secretpatroon hier kijkt naar vorm: een voorvoegsel, een lengte,
+    // een entropiedrempel. Daar glipt per definitie alles doorheen wat kort of
+    // gewoon van vorm is — precies de klasse credentials uit RSK-0019. Wat die
+    // waarden wél gemeen hebben is hun omgeving: ze staan achter een sleutel die
+    // zegt wat ze zijn.
+    //
+    // De treffer is dankzij de lookbehind ALLEEN de waarde, niet de sleutel.
+    // Daardoor kan hij vervangen worden zonder de regel onleesbaar te maken:
+    // `SMTP_PASS=[[GEREDIGEERD:credential_toekenning:1]]` blijft een leesbare
+    // regel die vertelt wat er weg is.
+    naam: "credential_toekenning",
+    categorie: "secret",
+    patroon: new RegExp(
+      `(?<=(?:^|[\\s"'\`({\\[,;])(?:[A-Za-z][A-Za-z0-9_.-]*)?(?:${TOEKENNING_SLEUTELWOORDEN_PATROON})[A-Za-z0-9_.-]*[ \\t]*(?::=|=>|[:=])[ \\t]*)` +
+        // Het schema-voorvoegsel van een autorisatieheader hoort BIJ de treffer.
+        // Zonder dat stopt de match op de spatie na "Bearer" en blijft het token
+        // erachter — de enige waarde die ertoe doet — onaangeroerd.
+        // Het voorvoegsel neemt zijn eigen spatie mee; er staat bewust GEEN los
+        // `[ \t]*` voor de waarde. Met zo'n losse spatiegroep begint de match al
+        // op de spatie na de dubbele punt, en dan is de treffer het woord
+        // "Bearer" in plaats van het token erachter.
+        `(?:(?:${WAARDE_VOORVOEGSEL_PATROON})[ \\t]+)?` +
+        // `\${...}` mag zijn sluitaccolade meenemen; anders leest een
+        // plaatshouder als een afgekapte waarde en vlagt hij alsnog.
+        `(?:"[^"\\r\\n]*"|'[^'\\r\\n]*'|\`[^\`\\r\\n]*\`|\\$\\{[^}\\r\\n]*\\}|[^\\s,;)\\]}]+)`,
+    ),
+    linkerGrens: TOKEN_GRENS,
+    rechterGrens: TOKEN_GRENS,
+    vervangbaar: true,
   },
 ];
 
@@ -842,6 +1035,8 @@ function isToegestaan(
     case "prive_sleutel":
     case "base64_geheim":
     case "hoge_entropie":
+    case "postadres_nl":
+    case "credential_toekenning":
       return inAllowlist(index.tokens, waarde.trim(), bestand);
     default:
       return false;
@@ -866,17 +1061,27 @@ function zoekTreffers(
 
   for (let regelIndex = 0; regelIndex < regels.length; regelIndex += 1) {
     const regel = regels[regelIndex];
-    // Een voorbeeldmarkering onderdrukt UITSLUITEND contactgegevens. Secrets en
-    // identificatienummers blijven altijd scannen: een sleutel is nooit een
-    // legitiem voorbeeld, en wie er een in een voorbeeldblok zet heeft juist
-    // dan een poort nodig.
+    // Een voorbeeldmarkering onderdrukt contactgegevens en het toekennings-
+    // patroon. Herkenbare secrets en identificatienummers blijven altijd
+    // scannen: een échte sleutel is nooit een legitiem voorbeeld, en wie er een
+    // in een voorbeeldblok zet heeft juist dan een poort nodig.
+    //
+    // credential_toekenning hoort bij de eerste groep en niet bij de tweede: het
+    // patroon leest de OMGEVING, niet de waarde, en een gemarkeerd voorbeeldblok
+    // is nu juist de plek waar `SMTP_PASS=hunter2secret` als illustratie staat.
+    // Zou het daar ook vlaggen, dan is elk stuk configuratiedocumentatie een
+    // bevinding en gaat de markering zijn enige doel voorbij.
     const alleenContactgegevensOverslaan = overslaan[regelIndex];
     const bezet: [number, number][] = [];
 
     for (const def of PATROON_DEFS) {
       if (
         alleenContactgegevensOverslaan &&
-        (def.naam === "email" || def.naam === "telefoon_e164" || def.naam === "telefoon_nl")
+        (def.naam === "email" ||
+          def.naam === "telefoon_e164" ||
+          def.naam === "telefoon_nl" ||
+          def.naam === "postadres_nl" ||
+          def.naam === "credential_toekenning")
       ) {
         continue;
       }
@@ -904,7 +1109,12 @@ function zoekTreffers(
             ? isVerdachteEntropie(waarde)
             : def.naam === "base64_geheim"
               ? isVerdachtBase64(waarde, regel)
-              : true;
+              : def.naam === "credential_toekenning"
+                ? ((): boolean => {
+                    const ontleed = ontleedToekenning(waarde);
+                    return isVerdachteToekenningWaarde(ontleed.waarde, ontleed.aangehaald);
+                  })()
+                : true;
 
         if (linksOk && rechtsOk && entropieOk && !overlapt(bezet, start, eind)) {
           // Ook een toegestane treffer bezet zijn bereik, zodat een generieker
