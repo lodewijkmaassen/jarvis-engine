@@ -8,6 +8,7 @@ import {
   RECENT_DAGEN,
   bouwOverzicht,
   korteSleutel,
+  isAkkoordStap,
   bouwOpties,
   leesAandacht,
   leesFeiten,
@@ -518,6 +519,9 @@ describe("wie is aan zet", () => {
     // Zonder scope (geen opdrachttekst) is er niets om akkoord op te geven.
     const zonder = dossier("T-20260901-f", "## Voortgang" + "\n" + "- [ ] Akkoord van de eigenaar" + "\n");
     expect(bouwOverzicht([project({ taken: [zonder] })], NU).projecten[0].taken[0].akkoord_nodig).toBe(false);
+    // Een stap die het woord slechts noemt is geen akkoordstap (jarvis-app: "… akkoord vanuit de app verwerkt").
+    expect(isAkkoordStap("Akkoord van de eigenaar op deze taak (DEC-0043)")).toBe(true);
+    expect(isAkkoordStap("Wake-loop: vraag en akkoord vanuit de app verwerkt, ook als de eigenaar niet reageert")).toBe(false);
   });
   it("volgt een afhankelijkheid 'wacht op T-…', ook over projecten heen", () => {
     const eig = dossier("T-20260901-a", "## Wat de eigenaar nog moet doen" + "\n" + "1. Maak de repository aan." + "\n");
