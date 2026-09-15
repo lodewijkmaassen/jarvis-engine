@@ -96,6 +96,14 @@ describe("takenUitCommits", () => {
   it("weigert een lege PR", () => {
     expect(takenUitCommits([]).redenen).toEqual(["de pull request heeft geen commits"]);
   });
+  it("vraagt geen trailer van een mergecommit, maar wel werk naast de merges", () => {
+    const merge = { sha: ANDERE, boodschap: "Merge remote-tracking branch 'origin/main' into jarvis/x", ouders: 2 };
+    const werk = { sha: KOP, boodschap: "Iets\n\nJarvis-Task: T-1\n", ouders: 1 };
+    expect(takenUitCommits([merge, werk])).toEqual({ taken: ["T-1"], redenen: [] });
+    expect(takenUitCommits([merge]).redenen).toEqual(["de pull request bevat alleen mergecommits en geen werk"]);
+    // Zonder ouders-informatie blijft de strenge regel gelden.
+    expect(takenUitCommits([{ sha: ANDERE, boodschap: merge.boodschap }]).redenen[0]).toMatch(/geen of meer dan/);
+  });
 });
 
 describe("administratieve PR (DEC-0044)", () => {
