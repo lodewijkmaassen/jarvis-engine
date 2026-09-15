@@ -41,6 +41,12 @@ export type AfgeleidenConfig = {
   readonly voorvoegsel: string;
   /** Instapdocument met een gegenereerd blok; leeg = geen overzicht. */
   readonly overzicht: string;
+  /**
+   * Leveranciersneutrale afgeleide: één machineleesbaar bestand met alle
+   * contracten voluit, zonder front-matter, gereedschapsnamen of andere vorm
+   * van één werkomgeving. Leeg = niet genereren.
+   */
+  readonly neutraal: string;
   /** Vermogen -> door komma's gescheiden gereedschapsnamen van de omgeving. */
   readonly gereedschap: Readonly<Partial<Record<Vermogen, string>>>;
 };
@@ -128,6 +134,44 @@ export function genereerOverzichtsblok(contracten: readonly Rolcontract[], rolle
   return regels.join("\n");
 }
 
+/** Vaste vorm van de neutrale afgeleide; hoger bij een wijziging die lezers breekt. */
+export const NEUTRAAL_VERSIE = 1;
+
+/**
+ * De leveranciersneutrale afgeleide: alle contracten voluit in één JSON-document.
+ *
+ * De agentdefinities en het instapdocument zijn de vorm van één werkomgeving —
+ * front-matter, een voorvoegsel, gereedschapsnamen die de configuratie
+ * aanlevert. Een tweede leverancier kan daar niets mee zonder handwerk, en
+ * handwerk was precies wat de eerste afgeleide liet driften. Deze vorm draagt
+ * dezelfde bron zonder die vormkeuzes: rol, titel, samenvatting, vermogens en
+ * de volledige contracttekst. Wat een omgeving daarvan maakt, is aan die
+ * omgeving; wat de rol *is*, staat hier.
+ *
+ * Deterministisch: gesorteerd op rol, vaste inspringing, sluitende nieuwe regel.
+ */
+export function genereerNeutraleAfgeleide(contracten: readonly Rolcontract[], rollenMap: string): string {
+  const document = {
+    versie: NEUTRAAL_VERSIE,
+    gegenereerd_door: "jarvis rollen",
+    bron: rollenMap,
+    toelichting:
+      "Gegenereerd uit de rolcontracten. Niet met de hand wijzigen: de bron wint, en de poort vergelijkt.",
+    rollen: [...contracten]
+      .sort((a, b) => a.rol.localeCompare(b.rol))
+      .map((c) => ({
+        rol: c.rol,
+        titel: c.titel,
+        samenvatting: c.samenvatting.replace(/\s+/g, " "),
+        vermogens: [...c.vermogens],
+        agent: c.agent,
+        bron: `${rollenMap}/${c.rol}.md`,
+        contract: c.tekst.trimEnd(),
+      })),
+  };
+  return `${JSON.stringify(document, null, 2)}\n`;
+}
+
 /** Vervangt het gegenereerde blok in een bestaand document, of voegt het onderaan toe. */
 export function vervangOverzichtsblok(document: string, blok: string): string {
   const tekst = document.replace(/\r\n/g, "\n");
@@ -163,6 +207,9 @@ export function genereerAfgeleiden(
   if (config.overzicht) {
     const blok = genereerOverzichtsblok(contracten, rollenMap);
     uit.push({ pad: config.overzicht, inhoud: vervangOverzichtsblok(bestaandOverzicht ?? "", blok) });
+  }
+  if (config.neutraal) {
+    uit.push({ pad: config.neutraal, inhoud: genereerNeutraleAfgeleide(contracten, rollenMap) });
   }
   return uit;
 }

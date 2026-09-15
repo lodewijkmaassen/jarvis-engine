@@ -671,6 +671,7 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
     map: config.rol_afgeleiden_map,
     voorvoegsel: config.rol_afgeleiden_voorvoegsel,
     overzicht: config.rol_overzicht,
+    neutraal: config.rol_neutraal,
     gereedschap: config.rol_gereedschap,
   };
   const bestaandOverzicht = config.rol_overzicht ? (await leesBestandOfLeeg(wortel, config.rol_overzicht, "instapdocument")) || null : null;

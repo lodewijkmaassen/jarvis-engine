@@ -7,8 +7,10 @@ import { describe, expect, it } from "vitest";
 import {
   ROLLEN_EIND,
   ROLLEN_START,
+  NEUTRAAL_VERSIE,
   genereerAfgeleiden,
   genereerAgentdefinitie,
+  genereerNeutraleAfgeleide,
   leesRolcontract,
   vervangOverzichtsblok,
   vindDrift,
@@ -40,8 +42,11 @@ const CONFIG: AfgeleidenConfig = {
   map: "agents",
   voorvoegsel: "j-",
   overzicht: "INSTAP.md",
+  neutraal: "",
   gereedschap: { lezen: "Lees, Zoek", schrijven: "Schrijf, Bewerk", rapporteren: "Schrijf", uitvoeren: "Voer" },
 };
+
+const CONFIG_NEUTRAAL: AfgeleidenConfig = { ...CONFIG, neutraal: "rollen.json" };
 
 describe("rolcontract lezen", () => {
   it("leest front-matter en houdt de volledige tekst", () => {
@@ -128,11 +133,71 @@ describe("afgeleiden en drift", () => {
     ]);
   });
 
+  it("genereert de neutrale afgeleide alleen als die geconfigureerd is", () => {
+    const r = leesRolcontract("qa.md", CONTRACT);
+    if (!r.ok) throw new Error(r.fout);
+    expect(genereerAfgeleiden([r.contract], CONFIG, "rollen", null).map((a) => a.pad)).toEqual(["agents/j-qa.md", "INSTAP.md"]);
+    expect(genereerAfgeleiden([r.contract], CONFIG_NEUTRAAL, "rollen", null).map((a) => a.pad)).toEqual([
+      "agents/j-qa.md",
+      "INSTAP.md",
+      "rollen.json",
+    ]);
+  });
+
   it("is deterministisch", () => {
     const r = leesRolcontract("qa.md", CONTRACT);
     if (!r.ok) throw new Error(r.fout);
     const a = genereerAfgeleiden([r.contract], CONFIG, "rollen", null);
     const b = genereerAfgeleiden([r.contract], CONFIG, "rollen", null);
     expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+// De tweede afgeleide bestaat om AC-6 (wisselen van leverancier zonder
+// kennisverlies) technisch mogelijk te maken: een ander gereedschap moet de
+// contracten voluit kunnen lezen zonder de vorm van deze werkomgeving.
+describe("leveranciersneutrale afgeleide", () => {
+  const contracten = () => {
+    const qa = leesRolcontract("qa.md", CONTRACT);
+    const orch = leesRolcontract("orchestrator.md", "---\nsamenvatting: Stuurt.\nvermogens:\n  - lezen\nagent: nee\n---\n# Rolcontract — Orchestrator\n\nStuurt alles.\n");
+    if (!qa.ok || !orch.ok) throw new Error("fixture");
+    return [orch.contract, qa.contract];
+  };
+
+  it("draagt elk contract voluit, ook van een rol zonder eigen agentdefinitie", () => {
+    const doc = JSON.parse(genereerNeutraleAfgeleide(contracten(), "rollen"));
+    expect(doc.versie).toBe(NEUTRAAL_VERSIE);
+    expect(doc.bron).toBe("rollen");
+    expect(doc.rollen.map((r: { rol: string }) => r.rol)).toEqual(["orchestrator", "qa"]);
+    const qa = doc.rollen[1];
+    expect(qa.titel).toBe("Rolcontract — QA");
+    expect(qa.vermogens).toEqual(["lezen", "uitvoeren", "rapporteren"]);
+    expect(qa.agent).toBe(true);
+    expect(qa.bron).toBe("rollen/qa.md");
+    expect(qa.contract).toContain("## 1. Doel");
+    expect(qa.contract).toContain("BLOCKING_DECISION wanneer nodig.");
+    expect(doc.rollen[0].agent).toBe(false);
+    expect(doc.rollen[0].contract).toContain("Stuurt alles.");
+  });
+
+  it("draagt geen enkele naam van een werkomgeving of leverancier", () => {
+    const tekst = genereerNeutraleAfgeleide(contracten(), "rollen");
+    for (const naam of ["Lees", "Zoek", "Schrijf", "Bewerk", "Voer", "j-", "name:", "tools:"]) {
+      expect(tekst).not.toContain(naam);
+    }
+  });
+
+  it("is deterministisch en sorteert op rol, ongeacht de leesvolgorde", () => {
+    const [orch, qa] = contracten();
+    expect(genereerNeutraleAfgeleide([qa, orch], "rollen")).toBe(genereerNeutraleAfgeleide([orch, qa], "rollen"));
+    expect(genereerNeutraleAfgeleide([orch, qa], "rollen").endsWith("}\n")).toBe(true);
+  });
+
+  it("drift op de neutrale afgeleide wordt gezien", () => {
+    const afgeleiden = genereerAfgeleiden(contracten(), CONFIG_NEUTRAAL, "rollen", null);
+    const schijf = new Map<string, string | null>(afgeleiden.map((a) => [a.pad, a.inhoud]));
+    expect(vindDrift(afgeleiden, schijf)).toEqual([]);
+    schijf.set("rollen.json", "{}\n");
+    expect(vindDrift(afgeleiden, schijf)).toEqual([{ pad: "rollen.json", reden: "wijkt af van de bron" }]);
   });
 });

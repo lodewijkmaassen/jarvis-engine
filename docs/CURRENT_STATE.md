@@ -30,6 +30,19 @@ staat de canonieke workflow in `jarvis/canonical/`, bij een consumer komt hij
 mee met de geïnstalleerde engine; de stap `engine` controleert bij een consumer
 dat de gepinde, geïnstalleerde engine-SHA op `main` van deze repository staat.
 
+## Providerafgeleiden
+
+`jarvis rollen` genereert twee soorten afgeleiden uit de rolcontracten. De
+eerste is de vorm van één werkomgeving: agentdefinities met front-matter en
+gereedschapsnamen, plus een overzichtsblok in het instapdocument. De tweede,
+nieuw, is leveranciersneutraal: één JSON-document (`rol_neutraal` in de
+configuratie) met per rol de titel, de samenvatting, de vermogens, het bronpad
+en de volledige contracttekst, zonder front-matter, voorvoegsel of
+gereedschapsnaam. Een ander gereedschap kan daaruit zijn eigen vorm maken
+zonder handwerk; de driftcontrole van de poort dekt beide vormen. De engine
+schrijft de neutrale afgeleide alleen als een consumer er een pad voor
+configureert; zonder pad verandert er niets.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.
