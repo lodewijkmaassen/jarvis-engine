@@ -45,6 +45,36 @@ describe("genereerFeitenblok", () => {
     expect(blok).toContain("T-0001");
   });
 
+  it("houdt de tabel heel als een taaktitel een pijp bevat", () => {
+    const blok = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Import | export", status: "actief" }],
+    });
+    const rij = blok.split("\n").find((r) => r.includes("T-0001"))!;
+    expect(rij).toBe("| T-0001 | actief | Import \\| export |");
+  });
+
+  it("laat een taaktitel het blok niet van binnenuit sluiten", () => {
+    const blok = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: `Markering ${FEITEN_EIND} erin`, status: "actief" }],
+    });
+    // Precies één eindmarkering, en die staat aan het eind.
+    expect(blok.split(FEITEN_EIND)).toHaveLength(2);
+    expect(blok.trimEnd().endsWith(FEITEN_EIND)).toBe(true);
+    // Zonder ontsnapping kapt `leesFeitenblok` het blok af op de eerste
+    // eindmarkering, dus de titel zou de helft van het blok opeten.
+    expect(leesFeitenblok(`# Titel\n\n${blok}\n\n## Narratief\nBlijft staan.\n`)).toBe(blok);
+  });
+
+  it("vouwt regeleindes in een taaktitel op tot spaties, zodat de rij één regel blijft", () => {
+    const blok = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Eerste regel\nTweede regel", status: "actief" }],
+    });
+    expect(blok).toContain("| T-0001 | actief | Eerste regel Tweede regel |");
+  });
+
   it("waarschuwt in het blok zelf tegen handmatig bewerken", () => {
     expect(genereerFeitenblok(FEITEN)).toContain("gegenereerd");
   });

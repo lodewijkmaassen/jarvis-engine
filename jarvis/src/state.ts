@@ -49,6 +49,24 @@ export type StateFeiten = {
  * interpretatie in: "we wachten op de provider" is narratief, "migratie 0011
  * is de hoogste" is een feit.
  */
+/**
+ * Tekst uit een taakdossier veilig in een cel van de tabel zetten.
+ *
+ * Twee faalpaden, allebei gemeten. Een pijp breekt de tabel in tweeën. En een
+ * titel die `<!-- jarvis:feiten:eind -->` bevat, sluit het blok van binnenuit:
+ * `state --schrijf` slaagt dan nog, maar `state --controleer` is daarna rood
+ * en elke volgende `--schrijf` plakt er rommel bij — de gedocumenteerde
+ * remedie maakt het dus erger in plaats van beter. Een regel uit een dossier
+ * mag nooit als opmaak gelezen worden; het is inhoud.
+ */
+function veiligeCel(tekst: string): string {
+  return tekst
+    .replace(/\s+/g, " ")
+    .replace(/\|/g, "\\|")
+    .replace(/<!--/g, "&lt;!--")
+    .trim();
+}
+
 export function genereerFeitenblok(feiten: StateFeiten): string {
   const tellingen = (["DEC", "CON", "LRN", "RSK", "CFL"] as const)
     .map((t) => `${t} ${feiten.recordTellingen[t] ?? 0}`)
@@ -76,7 +94,7 @@ export function genereerFeitenblok(feiten: StateFeiten): string {
   if (feiten.openTaken.length > 0) {
     regels.push("**Open taken**", "", "| Taak | Status | Titel |", "|---|---|---|");
     for (const taak of feiten.openTaken) {
-      regels.push(`| ${taak.id} | ${taak.status} | ${taak.titel} |`);
+      regels.push(`| ${veiligeCel(taak.id)} | ${veiligeCel(taak.status)} | ${veiligeCel(taak.titel)} |`);
     }
     regels.push("");
   } else {

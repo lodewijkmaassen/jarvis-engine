@@ -17,9 +17,11 @@ import {
   leesRecent,
   leesStandSecties,
   leesVoortgang,
+  openTakenUitDossiers,
   sleutelVan,
   type GitRegel,
   type ProjectInvoer,
+  type TaakDossier,
 } from "@/jarvis/src/overzicht";
 import type { KnowledgeRecord } from "@/jarvis/src/records";
 
@@ -531,5 +533,34 @@ describe("wie is aan zet", () => {
     expect(t.id).toBe("T-20260901-c");
     expect([t.aan_zet, t.stil]).toEqual(["eigenaar", false]);
     expect(t.wacht_op).toBe("T-20260901-a: Maak de repository aan.");
+  });
+});
+
+describe("openTakenUitDossiers", () => {
+  const d = (id: string, status: string, titel?: string): TaakDossier => ({
+    id,
+    opdracht: titel === undefined ? { status } : { status, titel },
+    resultaat: null,
+  });
+
+  it("noemt de taken waar nog aan gewerkt of over geoordeeld wordt, op id gesorteerd", () => {
+    const uit = openTakenUitDossiers([d("T-b", "review", "Tweede"), d("T-a", "actief", "Eerste")]);
+    expect(uit).toEqual([
+      { id: "T-a", titel: "Eerste", status: "actief" },
+      { id: "T-b", titel: "Tweede", status: "review" },
+    ]);
+  });
+
+  it("laat afgeronde, geblokkeerde en statusloze taken buiten het feitenblok", () => {
+    const uit = openTakenUitDossiers([
+      d("T-a", "afgerond", "Klaar"),
+      d("T-b", "geblokkeerd", "Vast"),
+      { id: "T-c", opdracht: {}, resultaat: null },
+    ]);
+    expect(uit).toEqual([]);
+  });
+
+  it("valt terug op het id als titel, zodat een taak nooit onzichtbaar wordt", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
   });
 });

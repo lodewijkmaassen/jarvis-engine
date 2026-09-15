@@ -36,6 +36,7 @@ import {
   RECENT_DAGEN,
   bouwOverzicht,
   leesItemsOnder,
+  openTakenUitDossiers,
   type Overzicht,
   type GitRegel,
   type ProjectInvoer,
@@ -1070,7 +1071,7 @@ async function verzamelFeiten(
       .filter((r) => r.type === "CFL" && r.status === "open")
       .map((r) => r.id)
       .sort(),
-    openTaken: [],
+    openTaken: openTakenUitDossiers(await leesTaakDossiers(wortel, config.taken_map)),
     actieveBranches: branches
       .split("\n")
       .map((b) => b.replace(/^origin\//, ""))
