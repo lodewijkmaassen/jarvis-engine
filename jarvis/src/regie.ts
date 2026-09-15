@@ -103,7 +103,7 @@ const WACHT_OP_TAAK = /wacht(?:en)?\s+op\s+(T-\d{8}-[a-z0-9-]+)/i;
 const WACHT_OP_PR = /wacht(?:en)?\s+op\s+(?:pr|pull request)\s*(?:([\w.-]+\/[\w.-]+))?#?(\d+)/i;
 const AKKOORD_STAP = /\bakkoord\b.*\beigenaar\b|\beigenaar\b.*\bakkoord\b/i;
 
-type Uitvoering = {
+export type Uitvoering = {
   readonly claim: Activiteit;
   readonly laatste: Activiteit;
   readonly fout: Activiteit | null;
@@ -111,7 +111,7 @@ type Uitvoering = {
 };
 
 /** De lopende uitvoering van een taak: laatste claim zonder latere vrijgave/klaar, met heartbeat. */
-function uitvoeringVan(taak: string, activiteit: readonly Activiteit[], nu: Date): Uitvoering | null {
+export function uitvoeringVan(taak: string, activiteit: readonly Activiteit[], nu: Date): Uitvoering | null {
   const rijen = activiteit.filter((a) => a.taak === taak).sort((a, b) => ms(a.op) - ms(b.op));
   let claim: Activiteit | null = null;
   let laatste: Activiteit | null = null;

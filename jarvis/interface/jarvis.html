@@ -305,7 +305,7 @@ const $ppad = document.getElementById("paneel-pad");
 const $pinhoud = document.getElementById("paneel-inhoud");
 const RECENT_DAGEN = 14;
 
-const staat = { overzicht: null, antwoorden: new Map(), berichten: [], autorisaties: [], jarvis: null, regie: null, activiteit: [], tab: "auto", rolGekozen: null, db: null, artifact: null,
+const staat = { overzicht: null, antwoorden: new Map(), berichten: [], autorisaties: [], jarvis: null, regie: null, activiteit: [], regieFout: null, activiteitFout: null, tab: "auto", rolGekozen: null, db: null, artifact: null,
   open: new Set(), gekozen: null, zoom: { k: 1, x: 0, y: 0 }, dbFout: null, signaal: "", stem: { aan: false, naam: "" }, concept: new Map(), laatstVoorgelezen: "", eersteFit: false };
 try { const st = localStorage.getItem("jarvis.stem"); if (st) staat.stem = JSON.parse(st); } catch { /* geen opslag */ }
 const bewaarStem = () => { try { localStorage.setItem("jarvis.stem", JSON.stringify(staat.stem)); } catch { /* geen opslag */ } };
@@ -334,11 +334,11 @@ function relatief(iso) {
 const kort = (t, n) => (t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t);
 const SOORT = { beslissing: "beslissing", conflict: "conflict", actie: "actie", risico: "risico", blokkade: "blokkade" };
 /* Het digitale team: stabiele functionele rollen, geen sessies. Namen zoals de eigenaar ze leest. */
-const ROLNAAM = { orchestrator: "Jarvis · Orchestrator", "task-controller": "Task Controller", architect: "Architect", developer: "Engineering", qa: "QA", "knowledge-manager": "Knowledge Manager" };
+const ROLNAAM = { eigenaar: "Jij", orchestrator: "Jarvis · Orchestrator", "task-controller": "Task Controller", architect: "Architect", developer: "Engineering", qa: "QA", "knowledge-manager": "Knowledge Manager" };
 const ROLWAT = { orchestrator: "verdeelt het werk en bewaakt de regels", "task-controller": "bewaakt dat uitvoerbaar werk doorloopt", architect: "onderzoekt en ontwerpt vóór de bouw", developer: "bouwt, test en opent pull requests", qa: "toetst onafhankelijk wat gebouwd is", "knowledge-manager": "houdt dossiers, kennis en de stand bij" };
 const TOESTAND_TEKST = { QUEUED: "wacht op een uitvoerder", RUNNING: "in uitvoering", BLOCKED: "geblokkeerd", WAITING_FOR_USER: "wacht op jou", WAITING_FOR_DEPENDENCY: "wacht op iets anders", DONE: "klaar, afronding volgt", AFWIJKING: "afwijking, in onderzoek" };
 const ACT_TEKST = { claim: "pakt op", stap: "stap gezet", heartbeat: "nog bezig", pr: "pull request", toetsing: "toetsing", attestatie: "attestatie", merge: "samengevoegd", fout: "fout", klaar: "klaar", vrijgave: "losgelaten", regie: "regieronde", herstel: "herstel" };
-function duur(iso) { const m = Math.round((Date.now() - new Date(iso).getTime()) / 6e4); if (m < 1) return "net"; if (m < 60) return `${m} min`; const u = Math.floor(m / 60); return u < 48 ? `${u} u ${m % 60} min` : `${Math.round(u / 24)} d`; }
+function duur(iso) { const m = Math.round((Date.now() - new Date(iso).getTime()) / 6e4); if (Number.isNaN(m)) return "onbekend"; if (m < 1) return "net"; if (m < 60) return `${m} min`; const u = Math.floor(m / 60); return u < 48 ? `${u} u ${m % 60} min` : `${Math.round(u / 24)} d`; }
 function regieVan(taakId) { return (staat.regie?.taken ?? []).find((t) => t.id === taakId) ?? null; }
 const URG = { hoog: 0, midden: 1, laag: 2 };
 
@@ -759,11 +759,14 @@ function rolKaartHtml(r) {
   return `<button class="rolkaart s-${esc(r.status)}" data-actie="rol" data-id="${esc(r.rol)}"><span class="naam">${esc(naam)}</span><span class="st">${esc(r.status)}</span><span class="wat">${esc(wat)}${r.taak ? ` <span class="mono" style="color:var(--cyaan)">· ${esc(r.taak)}</span>` : ""}</span><span class="meta">${r.project ? esc(r.project) + " · " : ""}${r.sinds ? "sinds " + esc(duur(r.sinds)) + " · " : ""}${r.laatste_activiteit ? "laatste activiteit " + esc(relatief(r.laatste_activiteit)) : "nog geen activiteit"}${r.volgende_stap ? " · volgende: " + esc(kort(r.volgende_stap, 60)) : ""}${r.wachtrij ? ` · wachtrij ${esc(String(r.wachtrij))}` : ""}</span></button>`;
 }
 function activiteitHtml(rijen) {
+  if (staat.activiteitFout) return `<div class="leeg"><strong>Activiteit niet te lezen</strong>${esc(staat.activiteitFout)} Wat hier ontbreekt is een leesfout, niet stilte.</div>`;
   if (!rijen.length) return `<div class="leeg"><strong>Nog geen activiteit</strong>Zodra een uitvoerder iets doet, verschijnt het hier.</div>`;
-  return `<div class="activiteit">${rijen.map((a) => `<div class="rij"><span class="t">${esc(tijd(a.op))}</span><span>${esc(ROLNAAM[a.rol] ?? a.rol)} · ${esc(ACT_TEKST[a.soort] ?? a.soort)}: ${esc(a.tekst)}<small>${a.taak ? esc(a.taak) + " · " : ""}${esc(a.uitvoerder)}${a.verwijzing ? " · " + esc(a.verwijzing) : ""}</small></span></div>`).join("")}</div>`;
+  // Niet vertrouwen op de volgorde van de bron (proef en artifact sorteren niet).
+  return `<div class="activiteit">${[...rijen].sort((a, b) => String(b.op).localeCompare(String(a.op))).map((a) => `<div class="rij"><span class="t">${esc(tijd(a.op))}</span><span>${esc(ROLNAAM[a.rol] ?? a.rol)} · ${esc(ACT_TEKST[a.soort] ?? a.soort)}: ${esc(a.tekst)}<small>${a.taak ? esc(a.taak) + " · " : ""}${esc(a.uitvoerder)}${a.verwijzing ? " · " + esc(a.verwijzing) : ""}</small></span></div>`).join("")}</div>`;
 }
 function teamHtml() {
   const r = staat.regie;
+  if (staat.regieFout) return `<div class="leeg"><strong>Team niet te lezen</strong>${esc(staat.regieFout)}</div>`;
   if (!r) return `<div class="leeg"><strong>Team nog niet in beeld</strong>De Task Controller heeft nog geen regieronde gedraaid.</div>`;
   let s = `<div class="blok"><span class="eyebrow">Het team · stand ${esc(relatief(r.gegenereerd_op))}</span>${(r.rollen ?? []).map(rolKaartHtml).join("")}</div>`;
   const open = r.taken ?? [];
@@ -995,12 +998,13 @@ function bronSupabase(client) {
       const laad = async () => { const { data } = await tabel("documenten").select("inhoud").eq("id", "jarvis/status").maybeSingle(); cb(alsObject(data?.inhoud) ?? null); };
       laad(); luister("documenten", laad);
     },
-    regie(cb) {
-      const laad = async () => { const { data } = await tabel("documenten").select("inhoud").eq("id", "regie/huidig").maybeSingle(); cb(alsObject(data?.inhoud) ?? null); };
+    regie(cb, fout) {
+      const laad = async () => { const { data, error } = await tabel("documenten").select("inhoud").eq("id", "regie/huidig").maybeSingle(); if (error) fout(error); else cb(alsObject(data?.inhoud) ?? null); };
       laad(); luister("documenten", laad);
     },
-    activiteit(cb) {
-      const laad = async () => { const { data, error } = await tabel("activiteit").select("op, uitvoerder, rol, taak, project, soort, tekst, verwijzing").order("op", { ascending: false }).limit(200); if (!error) cb(data ?? []); };
+    activiteit(cb, fout) {
+      // Een leesfout is geen "er gebeurt niets": die gaat naar de view als fout.
+      const laad = async () => { const { data, error } = await tabel("activiteit").select("op, uitvoerder, rol, taak, project, soort, tekst, verwijzing").order("op", { ascending: false }).limit(200); if (error) fout(error); else cb(data ?? []); };
       laad(); luister("activiteit", laad);
     },
     berichten(cb, fout) {
@@ -1140,8 +1144,8 @@ async function start() {
     render();
   }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code ?? err.message}).`; render(); });
   bron.status((data) => { staat.jarvis = data; render(); });
-  bron.regie((data) => { staat.regie = data; render(); });
-  bron.activiteit((rijen) => { staat.activiteit = rijen; render(); });
+  bron.regie((data) => { staat.regie = data; staat.regieFout = null; render(); }, (err) => { staat.regieFout = `Regie niet te lezen (${err.code ?? err.message}).`; render(); });
+  bron.activiteit((rijen) => { staat.activiteit = rijen; staat.activiteitFout = null; render(); }, (err) => { staat.activiteitFout = `Activiteit niet te lezen (${err.code ?? err.message}).`; render(); });
   bron.autorisaties((rijen) => { staat.autorisaties = rijen; render(); }, (err) => { staat.dbFout = `Akkoorden niet te lezen (${err.code ?? err.message}).`; render(); });
   bron.berichten((rijen, uitCache) => {
     staat.berichten = rijen.filter((b) => b.tekst);
