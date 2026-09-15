@@ -45,6 +45,15 @@ describe("genereerFeitenblok", () => {
     expect(blok).toContain("T-0001");
   });
 
+  it("houdt de tabel heel als een taaktitel een pijp bevat", () => {
+    const blok = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Import | export", status: "actief" }],
+    });
+    const rij = blok.split("\n").find((r) => r.includes("T-0001"))!;
+    expect(rij).toBe("| T-0001 | actief | Import \\| export |");
+  });
+
   it("waarschuwt in het blok zelf tegen handmatig bewerken", () => {
     expect(genereerFeitenblok(FEITEN)).toContain("gegenereerd");
   });

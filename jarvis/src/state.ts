@@ -76,7 +76,9 @@ export function genereerFeitenblok(feiten: StateFeiten): string {
   if (feiten.openTaken.length > 0) {
     regels.push("**Open taken**", "", "| Taak | Status | Titel |", "|---|---|---|");
     for (const taak of feiten.openTaken) {
-      regels.push(`| ${taak.id} | ${taak.status} | ${taak.titel} |`);
+      // Een pijp in een taaktitel zou de tabel in tweeën breken; hij hoort
+      // bij de titel, niet bij de opmaak.
+      regels.push(`| ${taak.id} | ${taak.status} | ${taak.titel.replace(/\|/g, "\\|")} |`);
     }
     regels.push("");
   } else {

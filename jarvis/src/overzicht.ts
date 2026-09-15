@@ -15,6 +15,7 @@
 // gesorteerd is, leest als beweging waar geen beweging is.
 import { scopeHash } from "./attestatie";
 import type { KnowledgeRecord, RecordType } from "./records";
+import type { OpenTaak } from "./state";
 
 export const OVERZICHT_VERSIE = 1;
 
@@ -752,6 +753,29 @@ export function leesTaken(
         akkoord_nodig,
       };
     })
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/** Een taak telt als open zolang er nog aan gewerkt of over geoordeeld wordt. */
+const OPEN_STATUSSEN = new Set(["actief", "review"]);
+
+/**
+ * De open taken zoals het feitenblok ze noemt: afleidbaar uit de
+ * taakdossiers in de repository, dus een feit en geen narratief.
+ *
+ * Het faalpad dat dit dichtzet: `CURRENT_STATE.md` meldde "Open taken: geen"
+ * terwijl er negen actieve taken lagen, omdat de verzamelaar het veld
+ * hardgecodeerd leeg meegaf. Een statusdocument dat achterloopt maar wél
+ * vertrouwd wordt, is erger dan geen statusdocument.
+ */
+export function openTakenUitDossiers(taken: readonly TaakDossier[]): readonly OpenTaak[] {
+  return taken
+    .map((t) => ({
+      id: t.id,
+      titel: t.opdracht["titel"] ?? t.id,
+      status: t.opdracht["status"] ?? "onbekend",
+    }))
+    .filter((t) => OPEN_STATUSSEN.has(t.status))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 
