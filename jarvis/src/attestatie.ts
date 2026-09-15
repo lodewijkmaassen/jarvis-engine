@@ -132,18 +132,26 @@ export function taakUitBoodschap(boodschap: string): string | null {
 }
 
 /**
- * De taken van een PR: elke commit draagt precies één Jarvis-Task; samen
+ * De taken van een PR: elke werkcommit draagt precies één Jarvis-Task; samen
  * mogen ze meer dan één taak noemen. Elke genoemde taak vraagt dan zijn
  * eigen akkoord (DEC-0043): een PR die twee taken dient, is pas gedekt als
  * de eigenaar op beide akkoord gaf.
+ *
+ * Een mergecommit (twee of meer ouders) is geen werk maar het binnenhalen
+ * van al geattesteerde inhoud van de hoofdbranch; die hoeft geen trailer.
+ * Wat hij eventueel aan conflictoplossing bevat, zit in de diff van de kop
+ * die de toetsing beoordeelt. Zonder ouders-informatie (oude aanroeper)
+ * geldt de strenge regel voor elke commit.
  */
 export function takenUitCommits(
-  commits: readonly { readonly sha: string; readonly boodschap: string }[],
+  commits: readonly { readonly sha: string; readonly boodschap: string; readonly ouders?: number }[],
 ): { readonly taken: readonly string[]; readonly redenen: readonly string[] } {
   const redenen: string[] = [];
   const taken = new Set<string>();
+  const werk = commits.filter((c) => (c.ouders ?? 1) < 2);
   if (commits.length === 0) redenen.push("de pull request heeft geen commits");
-  for (const c of commits) {
+  else if (werk.length === 0) redenen.push("de pull request bevat alleen mergecommits en geen werk");
+  for (const c of werk) {
     const taak = taakUitBoodschap(c.boodschap);
     if (taak === null) redenen.push(`commit ${c.sha.slice(0, 7)} draagt geen of meer dan één Jarvis-Task-trailer`);
     else taken.add(taak);
