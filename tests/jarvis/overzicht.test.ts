@@ -525,6 +525,12 @@ describe("wie is aan zet", () => {
     expect(isAkkoordStap("Akkoord van de eigenaar op deze taak (DEC-0043)")).toBe(true);
     expect(isAkkoordStap("Wake-loop: vraag en akkoord vanuit de app verwerkt, ook als de eigenaar niet reageert")).toBe(false);
   });
+  it("zet het id op de taakkaart als de titel leeg of alleen witruimte is", () => {
+    const leeg = dossier("T-20260901-a", "## Voortgang" + "\n" + "- [ ] Stap" + "\n", { titel: "" });
+    const wit = dossier("T-20260901-b", "## Voortgang" + "\n" + "- [ ] Stap" + "\n", { titel: "  " });
+    const o = bouwOverzicht([project({ taken: [leeg, wit] })], NU);
+    expect(o.projecten[0].taken.map((t) => t.titel)).toEqual(["T-20260901-a", "T-20260901-b"]);
+  });
   it("volgt een afhankelijkheid 'wacht op T-…', ook over projecten heen", () => {
     const eig = dossier("T-20260901-a", "## Wat de eigenaar nog moet doen" + "\n" + "1. Maak de repository aan." + "\n");
     const wacht = dossier("T-20260901-c", "## Voortgang" + "\n" + "- [ ] Inrichten — wacht op T-20260901-a" + "\n", { project: "b" });
@@ -562,5 +568,16 @@ describe("openTakenUitDossiers", () => {
 
   it("valt terug op het id als titel, zodat een taak nooit onzichtbaar wordt", () => {
     expect(openTakenUitDossiers([d("T-a", "actief")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
+  });
+
+  it("valt ook terug op het id bij een lege of alleen-witruimte-titel", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief", ""), d("T-b", "actief", "   ")])).toEqual([
+      { id: "T-a", titel: "T-a", status: "actief" },
+      { id: "T-b", titel: "T-b", status: "actief" },
+    ]);
+  });
+
+  it("laat witruimte om een gevulde titel weg", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief", "  Eerste  ")])[0].titel).toBe("Eerste");
   });
 });

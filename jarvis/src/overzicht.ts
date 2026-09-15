@@ -738,7 +738,7 @@ export function leesTaken(
       const dagenStil = laatste ? (nu.getTime() - new Date(laatste).getTime()) / 864e5 : Infinity;
       return {
         id: t.id,
-        titel: t.opdracht["titel"] ?? t.id,
+        titel: t.opdracht["titel"]?.trim() || t.id,
         status,
         klasse: t.opdracht["klasse"] ?? null,
         project: t.opdracht["project"] ?? gastheer,
@@ -772,7 +772,7 @@ export function openTakenUitDossiers(taken: readonly TaakDossier[]): readonly Op
   return taken
     .map((t) => ({
       id: t.id,
-      titel: t.opdracht["titel"] ?? t.id,
+      titel: t.opdracht["titel"]?.trim() || t.id,
       status: t.opdracht["status"] ?? "onbekend",
     }))
     .filter((t) => OPEN_STATUSSEN.has(t.status))
