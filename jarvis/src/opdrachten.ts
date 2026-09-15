@@ -43,7 +43,7 @@ import {
   type TaakDossier,
 } from "./overzicht";
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
-import { ROLLEN, bepaalRegie, type Activiteit, type Rol } from "./regie";
+import { ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
 import {
   ACTIEVE_ATTESTATIE,
@@ -1520,10 +1520,12 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
       const repo = await github(token, "GET", `/repos/${slug}`);
       const rechten = (repo.lading as { permissions?: { push?: boolean; admin?: boolean } } | null)?.permissions;
       if (repo.status !== 200) console.error(`jarvis pr: ${slug} is met dit token niet bereikbaar (${foutTekst(repo)}).`);
-      // Het token van een GitHub-App-installatie (de proxy van de cloud) krijgt geen
-      // permissions-veld terug, terwijl het wél kan schrijven (gemeten 2026-09-14:
-      // PR #17 en een branch vanuit de cloud). Dan is het recht onbekend, niet afwezig.
-      else if (rechten === undefined) console.log(`jarvis pr: ${slug} is leesbaar; het token meldt zijn rechten niet (app-installatie) — schrijfrecht onbekend, probeer gewoon.`);
+      // Achter de proxy van de cloud zegt het permissions-veld niets over wat de
+      // proxy werkelijk doorlaat: op 2026-09-14 ontbrak het veld terwijl pushen
+      // lukte, op 2026-09-15 stond er push:false terwijl de cloud gewoon branches
+      // pushte, PR's opende, attesteerde en samenvoegde (drie PR's van de hub).
+      // Daar is het recht onbekend, niet afwezig: melden en gewoon proberen.
+      else if (rechten === undefined || dezeUitvoerder() === "cloud") console.log(`jarvis pr: ${slug} is leesbaar; ${rechten === undefined ? "het token meldt zijn rechten niet (app-installatie)" : "achter de proxy van de cloud zegt het permissions-veld niets"} — schrijfrecht onbekend, probeer gewoon.`);
       else if (!rechten.push) console.error(`jarvis pr: ${slug} is leesbaar maar de bot heeft er geen schrijfrecht; nodig hem uit.`);
       else console.log(`jarvis pr: ${slug}: schrijfrecht ${rechten.admin ? "en admin (te veel!)" : "zonder admin"}.`);
     }
@@ -1786,6 +1788,45 @@ function dezeUitvoerder(): string {
  * RUNNING voor `jarvis regie`; stappen en heartbeats houden hem levend; fout
  * blokkeert; klaar of vrijgave beëindigt de uitvoering.
  */
+/** De recente activiteit (drie dagen) uit de database, als Activiteit-rijen. */
+async function leesActiviteit(verbinding: { readonly sql: DbClient }): Promise<Activiteit[]> {
+  const rijen = await verbinding.sql.unsafe(ACTIVITEIT_RECENT_SQL);
+  return rijen.map((r) => ({
+    op: new Date(String(r.op)).toISOString(),
+    uitvoerder: String(r.uitvoerder),
+    rol: String(r.rol),
+    taak: r.taak === null ? null : String(r.taak),
+    project: r.project === null ? null : String(r.project),
+    soort: String(r.soort),
+    tekst: String(r.tekst),
+    verwijzing: r.verwijzing === null || r.verwijzing === undefined ? null : String(r.verwijzing),
+  }));
+}
+
+/** Na een `klaar` telt een nieuwe claim zo lang als verdacht: de aanvrager rekent dan met een verouderde checkout. */
+const KLAAR_KOELTIJD_MINUTEN = 10;
+
+/**
+ * Waarom een claim nu niet kan, of null als hij kan. Twee uitvoerders (of twee
+ * cloud-runs die allebei "cloud" heten) mogen niet tegelijk aan één taak werken:
+ * een levende claim zonder latere klaar/vrijgave blokkeert, en vlak na een klaar
+ * is een nieuwe claim vrijwel zeker dubbel werk uit een verouderde checkout
+ * (gemeten 2026-09-15: vier claims op dezelfde taak binnen één minuut).
+ */
+export function claimGeweigerdOmdat(taak: string, activiteit: readonly Activiteit[], nu: Date): string | null {
+  const lopend = uitvoeringVan(taak, activiteit, nu);
+  if (lopend !== null && lopend.levend) {
+    return `${taak} is al geclaimd door ${lopend.claim.rol} (${lopend.claim.uitvoerder}) sinds ${lopend.claim.op}, laatste teken ${lopend.laatste.op}; sla over of wacht op klaar/vrijgave.`;
+  }
+  const klaar = activiteit
+    .filter((a) => a.taak === taak && a.soort === "klaar")
+    .sort((a, b) => new Date(b.op).getTime() - new Date(a.op).getTime())[0];
+  if (klaar !== undefined && nu.getTime() - new Date(klaar.op).getTime() < KLAAR_KOELTIJD_MINUTEN * 60_000) {
+    return `${taak} is ${Math.round((nu.getTime() - new Date(klaar.op).getTime()) / 60_000)} min geleden afgerond door ${klaar.rol} (${klaar.uitvoerder}): ${klaar.tekst.slice(0, 120)}. Haal main opnieuw op en bereken de regie opnieuw voor je claimt.`;
+  }
+  return null;
+}
+
 async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
   const soort = losse[0] ?? "";
   const taak = losse[1] ?? "";
@@ -1800,6 +1841,24 @@ async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<strin
     return 2;
   }
   const standaard: Record<string, string> = { claim: "opgepakt", stap: "stap gezet", heartbeat: "nog bezig", fout: "fout", klaar: "klaar", vrijgave: "losgelaten" };
+  if (soort === "claim" && !vlaggen.has("forceer")) {
+    // Eerst kijken of iemand anders er al aan werkt; exitcode 3 = overgeslagen, net als bij `db claim`.
+    const verbinding = await verbindDb();
+    if (verbinding !== null) {
+      try {
+        const reden = claimGeweigerdOmdat(taak, await leesActiviteit(verbinding), new Date());
+        if (reden !== null) {
+          console.error(`jarvis werk: claim overgeslagen: ${reden}`);
+          return 3;
+        }
+      } catch (fout) {
+        const tekst = fout instanceof Error ? fout.message : String(fout);
+        console.error(`jarvis werk: activiteit niet te lezen (${tekst.slice(0, 120)}); claim zonder controle.`);
+      } finally {
+        await verbinding.sql.end({ timeout: 2 });
+      }
+    }
+  }
   const ok = await schrijfActiviteit({
     uitvoerder: vlaggen.get("door") ?? dezeUitvoerder(),
     rol,
@@ -1831,17 +1890,7 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   const verbinding = await verbindDb();
   if (verbinding !== null) {
     try {
-      const rijen = await verbinding.sql.unsafe(ACTIVITEIT_RECENT_SQL);
-      activiteit = rijen.map((r) => ({
-        op: new Date(String(r.op)).toISOString(),
-        uitvoerder: String(r.uitvoerder),
-        rol: String(r.rol),
-        taak: r.taak === null ? null : String(r.taak),
-        project: r.project === null ? null : String(r.project),
-        soort: String(r.soort),
-        tekst: String(r.tekst),
-        verwijzing: r.verwijzing === null || r.verwijzing === undefined ? null : String(r.verwijzing),
-      }));
+      activiteit = await leesActiviteit(verbinding);
     } catch (fout) {
       const tekst = fout instanceof Error ? fout.message : String(fout);
       console.error(`jarvis regie: activiteit niet te lezen (${tekst.slice(0, 120)}); toestand zonder heartbeat.`);
@@ -2195,9 +2244,9 @@ async function verzamelAttestatieFeiten(
   if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
   const prLading = pr.lading as { body?: string | null; commits?: number; changed_files?: number };
   const prTekst = String(prLading.body ?? "");
-  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string } }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10);
+  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string }; parents?: readonly unknown[] }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10);
   if (typeof commitsRuw === "string") return commitsRuw;
-  const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message }));
+  const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message, ouders: Array.isArray(c.parents) ? c.parents.length : 1 }));
   const bestandenRuw = await leesAllePaginas<{ filename: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10);
   if (typeof bestandenRuw === "string") return bestandenRuw;
   const bestanden = bestandenRuw.map((f) => f.filename);
