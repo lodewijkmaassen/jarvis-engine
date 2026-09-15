@@ -181,6 +181,34 @@ textarea::placeholder{color:var(--zacht)}
 .actie .knop.groot{min-height:48px;width:100%;background:var(--cyaan-zacht);border-color:var(--cyaan);color:#fff;box-shadow:var(--cyaan-gloed)}
 .status .acties-knop{display:block;margin-top:4px;padding:6px 10px;border:1px solid var(--midden);color:#fff;background:var(--midden-zacht);font-family:var(--display);font-weight:700;letter-spacing:.1em;text-transform:uppercase;font-size:12px;min-height:36px}
 .status .acties-knop.leeg{border-color:var(--lijn);background:none;color:var(--gedempt)}
+/* ---- team (operations) ---- */
+.tabs{display:flex;gap:6px;margin-top:10px}
+.tabs button{flex:1;min-height:40px;border:1px solid var(--lijn2);font-family:var(--display);font-weight:700;letter-spacing:.12em;text-transform:uppercase;font-size:12px;color:var(--gedempt)}
+.tabs button.aan{color:#fff;border-color:var(--cyaan);background:var(--cyaan-zacht)}
+.rolkaart{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 12px;border:1px solid var(--lijn);border-left-width:3px;background:var(--vlak2);margin-top:8px;text-align:left;width:100%}
+.rolkaart.s-bezig{border-left-color:var(--cyaan)}
+.rolkaart.s-beschikbaar{border-left-color:var(--laag)}
+.rolkaart.s-wacht{border-left-color:var(--midden)}
+.rolkaart.s-geblokkeerd,.rolkaart.s-herstel{border-left-color:var(--hoog)}
+.rolkaart .naam{font-family:var(--display);font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#fff;font-size:14px}
+.rolkaart .st{grid-column:2;grid-row:1;font-family:var(--mono);font-size:11px;text-transform:uppercase;letter-spacing:.1em;color:var(--cyaan)}
+.rolkaart.s-beschikbaar .st{color:var(--gedempt)}
+.rolkaart.s-wacht .st{color:var(--midden)}
+.rolkaart.s-geblokkeerd .st,.rolkaart.s-herstel .st{color:var(--hoog)}
+.rolkaart .wat{grid-column:1/3;font-size:13.5px;color:var(--inkt)}
+.rolkaart .meta{grid-column:1/3;font-family:var(--mono);font-size:11px;color:var(--zacht)}
+.toestand{display:inline-block;font-family:var(--mono);font-size:11px;letter-spacing:.08em;padding:1px 7px;border:1px solid var(--lijn2);color:var(--gedempt);white-space:nowrap}
+.regel{flex-wrap:wrap}.regel .toestand{margin-left:auto}
+.toestand.t-RUNNING{border-color:var(--cyaan);color:var(--cyaan)}
+.toestand.t-QUEUED{border-color:var(--laag);color:var(--gedempt)}
+.toestand.t-BLOCKED,.toestand.t-AFWIJKING{border-color:var(--hoog);color:var(--hoog)}
+.toestand.t-WAITING_FOR_USER{border-color:var(--midden);color:var(--midden)}
+.toestand.t-WAITING_FOR_DEPENDENCY{border-color:var(--midden);color:var(--midden)}
+.toestand.t-DONE{border-color:var(--ok);color:var(--ok)}
+.activiteit{margin-top:6px;display:flex;flex-direction:column;gap:4px}
+.activiteit .rij{display:grid;grid-template-columns:52px 1fr;gap:8px;font-size:13px;color:var(--inkt);padding:4px 0;border-bottom:1px solid var(--lijn)}
+.activiteit .rij .t{font-family:var(--mono);font-size:11px;color:var(--zacht)}
+.activiteit .rij small{display:block;font-family:var(--mono);font-size:10.5px;color:var(--zacht)}
 .leeg strong{display:block;color:#fff;font-family:var(--display);font-size:16px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:4px}
 .tegels{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-top:10px}
 .tegel{padding:8px 10px;border:1px solid var(--lijn);background:var(--vlak2)}
@@ -277,7 +305,7 @@ const $ppad = document.getElementById("paneel-pad");
 const $pinhoud = document.getElementById("paneel-inhoud");
 const RECENT_DAGEN = 14;
 
-const staat = { overzicht: null, antwoorden: new Map(), berichten: [], autorisaties: [], jarvis: null, db: null, artifact: null,
+const staat = { overzicht: null, antwoorden: new Map(), berichten: [], autorisaties: [], jarvis: null, regie: null, activiteit: [], tab: "auto", rolGekozen: null, db: null, artifact: null,
   open: new Set(), gekozen: null, zoom: { k: 1, x: 0, y: 0 }, dbFout: null, signaal: "", stem: { aan: false, naam: "" }, concept: new Map(), laatstVoorgelezen: "", eersteFit: false };
 try { const st = localStorage.getItem("jarvis.stem"); if (st) staat.stem = JSON.parse(st); } catch { /* geen opslag */ }
 const bewaarStem = () => { try { localStorage.setItem("jarvis.stem", JSON.stringify(staat.stem)); } catch { /* geen opslag */ } };
@@ -305,6 +333,13 @@ function relatief(iso) {
 }
 const kort = (t, n) => (t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t);
 const SOORT = { beslissing: "beslissing", conflict: "conflict", actie: "actie", risico: "risico", blokkade: "blokkade" };
+/* Het digitale team: stabiele functionele rollen, geen sessies. Namen zoals de eigenaar ze leest. */
+const ROLNAAM = { orchestrator: "Jarvis · Orchestrator", "task-controller": "Task Controller", architect: "Architect", developer: "Engineering", qa: "QA", "knowledge-manager": "Knowledge Manager" };
+const ROLWAT = { orchestrator: "verdeelt het werk en bewaakt de regels", "task-controller": "bewaakt dat uitvoerbaar werk doorloopt", architect: "onderzoekt en ontwerpt vóór de bouw", developer: "bouwt, test en opent pull requests", qa: "toetst onafhankelijk wat gebouwd is", "knowledge-manager": "houdt dossiers, kennis en de stand bij" };
+const TOESTAND_TEKST = { QUEUED: "wacht op een uitvoerder", RUNNING: "in uitvoering", BLOCKED: "geblokkeerd", WAITING_FOR_USER: "wacht op jou", WAITING_FOR_DEPENDENCY: "wacht op iets anders", DONE: "klaar, afronding volgt", AFWIJKING: "afwijking, in onderzoek" };
+const ACT_TEKST = { claim: "pakt op", stap: "stap gezet", heartbeat: "nog bezig", pr: "pull request", toetsing: "toetsing", attestatie: "attestatie", merge: "samengevoegd", fout: "fout", klaar: "klaar", vrijgave: "losgelaten", regie: "regieronde", herstel: "herstel" };
+function duur(iso) { const m = Math.round((Date.now() - new Date(iso).getTime()) / 6e4); if (m < 1) return "net"; if (m < 60) return `${m} min`; const u = Math.floor(m / 60); return u < 48 ? `${u} u ${m % 60} min` : `${Math.round(u / 24)} d`; }
+function regieVan(taakId) { return (staat.regie?.taken ?? []).find((t) => t.id === taakId) ?? null; }
 const URG = { hoog: 0, midden: 1, laag: 2 };
 
 function md(tekst) {
@@ -716,11 +751,51 @@ function actiesHtml() {
   if (later.length) s += `<div class="blok"><span class="eyebrow">Beslissingen die kunnen wachten · ${later.length}</span><div class="acties">${later.map(kaart).join("")}</div></div>`;
   return s;
 }
+/* ---------- team: wie werkt waaraan (uit regie/huidig en jarvis.activiteit) ---------- */
+function rolKaartHtml(r) {
+  const naam = ROLNAAM[r.rol] ?? r.rol;
+  // Alleen wat de regie meldt; geen verzonnen activiteit. Zonder regiedata zegt de kaart dat eerlijk.
+  const wat = r.wat ?? "geen activiteit bekend";
+  return `<button class="rolkaart s-${esc(r.status)}" data-actie="rol" data-id="${esc(r.rol)}"><span class="naam">${esc(naam)}</span><span class="st">${esc(r.status)}</span><span class="wat">${esc(wat)}${r.taak ? ` <span class="mono" style="color:var(--cyaan)">· ${esc(r.taak)}</span>` : ""}</span><span class="meta">${r.project ? esc(r.project) + " · " : ""}${r.sinds ? "sinds " + esc(duur(r.sinds)) + " · " : ""}${r.laatste_activiteit ? "laatste activiteit " + esc(relatief(r.laatste_activiteit)) : "nog geen activiteit"}${r.volgende_stap ? " · volgende: " + esc(kort(r.volgende_stap, 60)) : ""}${r.wachtrij ? ` · wachtrij ${esc(String(r.wachtrij))}` : ""}</span></button>`;
+}
+function activiteitHtml(rijen) {
+  if (!rijen.length) return `<div class="leeg"><strong>Nog geen activiteit</strong>Zodra een uitvoerder iets doet, verschijnt het hier.</div>`;
+  return `<div class="activiteit">${rijen.map((a) => `<div class="rij"><span class="t">${esc(tijd(a.op))}</span><span>${esc(ROLNAAM[a.rol] ?? a.rol)} · ${esc(ACT_TEKST[a.soort] ?? a.soort)}: ${esc(a.tekst)}<small>${a.taak ? esc(a.taak) + " · " : ""}${esc(a.uitvoerder)}${a.verwijzing ? " · " + esc(a.verwijzing) : ""}</small></span></div>`).join("")}</div>`;
+}
+function teamHtml() {
+  const r = staat.regie;
+  if (!r) return `<div class="leeg"><strong>Team nog niet in beeld</strong>De Task Controller heeft nog geen regieronde gedraaid.</div>`;
+  let s = `<div class="blok"><span class="eyebrow">Het team · stand ${esc(relatief(r.gegenereerd_op))}</span>${(r.rollen ?? []).map(rolKaartHtml).join("")}</div>`;
+  const open = r.taken ?? [];
+  const per = (t) => open.filter((x) => x.toestand === t);
+  s += `<div class="blok"><span class="eyebrow">Open taken · ${open.length}</span>${["RUNNING", "BLOCKED", "AFWIJKING", "QUEUED", "WAITING_FOR_DEPENDENCY", "WAITING_FOR_USER", "DONE"].map((ts) => per(ts).map((t) => `<button class="regel" data-actie="kies" data-id="t:${esc(t.id)}"><span class="t">${esc(t.titel)}<small>${esc(ROLNAAM[t.verantwoordelijke] ?? t.verantwoordelijke)} · ${esc(t.waarom)}</small></span><span class="toestand t-${esc(t.toestand)}">${esc(TOESTAND_TEKST[t.toestand] ?? t.toestand)}</span></button>`).join("")).join("")}</div>`;
+  s += `<div class="blok"><span class="eyebrow">Activiteit</span>${activiteitHtml(staat.activiteit.slice(0, 25))}</div>`;
+  return s;
+}
+function rolHtml(rol) {
+  const r = (staat.regie?.rollen ?? []).find((x) => x.rol === rol);
+  let s = `<div class="itemmeta"><span class="chip">${esc(r?.status ?? "onbekend")}</span><span class="mono" style="font-size:11px;color:var(--zacht)">${esc(ROLWAT[rol] ?? "")}</span></div>`;
+  if (r?.taak) {
+    const t = regieVan(r.taak);
+    s += `<div class="blok"><span class="eyebrow">Nu</span><p><strong>${esc(r.taak)}</strong>${r.project ? " · " + esc(r.project) : ""}</p><p>${esc(r.wat ?? "")}</p>${t ? `<p><span class="toestand t-${esc(t.toestand)}">${esc(TOESTAND_TEKST[t.toestand] ?? t.toestand)}</span> ${esc(t.waarom)}</p>` : ""}${r.volgende_stap ? `<p>Volgende: ${inlineMd(r.volgende_stap)}</p>` : ""}</div>`;
+  } else if (r) {
+    s += `<div class="blok"><span class="eyebrow">Nu</span><p>${esc(r.wat ?? "beschikbaar")}</p></div>`;
+  }
+  const wachtrij = (staat.regie?.taken ?? []).filter((t) => t.toestand === "QUEUED" && t.verantwoordelijke === rol);
+  if (wachtrij.length) s += `<div class="blok"><span class="eyebrow">Wachtrij · ${wachtrij.length}</span>${wachtrij.map((t) => `<button class="regel" data-actie="kies" data-id="t:${esc(t.id)}"><span class="t">${esc(t.titel)}<small>${esc(kort(t.volgende_stap ?? "", 80))}</small></span></button>`).join("")}</div>`;
+  s += `<div class="blok"><span class="eyebrow">Wat deze rol deed</span>${activiteitHtml(staat.activiteit.filter((a) => a.rol === rol).slice(0, 40))}</div>`;
+  s += `<button class="knop stil" data-actie="kies" data-id="root" style="margin-top:8px">Terug naar het team</button>`;
+  return s;
+}
 function rootHtml(n) {
   const o = staat.overzicht; const j = staat.jarvis; const live = jarvisLive();
   const eigen = n.kinderen.filter((k) => k.soort !== "project");
   const acties = verzamelActies();
-  let s = actiesHtml();
+  if (staat.rolGekozen) return rolHtml(staat.rolGekozen);
+  const tab = staat.tab === "auto" ? (acties.nu.length ? "voorjou" : "team") : staat.tab;
+  let s = `<div class="tabs"><button class="${tab === "voorjou" ? "aan" : ""}" data-actie="tab" data-id="voorjou">Voor jou${acties.nu.length ? ` · ${acties.nu.length}` : ""}</button><button class="${tab === "team" ? "aan" : ""}" data-actie="tab" data-id="team">Team</button></div>`;
+  if (tab === "team") return s + teamHtml();
+  s += actiesHtml();
   s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${acties.nu.length}<small>${acties.later.length} later</small></div></div><div class="tegel"><span class="eyebrow">Projecten</span><div class="n">${o.projecten.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${o.projecten.reduce((t, p) => t + p.recent.length, 0)}<small>/ ${RECENT_DAGEN} d</small></div></div></div>`;
   s += `<div class="agent ${live.bezig ? "bezig" : live.live ? "actief" : ""}"><span class="naam"><span class="dot"></span>${esc(j?.sessie?.naam ?? "Jarvis")}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(j?.sessie?.rol ?? "orchestrator")}</span><span class="wat">${esc(live.tekst)}</span><span class="meta">${j?.sessie?.model ? esc(j.sessie.model) : ""}${j?.sessie?.laatste ? " · laatste update " + esc(tijd(j.sessie.laatste)) : ""}. Eén model, vijf rollen; geen andere AI.</span></div>`;
   for (const a of j?.agenten ?? []) s += `<div class="agent ${a.status === "bezig" ? "bezig" : "actief"}"><span class="naam"><span class="dot"></span>${esc(a.naam)}</span><span class="mono" style="font-size:11px">${esc(a.rol ?? "")}</span><span class="wat">${esc(a.wat ?? "")}</span></div>`;
@@ -744,6 +819,8 @@ function taakHtml(n) {
   s += `<div class="zet ${t.stil ? "stil" : esc(t.aan_zet)}"><b>${t.stil ? "STIL" : t.aan_zet === "eigenaar" ? "WACHT OP JOU" : t.aan_zet === "jarvis" ? "JARVIS AAN ZET" : "NIET ACTIEF"}</b>${t.wacht_op ? `<span>· ${esc(t.wacht_op)}</span>` : ""}</div><div class="zet"><span>laatste beweging: ${t.laatste_beweging ? esc(relatief(t.laatste_beweging)) + " (" + esc(datumKort(t.laatste_beweging)) + " " + esc(tijd(t.laatste_beweging)) + ")" : "geen commit in " + RECENT_DAGEN + " dagen"}</span></div>`;
   if (st.length) s += `<div class="blok"><span class="eyebrow">Voortgang · ${gedaan} van ${st.length}</span><div class="balk"><i style="width:${Math.round((gedaan / st.length) * 100)}%"></i></div>${st.map((x, i) => `<div class="stap ${x.gedaan ? "gedaan" : i === eersteOpen ? "nu" : "open"}"><span class="vink">${x.gedaan ? "■" : i === eersteOpen ? "▶" : "□"}</span><span>${inlineMd(x.tekst)}</span></div>`).join("")}</div>`;
   if (t.gastheer && t.gastheer !== n.project.id) s += `<div class="bron">dossier en commits in ${esc(t.gastheer)}</div>`;
+  const rg = regieVan(t.id);
+  if (rg) s += `<div class="blok"><span class="eyebrow">Wie en waar</span><p><span class="toestand t-${esc(rg.toestand)}">${esc(TOESTAND_TEKST[rg.toestand] ?? rg.toestand)}</span> · verantwoordelijk: <strong>${esc(ROLNAAM[rg.verantwoordelijke] ?? rg.verantwoordelijke)}</strong>${rg.uitvoerder ? ` (${esc(rg.uitvoerder)})` : ""}</p><p>${esc(rg.waarom)}</p><p class="mono" style="font-size:11px;color:var(--zacht)">${rg.laatste_activiteit ? "laatste activiteit " + esc(relatief(rg.laatste_activiteit)) : "geen activiteit bekend"}${rg.sinds ? " · toestand sinds " + esc(datumKort(rg.sinds)) + " " + esc(tijd(rg.sinds)) : ""}</p>${rg.volgende_stap ? `<p>Volgende: ${inlineMd(rg.volgende_stap)}</p>` : ""}</div>`;
   s += akkoordHtml(t);
   s += `<div class="blok"><span class="eyebrow">Bij jou uit deze taak</span>${n.kinderen.length ? n.kinderen.map((k) => lijstRegel(k.item)).join("") : `<div class="leeg"><strong>Niets</strong>Jarvis is aan zet.</div>`}</div>`;
   return s;
@@ -838,7 +915,9 @@ function render() {
 document.addEventListener("click", async (e) => {
   const el = e.target.closest("[data-actie]"); if (!el) return;
   const actie = el.dataset.actie, id = el.dataset.id;
-  if (actie === "kies") { kies(id); return; }
+  if (actie === "kies") { staat.rolGekozen = null; kies(id); return; }
+  if (actie === "tab") { staat.tab = id; staat.rolGekozen = null; render(); $pinhoud.scrollTop = 0; return; }
+  if (actie === "rol") { staat.rolGekozen = id; render(); $pinhoud.scrollTop = 0; return; }
   if (actie === "sluit") { staat.gekozen = null; bewaarZicht(); render(); if ($canvas.clientWidth < 900) centreer(); return; }
   if (actie === "centreer") { centreer(); return; }
   if (actie === "zoom-in") { zoomRond(1.25); return; }
@@ -878,6 +957,8 @@ function bronArtifact(db, artifact) {
     soort: "artifact",
     overzicht(cb, fout) { db.doc("overzicht/huidig").onSnapshot((snap) => cb(snap.exists ? snap.data() : null), fout); },
     status(cb) { db.doc("jarvis/status").onSnapshot((snap) => cb(snap.exists ? snap.data() : null), () => {}); },
+    regie(cb) { cb(null); },
+    activiteit(cb) { cb([]); },
     berichten(cb, fout) { db.collection("berichten").onSnapshot((snap) => cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })), !!snap.metadata?.fromCache), fout); },
     antwoorden(cb, fout) { db.collection("antwoorden").onSnapshot((snap) => cb(snap.docs.map((d) => d.data())), fout); },
     async antwoord(itemId, a) { await db.doc(`antwoorden/${docId(itemId)}`).set(a); },
@@ -913,6 +994,14 @@ function bronSupabase(client) {
     status(cb) {
       const laad = async () => { const { data } = await tabel("documenten").select("inhoud").eq("id", "jarvis/status").maybeSingle(); cb(alsObject(data?.inhoud) ?? null); };
       laad(); luister("documenten", laad);
+    },
+    regie(cb) {
+      const laad = async () => { const { data } = await tabel("documenten").select("inhoud").eq("id", "regie/huidig").maybeSingle(); cb(alsObject(data?.inhoud) ?? null); };
+      laad(); luister("documenten", laad);
+    },
+    activiteit(cb) {
+      const laad = async () => { const { data, error } = await tabel("activiteit").select("op, uitvoerder, rol, taak, project, soort, tekst, verwijzing").order("op", { ascending: false }).limit(200); if (!error) cb(data ?? []); };
+      laad(); luister("activiteit", laad);
     },
     berichten(cb, fout) {
       let eerste = true;
@@ -1014,6 +1103,8 @@ function bronProef(gegevens) {
     berichten(cb) { cb(gegevens.berichten ?? [], false); },
     antwoorden(cb) { cb(gegevens.antwoorden ?? []); },
     autorisaties(cb) { cb(gegevens.autorisaties ?? []); },
+    regie(cb) { cb(gegevens.regie ?? null); },
+    activiteit(cb) { cb(gegevens.activiteit ?? []); },
     antwoord: weiger, bericht: weiger, intrekken: weiger, autoriseer: weiger, async wek() {},
   };
 }
@@ -1049,6 +1140,8 @@ async function start() {
     render();
   }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code ?? err.message}).`; render(); });
   bron.status((data) => { staat.jarvis = data; render(); });
+  bron.regie((data) => { staat.regie = data; render(); });
+  bron.activiteit((rijen) => { staat.activiteit = rijen; render(); });
   bron.autorisaties((rijen) => { staat.autorisaties = rijen; render(); }, (err) => { staat.dbFout = `Akkoorden niet te lezen (${err.code ?? err.message}).`; render(); });
   bron.berichten((rijen, uitCache) => {
     staat.berichten = rijen.filter((b) => b.tekst);
