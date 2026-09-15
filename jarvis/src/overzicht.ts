@@ -772,7 +772,12 @@ export function openTakenUitDossiers(taken: readonly TaakDossier[]): readonly Op
   return taken
     .map((t) => ({
       id: t.id,
-      titel: t.opdracht["titel"] ?? t.id,
+      // `|| t.id` en niet `?? t.id`: een front-matter met `titel:` zonder
+      // waarde, of met alleen witruimte, is een lege string en geen
+      // `undefined`. Die glipte langs de nullish-variant en gaf een lege cel
+      // in het feitenblok — precies de onzichtbaarheid die deze functie moet
+      // voorkomen.
+      titel: t.opdracht["titel"]?.trim() || t.id,
       status: t.opdracht["status"] ?? "onbekend",
     }))
     .filter((t) => OPEN_STATUSSEN.has(t.status))

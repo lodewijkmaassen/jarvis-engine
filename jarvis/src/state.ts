@@ -58,10 +58,27 @@ export type StateFeiten = {
  * en elke volgende `--schrijf` plakt er rommel bij — de gedocumenteerde
  * remedie maakt het dus erger in plaats van beter. Een regel uit een dossier
  * mag nooit als opmaak gelezen worden; het is inhoud.
+ *
+ * De volgorde van de vervangingen is zelf het derde faalpad, en ze staan hier
+ * dus niet toevallig zo:
+ *
+ * 1. `&` eerst, anders is de ontsnapping niet omkeerbaar: een titel die
+ *    letterlijk `&lt;!--` bevat werd vóór deze regel ononderscheidbaar van
+ *    een titel met `<!--`. Nu wordt de eerste `&amp;lt;!--` en de tweede
+ *    `&lt;!--`. Markdown rendert beide terug als wat er stond.
+ * 2. De backslash vóór de pijp, anders verdubbelt stap 3 hem niet mee: een
+ *    titel met `\|` werd `\\|`, en dat is voor markdown een letterlijke
+ *    backslash gevolgd door een *onontsnapte* pijp — de tabel kreeg er stil
+ *    een kolom bij.
+ * 3. De pijp, die zelf backslashes toevoegt en daarom na stap 2 moet.
+ * 4. `<!--` als laatste, zodat de `&` die deze regel zelf introduceert niet
+ *    alsnog door stap 1 wordt gehaald.
  */
 function veiligeCel(tekst: string): string {
   return tekst
     .replace(/\s+/g, " ")
+    .replace(/&/g, "&amp;")
+    .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/<!--/g, "&lt;!--")
     .trim();
