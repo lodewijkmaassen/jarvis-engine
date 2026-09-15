@@ -43,7 +43,7 @@ import {
   type TaakDossier,
 } from "./overzicht";
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
-import { ROLLEN, bepaalRegie, type Activiteit, type Rol } from "./regie";
+import { ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
 import {
   ACTIEVE_ATTESTATIE,
@@ -1788,6 +1788,45 @@ function dezeUitvoerder(): string {
  * RUNNING voor `jarvis regie`; stappen en heartbeats houden hem levend; fout
  * blokkeert; klaar of vrijgave beëindigt de uitvoering.
  */
+/** De recente activiteit (drie dagen) uit de database, als Activiteit-rijen. */
+async function leesActiviteit(verbinding: { readonly sql: DbClient }): Promise<Activiteit[]> {
+  const rijen = await verbinding.sql.unsafe(ACTIVITEIT_RECENT_SQL);
+  return rijen.map((r) => ({
+    op: new Date(String(r.op)).toISOString(),
+    uitvoerder: String(r.uitvoerder),
+    rol: String(r.rol),
+    taak: r.taak === null ? null : String(r.taak),
+    project: r.project === null ? null : String(r.project),
+    soort: String(r.soort),
+    tekst: String(r.tekst),
+    verwijzing: r.verwijzing === null || r.verwijzing === undefined ? null : String(r.verwijzing),
+  }));
+}
+
+/** Na een `klaar` telt een nieuwe claim zo lang als verdacht: de aanvrager rekent dan met een verouderde checkout. */
+const KLAAR_KOELTIJD_MINUTEN = 10;
+
+/**
+ * Waarom een claim nu niet kan, of null als hij kan. Twee uitvoerders (of twee
+ * cloud-runs die allebei "cloud" heten) mogen niet tegelijk aan één taak werken:
+ * een levende claim zonder latere klaar/vrijgave blokkeert, en vlak na een klaar
+ * is een nieuwe claim vrijwel zeker dubbel werk uit een verouderde checkout
+ * (gemeten 2026-09-15: vier claims op dezelfde taak binnen één minuut).
+ */
+export function claimGeweigerdOmdat(taak: string, activiteit: readonly Activiteit[], nu: Date): string | null {
+  const lopend = uitvoeringVan(taak, activiteit, nu);
+  if (lopend !== null && lopend.levend) {
+    return `${taak} is al geclaimd door ${lopend.claim.rol} (${lopend.claim.uitvoerder}) sinds ${lopend.claim.op}, laatste teken ${lopend.laatste.op}; sla over of wacht op klaar/vrijgave.`;
+  }
+  const klaar = activiteit
+    .filter((a) => a.taak === taak && a.soort === "klaar")
+    .sort((a, b) => new Date(b.op).getTime() - new Date(a.op).getTime())[0];
+  if (klaar !== undefined && nu.getTime() - new Date(klaar.op).getTime() < KLAAR_KOELTIJD_MINUTEN * 60_000) {
+    return `${taak} is ${Math.round((nu.getTime() - new Date(klaar.op).getTime()) / 60_000)} min geleden afgerond door ${klaar.rol} (${klaar.uitvoerder}): ${klaar.tekst.slice(0, 120)}. Haal main opnieuw op en bereken de regie opnieuw voor je claimt.`;
+  }
+  return null;
+}
+
 async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
   const soort = losse[0] ?? "";
   const taak = losse[1] ?? "";
@@ -1802,6 +1841,24 @@ async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<strin
     return 2;
   }
   const standaard: Record<string, string> = { claim: "opgepakt", stap: "stap gezet", heartbeat: "nog bezig", fout: "fout", klaar: "klaar", vrijgave: "losgelaten" };
+  if (soort === "claim" && !vlaggen.has("forceer")) {
+    // Eerst kijken of iemand anders er al aan werkt; exitcode 3 = overgeslagen, net als bij `db claim`.
+    const verbinding = await verbindDb();
+    if (verbinding !== null) {
+      try {
+        const reden = claimGeweigerdOmdat(taak, await leesActiviteit(verbinding), new Date());
+        if (reden !== null) {
+          console.error(`jarvis werk: claim overgeslagen: ${reden}`);
+          return 3;
+        }
+      } catch (fout) {
+        const tekst = fout instanceof Error ? fout.message : String(fout);
+        console.error(`jarvis werk: activiteit niet te lezen (${tekst.slice(0, 120)}); claim zonder controle.`);
+      } finally {
+        await verbinding.sql.end({ timeout: 2 });
+      }
+    }
+  }
   const ok = await schrijfActiviteit({
     uitvoerder: vlaggen.get("door") ?? dezeUitvoerder(),
     rol,
@@ -1833,17 +1890,7 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   const verbinding = await verbindDb();
   if (verbinding !== null) {
     try {
-      const rijen = await verbinding.sql.unsafe(ACTIVITEIT_RECENT_SQL);
-      activiteit = rijen.map((r) => ({
-        op: new Date(String(r.op)).toISOString(),
-        uitvoerder: String(r.uitvoerder),
-        rol: String(r.rol),
-        taak: r.taak === null ? null : String(r.taak),
-        project: r.project === null ? null : String(r.project),
-        soort: String(r.soort),
-        tekst: String(r.tekst),
-        verwijzing: r.verwijzing === null || r.verwijzing === undefined ? null : String(r.verwijzing),
-      }));
+      activiteit = await leesActiviteit(verbinding);
     } catch (fout) {
       const tekst = fout instanceof Error ? fout.message : String(fout);
       console.error(`jarvis regie: activiteit niet te lezen (${tekst.slice(0, 120)}); toestand zonder heartbeat.`);
