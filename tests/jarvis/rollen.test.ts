@@ -144,11 +144,15 @@ describe("afgeleiden en drift", () => {
 // overschrijft. Daarvoor moet deze vorm twee dingen doen — het contract
 // volledig dragen, en geen enkele naam van een leverancier of gereedschap.
 describe("leveranciersneutrale afgeleide", () => {
+  // Drie rollen, en bewust in een volgorde waarin sorteren, de invoervolgorde
+  // houden en de invoervolgorde omkeren alle drie iets anders opleveren — met
+  // twee rollen valt sorteren niet van omkeren te onderscheiden.
   const contracten = () => {
     const qa = leesRolcontract("qa.md", CONTRACT);
+    const dev = leesRolcontract("developer.md", "---\nsamenvatting: Bouwt.\nvermogens:\n  - schrijven\n---\n# Rolcontract — Developer\n\nBouwt uit.\n");
     const orch = leesRolcontract("orchestrator.md", "---\nsamenvatting: Stuurt.\nvermogens:\n  - lezen\nagent: nee\n---\n# Rolcontract — Orchestrator\n\nStuurt aan.\n");
-    if (!qa.ok || !orch.ok) throw new Error("fixture");
-    return [qa.contract, orch.contract];
+    if (!qa.ok || !dev.ok || !orch.ok) throw new Error("fixture");
+    return [qa.contract, dev.contract, orch.contract];
   };
 
   it("draagt elk contract volledig, ook de rol zonder eigen agentdefinitie", () => {
@@ -156,16 +160,18 @@ describe("leveranciersneutrale afgeleide", () => {
     expect(uit.formaat).toBe(NEUTRAAL_FORMAAT);
     expect(uit.bron).toBe("rollen");
     expect(uit.vermogens).toEqual(["lezen", "schrijven", "rapporteren", "uitvoeren"]);
-    // gesorteerd op rol, en de orchestrator hoort erbij ook al krijgt hij geen agentdefinitie
-    expect(uit.rollen.map((r: { rol: string }) => r.rol)).toEqual(["orchestrator", "qa"]);
-    const qa = uit.rollen[1];
+    // gesorteerd op rol — niet de invoervolgorde (qa, developer, orchestrator)
+    // en niet de omkering daarvan — en de orchestrator hoort erbij ook al
+    // krijgt hij geen agentdefinitie
+    expect(uit.rollen.map((r: { rol: string }) => r.rol)).toEqual(["developer", "orchestrator", "qa"]);
+    const qa = uit.rollen[2];
     expect(qa.titel).toBe("Rolcontract — QA");
     expect(qa.vermogens).toEqual(["lezen", "uitvoeren", "rapporteren"]);
     expect(qa.agent).toBe(true);
     expect(qa.bron).toBe("rollen/qa.md");
     expect(qa.contract).toContain("## 8. Escalatie");
     expect(qa.contract).toContain("BLOCKING_DECISION wanneer nodig.");
-    expect(uit.rollen[0].agent).toBe(false);
+    expect(uit.rollen[1].agent).toBe(false);
   });
 
   it("noemt geen gereedschap van een omgeving, ook niet als de configuratie dat vertaalt", () => {
@@ -178,7 +184,7 @@ describe("leveranciersneutrale afgeleide", () => {
   it("komt als extra afgeleide mee zodra de configuratie een pad geeft, en is deterministisch", () => {
     const config: AfgeleidenConfig = { ...CONFIG, neutraal: "rollen.json" };
     const uit = genereerAfgeleiden(contracten(), config, "rollen", null);
-    expect(uit.map((a) => a.pad)).toEqual(["agents/j-qa.md", "INSTAP.md", "rollen.json"]);
+    expect(uit.map((a) => a.pad)).toEqual(["agents/j-developer.md", "agents/j-qa.md", "INSTAP.md", "rollen.json"]);
     expect(uit[2].inhoud.endsWith("\n")).toBe(true);
     expect(uit[2].inhoud).toBe(genereerAfgeleiden(contracten(), config, "rollen", null)[2].inhoud);
   });
