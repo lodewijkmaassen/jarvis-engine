@@ -10,9 +10,9 @@ _Gegenereerd op 2026-09-15._
 
 | Feit | Waarde |
 |---|---|
-| Hoofdbranch | `main` op `a89bf30` (2026-09-15) |
+| Hoofdbranch | `main` op `dea52db` (2026-09-15) |
 | Hoogste migratie | onbekend |
-| Testbestanden | 28 |
+| Testbestanden | 29 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
