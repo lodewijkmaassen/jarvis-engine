@@ -155,6 +155,16 @@ export function restPadToetsingKop(repo: string, nummer: number, kop: string): s
 /** Wat de verbinding meldt bij `jarvis db wie`; ook een toegestaan statement. */
 export const WIE_SQL = "select current_user as gebruiker, current_setting('server_version') as versie";
 
+// Activiteit van het digitale team (T-20260914-agent-operations): wat een rol
+// doet, geschreven door de uitvoerder; `jarvis regie` leidt er de toestand
+// van elke open taak uit af en de app toont wie waaraan werkt.
+export const ACTIVITEIT_SQL =
+  "insert into jarvis.activiteit (uitvoerder, rol, taak, project, soort, tekst, verwijzing) " +
+  "values ($1, $2, $3, $4, $5, $6, $7) returning id, op";
+export const ACTIVITEIT_RECENT_SQL =
+  "select op, uitvoerder, rol, taak, project, soort, tekst, verwijzing from jarvis.activiteit " +
+  "where op > now() - interval '3 days' order by op desc limit 1000";
+
 /**
  * Alle statements die de engine op de eigen database uitvoert, letterlijk.
  * De Edge Function `jarvis-db` (voor de cloud, die geen Postgres kan
@@ -177,5 +187,7 @@ export function toegestaneSql(): readonly string[] {
     TOETSING_KOP_SQL,
     TOETSING_ID_SQL,
     AUTORISATIES_SINDS_SQL,
+    ACTIVITEIT_SQL,
+    ACTIVITEIT_RECENT_SQL,
   ];
 }

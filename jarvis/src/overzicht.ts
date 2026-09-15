@@ -109,7 +109,9 @@ export type TaakItem = {
 
 /** Een voortgangsstap die het akkoord van de eigenaar op de taak beschrijft. */
 export function isAkkoordStap(tekst: string): boolean {
-  return /\bakkoord\b/i.test(tekst) && /\beigenaar\b/i.test(tekst);
+  // De stap gaat over het akkoord zelf ("Akkoord van de eigenaar op deze taak …"),
+  // niet over een stap die het woord ergens noemt ("… akkoord vanuit de app verwerkt").
+  return /^\s*akkoord\b/i.test(tekst) && /\beigenaar\b/i.test(tekst);
 }
 
 /** Na hoeveel dagen zonder commit een taak waar Jarvis aan zet is als stil geldt. */
