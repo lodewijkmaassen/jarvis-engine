@@ -3,7 +3,9 @@
 // tests zetten vast dat de afgeleide het contract volledig draagt, dat de
 // gereedschapsnamen uit de configuratie komen en niet uit de engine, en dat
 // drift wordt gezien.
-import { describe, expect, it } from "vitest";
+import { readFile, readdir } from "node:fs/promises";
+import path from "node:path";
+import { describe, expect, it, vi } from "vitest";
 import {
   ROLLEN_EIND,
   ROLLEN_START,
@@ -162,13 +164,16 @@ describe("leveranciersneutraal manifest", () => {
     expect(qa.contract.trim()).toBe(r.contract.tekst.trim());
   });
 
-  it("bevat geen gereedschapsnaam van een werkomgeving", () => {
+  // Zoeken naar de gereedschapsnamen van de fixture toetst niets: die kunnen per
+  // constructie niet in de uitvoer staan, en een mutatie die de échte namen van een
+  // werkomgeving toevoegt komt er gewoon langs. Pin daarom de sleutelverzameling
+  // zelf - dan valt elk nieuw veld op, of het nu `gereedschap` heet of `gegenereerd_op`.
+  it("draagt precies deze sleutels, zodat er niets van een omgeving bij kan sluipen", () => {
     const r = leesRolcontract("qa.md", CONTRACT);
     if (!r.ok) throw new Error(r.fout);
-    const uit = genereerManifest([r.contract], "rollen");
-    for (const naam of ["Lees", "Zoek", "Schrijf", "Bewerk", "Voer", "tools:", "name:"]) {
-      expect(uit).not.toContain(naam);
-    }
+    const manifest = JSON.parse(genereerManifest([r.contract], "rollen"));
+    expect(Object.keys(manifest)).toEqual(["versie", "gegenereerd_door", "bron", "toelichting", "rollen"]);
+    expect(Object.keys(manifest.rollen[0])).toEqual(["rol", "titel", "samenvatting", "vermogens", "agent", "bron", "contract"]);
   });
 
   it("neemt ook een rol zonder eigen agentdefinitie mee, op vaste volgorde", () => {
@@ -189,9 +194,44 @@ describe("leveranciersneutraal manifest", () => {
     expect(vindDrift(metManifest, new Map([["rollen.json", "{}"]]))).toContainEqual({ pad: "rollen.json", reden: "wijkt af van de bron" });
   });
 
-  it("is deterministisch", () => {
+  // Twee aanroepen na elkaar vallen in dezelfde milliseconde, dus een tijdstempel
+  // glipt erdoor. Zet de klok tussen de twee generaties een jaar vooruit.
+  it("is deterministisch, ook als de klok verspringt", () => {
     const r = leesRolcontract("qa.md", CONTRACT);
     if (!r.ok) throw new Error(r.fout);
-    expect(genereerManifest([r.contract], "rollen")).toBe(genereerManifest([r.contract], "rollen"));
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      const eerste = genereerManifest([r.contract], "rollen");
+      vi.setSystemTime(new Date("2027-06-30T12:34:56Z"));
+      expect(genereerManifest([r.contract], "rollen")).toBe(eerste);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Elke fixture hierboven is een paar regels lang; de echte contracten zijn ruim
+  // elfduizend tekens. Precies de fout die deze taak veroorzaakte - twee ontbrekende
+  // secties - heeft die ordegrootte en zou op een korte fixture onzichtbaar zijn.
+  // Deze test draait de generator daarom op de bron zelf.
+  it("draagt de echte contracten volledig, teken voor teken", async () => {
+    const rollenMap = path.join(__dirname, "..", "..", "jarvis", "roles");
+    const namen = (await readdir(rollenMap)).filter((n) => /\.md$/i.test(n)).sort();
+    expect(namen.length).toBeGreaterThanOrEqual(5);
+    const contracten = [];
+    for (const naam of namen) {
+      const gelezen = leesRolcontract(naam, await readFile(path.join(rollenMap, naam), "utf8"));
+      if (!gelezen.ok) throw new Error(gelezen.fout);
+      contracten.push(gelezen.contract);
+    }
+    const manifest = JSON.parse(genereerManifest(contracten, "jarvis/roles"));
+    expect(manifest.rollen).toHaveLength(namen.length);
+    for (const contract of contracten) {
+      const uit = manifest.rollen.find((r: { rol: string }) => r.rol === contract.rol);
+      expect(uit, `rol ${contract.rol} ontbreekt in het manifest`).toBeDefined();
+      // Geen toContain en geen trim-vergelijking: byte voor byte, anders is afkappen onzichtbaar.
+      expect(uit.contract).toBe(contract.tekst.trimEnd());
+      expect(uit.contract.length).toBeGreaterThan(1000);
+    }
   });
 });
