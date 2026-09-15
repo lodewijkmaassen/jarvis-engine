@@ -44,6 +44,22 @@ taakdossiers afleidt. Daarvoor gaf de verzamelaar het veld hardgecodeerd leeg
 mee, zodat `CURRENT_STATE.md` in elke repository "Open taken: geen" meldde —
 ook met acht actieve taken. Precies de drift die dit document zou dichtzetten.
 
+De weg van een dossierregel naar een cel van dat blok is daarna aangescherpt op
+drie punten die QA-ronde 2 vond. `veiligeCel` verdubbelt nu eerst de
+backslashes en ontsnapt pas daarna de pijpen, zodat een titel met `\|` de rij
+niet stil een vierde kolom geeft; de ontsnapping van `<!--` is omkeerbaar
+gemaakt door `&` als eerste te vervangen, zodat een titel die letterlijk
+`&lt;!--` bevat niet dezelfde cel oplevert als een titel met `<!--`; en de
+terugval op het id grijpt nu ook bij een lege of alleen-witruimte-titel, die
+als lege string langs de nullish-variant glipte.
+
+Eén bevinding uit dezelfde ronde staat bewust open: een dossier met kapotte
+front-matter of een ander statuswoord (`open`, `gepland`) verdwijnt stil uit
+het blok, met exit 0. Dat is geen slordigheid maar een vastgelegde keuze — de
+test "laat afgeronde, geblokkeerde en statusloze taken buiten het feitenblok"
+legt hem expliciet vast. Het omdraaien verandert wat "open taak" betekent en
+hoort daarom langs een besluit te lopen, niet langs een backlogregel.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.
