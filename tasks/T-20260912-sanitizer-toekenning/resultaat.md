@@ -12,8 +12,15 @@ een engine-PR kan hashen.
 - [x] Punt 3, eerste helft: probeset voor het toekenningspatroon
   (`tests/jarvis/sanitize-toekenning.test.ts`) en de meting tegen de drie
   repositories — zie "Meting" hieronder
-- [ ] Punt 1: toekenningspatroon invoeren — **nog niet**, de meting is rood
-- [ ] Punt 2, 5: postadressen, RSK-0019 naar `beheerst`
+- [x] Punt 1: toekenningspatroon invoeren — ronde 2, `toekenning_secret` met
+  `isEchteToekenning`: de drie repositoryscans zijn schoon en de probeset
+  blijft groen; zie "Ronde 2" hieronder
+- [x] Punt 2: postadrespatroon `postadres_nl` (straat én huisnummer én
+  postcode), met probeset
+- [x] Punt 4: de uitzondering voor Jarvis-ids geldt nu ook in het
+  entropiepatroon (`isJarvisId` losgetrokken uit `isVerdachtBase64`)
+- [ ] Punt 5: RSK-0019 naar `beheerst` — kan pas na een release van de engine
+  en het opnieuw pinnen in ToVas Flow en Kasboek
 
 ## Meting (2026-09-15, cloud-uitvoerder)
 
