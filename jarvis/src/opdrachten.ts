@@ -35,6 +35,7 @@ import { ALLOWLIST_BESTANDSNAAM, LEGE_ALLOWLIST, laadAllowlist, scanTekst, type 
 import {
   RECENT_DAGEN,
   bouwOverzicht,
+  dossiersZonderBekendeStatus,
   leesItemsOnder,
   openTakenUitDossiers,
   type Overzicht,
@@ -1059,6 +1060,21 @@ async function verzamelFeiten(
     tellingen[type] = lading.records.filter((r) => r.type === type).length;
   }
 
+  // Een dossier met kapotte front-matter of een statuswoord dat de engine niet
+  // kent, valt stil uit het feitenblok: de filter laat het weg en `state`
+  // eindigt met 0. Het blok blijft kloppend voor wat het noemt, dus dit is een
+  // waarschuwing en geen fout — maar niemand hoort het pas te ontdekken
+  // doordat een taak nergens meer staat.
+  const dossiers = await leesTaakDossiers(wortel, config.taken_map);
+  const zonderStatus = dossiersZonderBekendeStatus(dossiers);
+  if (zonderStatus.length > 0) {
+    const genoemd = zonderStatus.map((t) => `${t.id} (${t.status})`).join(", ");
+    console.warn(
+      `jarvis state: ${zonderStatus.length} taakdossier(s) zonder bekende status, buiten het feitenblok ` +
+        `gelaten: ${genoemd}. Verwacht \`actief\`, \`review\` of \`afgerond\` in de front-matter van opdracht.md.`,
+    );
+  }
+
   return {
     gegenereerdOp: new Date().toISOString().slice(0, 10),
     hoofdbranch,
@@ -1071,7 +1087,7 @@ async function verzamelFeiten(
       .filter((r) => r.type === "CFL" && r.status === "open")
       .map((r) => r.id)
       .sort(),
-    openTaken: openTakenUitDossiers(await leesTaakDossiers(wortel, config.taken_map)),
+    openTaken: openTakenUitDossiers(dossiers),
     actieveBranches: branches
       .split("\n")
       .map((b) => b.replace(/^origin\//, ""))

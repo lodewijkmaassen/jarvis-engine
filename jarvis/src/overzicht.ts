@@ -770,12 +770,46 @@ const OPEN_STATUSSEN = new Set(["actief", "review"]);
  */
 export function openTakenUitDossiers(taken: readonly TaakDossier[]): readonly OpenTaak[] {
   return taken
-    .map((t) => ({
-      id: t.id,
-      titel: t.opdracht["titel"] ?? t.id,
-      status: t.opdracht["status"] ?? "onbekend",
-    }))
+    .map(velden)
     .filter((t) => OPEN_STATUSSEN.has(t.status))
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+/**
+ * De drie velden waarmee een taak in het feitenblok verschijnt.
+ *
+ * De terugval grijpt op lege en op witte waarden, niet alleen op een
+ * ontbrekend veld: `titel: ""` of `titel: "   "` in de front-matter gaf een
+ * lege cel, en een taak zonder zichtbare naam is in de tabel niet te
+ * onderscheiden van een fout in de generator.
+ */
+function velden(t: TaakDossier): OpenTaak {
+  return {
+    id: t.id,
+    titel: t.opdracht["titel"]?.trim() || t.id,
+    status: t.opdracht["status"]?.trim() || "onbekend",
+  };
+}
+
+/** De statussen die een taakdossier bewust kan dragen. */
+const BEKENDE_STATUSSEN = new Set([...OPEN_STATUSSEN, "afgerond"]);
+
+/**
+ * De dossiers die noch open noch afgerond zijn — kapotte front-matter, een
+ * ontbrekende `status`, of een woord dat de engine niet kent (`open`,
+ * `gepland`).
+ *
+ * Zulke dossiers vallen uit het feitenblok zonder dat iemand het merkt: de
+ * filter laat ze weg en `state` eindigt met 0. Dat is precies het faalpad dat
+ * `openTakenUitDossiers` dichtzette — een statusdocument dat achterloopt maar
+ * wél vertrouwd wordt — alleen per dossier in plaats van repositorybreed.
+ * Deze functie maakt ze zichtbaar; wat de aanroeper ermee doet, bepaalt hij
+ * zelf.
+ */
+export function dossiersZonderBekendeStatus(taken: readonly TaakDossier[]): readonly OpenTaak[] {
+  return taken
+    .map(velden)
+    .filter((t) => !BEKENDE_STATUSSEN.has(t.status))
     .sort((a, b) => a.id.localeCompare(b.id));
 }
 

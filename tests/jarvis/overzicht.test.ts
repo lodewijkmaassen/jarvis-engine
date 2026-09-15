@@ -17,6 +17,7 @@ import {
   leesRecent,
   leesStandSecties,
   leesVoortgang,
+  dossiersZonderBekendeStatus,
   openTakenUitDossiers,
   sleutelVan,
   type GitRegel,
@@ -562,5 +563,43 @@ describe("openTakenUitDossiers", () => {
 
   it("valt terug op het id als titel, zodat een taak nooit onzichtbaar wordt", () => {
     expect(openTakenUitDossiers([d("T-a", "actief")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
+  });
+
+  it("valt ook terug op het id als de titel leeg of enkel witruimte is", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief", ""), d("T-b", "actief", "   ")])).toEqual([
+      { id: "T-a", titel: "T-a", status: "actief" },
+      { id: "T-b", titel: "T-b", status: "actief" },
+    ]);
+  });
+
+  it("leest een status met witruimte eromheen als die status", () => {
+    expect(openTakenUitDossiers([d("T-a", " actief ")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
+  });
+});
+
+describe("dossiersZonderBekendeStatus", () => {
+  const d = (id: string, status: string, titel?: string): TaakDossier => ({
+    id,
+    opdracht: titel === undefined ? { status } : { status, titel },
+    resultaat: null,
+  });
+
+  it("noemt de dossiers die stil uit het feitenblok vallen, op id gesorteerd", () => {
+    const uit = dossiersZonderBekendeStatus([
+      d("T-b", "gepland", "Later"),
+      d("T-a", "open", "Onbekend woord"),
+      { id: "T-c", opdracht: {}, resultaat: null },
+    ]);
+    expect(uit).toEqual([
+      { id: "T-a", titel: "Onbekend woord", status: "open" },
+      { id: "T-b", titel: "Later", status: "gepland" },
+      { id: "T-c", titel: "T-c", status: "onbekend" },
+    ]);
+  });
+
+  it("zwijgt over de statussen die de engine wél kent", () => {
+    expect(
+      dossiersZonderBekendeStatus([d("T-a", "actief"), d("T-b", "review"), d("T-c", "afgerond")]),
+    ).toEqual([]);
   });
 });

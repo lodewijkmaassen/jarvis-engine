@@ -58,10 +58,21 @@ export type StateFeiten = {
  * en elke volgende `--schrijf` plakt er rommel bij — de gedocumenteerde
  * remedie maakt het dus erger in plaats van beter. Een regel uit een dossier
  * mag nooit als opmaak gelezen worden; het is inhoud.
+ *
+ * De volgorde draagt de omkeerbaarheid en is daarom niet vrij. Eerst de twee
+ * tekens waarmee ontsnapt wórdt — de ampersand en de backslash — en pas
+ * daarna de tekens die ermee ontsnapt worden. Anders ontsnapt de tekst zijn
+ * eigen ontsnapping: een titel met `\|` erin gaf `\\|`, waarin de backslash
+ * de backslash dekt en de pijp alsnog een kolom opent, en een titel met
+ * `&lt;!--` was in het blok niet te onderscheiden van een titel met `<!--`.
+ * Met deze volgorde is uit een cel altijd terug te lezen wat er in het
+ * dossier stond.
  */
 function veiligeCel(tekst: string): string {
   return tekst
     .replace(/\s+/g, " ")
+    .replace(/&/g, "&amp;")
+    .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/<!--/g, "&lt;!--")
     .trim();
