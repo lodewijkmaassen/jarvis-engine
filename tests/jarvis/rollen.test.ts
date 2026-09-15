@@ -185,8 +185,11 @@ describe("leveranciersneutrale afgeleide", () => {
     const config: AfgeleidenConfig = { ...CONFIG, neutraal: "rollen.json" };
     const uit = genereerAfgeleiden(contracten(), config, "rollen", null);
     expect(uit.map((a) => a.pad)).toEqual(["agents/j-developer.md", "agents/j-qa.md", "INSTAP.md", "rollen.json"]);
-    expect(uit[2].inhoud.endsWith("\n")).toBe(true);
-    expect(uit[2].inhoud).toBe(genereerAfgeleiden(contracten(), config, "rollen", null)[2].inhoud);
+    // op naam opzoeken, niet op index: een extra rol of vorm verschuift de
+    // lijst, en dan zou deze assertie stilzwijgend iets anders gaan toetsen
+    const neutraal = (lijst: readonly { pad: string; inhoud: string }[]) => lijst.find((a) => a.pad === "rollen.json")!.inhoud;
+    expect(neutraal(uit).endsWith("\n")).toBe(true);
+    expect(neutraal(uit)).toBe(neutraal(genereerAfgeleiden(contracten(), config, "rollen", null)));
   });
 
   it("blijft weg zolang er geen pad is geconfigureerd", () => {
