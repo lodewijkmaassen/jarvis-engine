@@ -30,6 +30,14 @@ staat de canonieke workflow in `jarvis/canonical/`, bij een consumer komt hij
 mee met de geïnstalleerde engine; de stap `engine` controleert bij een consumer
 dat de gepinde, geïnstalleerde engine-SHA op `main` van deze repository staat.
 
+`jarvis rollen` genereert de afgeleiden van de rolcontracten. Naast de
+agentdefinities, die de gereedschapsnamen van één werkomgeving dragen, is er nu
+een tweede, leveranciersneutrale vorm: één JSON-document met de contracten en
+hun neutrale vermogens, zonder enige gereedschaps-, model- of leveranciersnaam.
+Een project zet die vorm aan met `rol_neutraal`; leeg (de standaard) betekent
+niet genereren. Beide vormen lopen via dezelfde driftcontrole in de poort.
+
 ## Volgende stap
 
-De eerste consumer overstappen op de afhankelijkheid.
+De eerste consumer overstappen op de afhankelijkheid, en daar `rol_neutraal`
+configureren zodat de wissel naar een tweede werkomgeving zonder handwerk kan.
