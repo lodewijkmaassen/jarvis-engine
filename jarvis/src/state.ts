@@ -58,10 +58,20 @@ export type StateFeiten = {
  * en elke volgende `--schrijf` plakt er rommel bij — de gedocumenteerde
  * remedie maakt het dus erger in plaats van beter. Een regel uit een dossier
  * mag nooit als opmaak gelezen worden; het is inhoud.
+ *
+ * De volgorde van de vervangingen is dragend, want de ontsnapping moet
+ * omkeerbaar zijn — anders is niet meer te zien wat er in het dossier stond.
+ * De backslash gaat vóór de pijp: zonder dat wordt `a\|b` tot `a\\|b`, wat
+ * als een losse backslash plus een onbeschermde pijp leest en de rij alsnog
+ * in tweeën breekt. De ampersand gaat vóór `<!--`: zonder dat is `&lt;!--`
+ * uit een dossier niet te onderscheiden van een echte `<!--` die hier zelf
+ * tot `&lt;!--` wordt gemaakt.
  */
 function veiligeCel(tekst: string): string {
   return tekst
     .replace(/\s+/g, " ")
+    .replace(/&/g, "&amp;")
+    .replace(/\\/g, "\\\\")
     .replace(/\|/g, "\\|")
     .replace(/<!--/g, "&lt;!--")
     .trim();
