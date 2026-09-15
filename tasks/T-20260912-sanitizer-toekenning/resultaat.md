@@ -64,3 +64,68 @@ precies die reden **geen PR** open. Het alternatief — het patroon uit de
 poort houden — zou de probeset zijn vangnet ontnemen, en de probeset is wat
 de volgende ronde nodig heeft. Wie deze branch oppakt: eerst de scan schoon
 krijgen, dan pas een PR.
+
+## Ronde 2 (cloud, 2026-09-15) — scan schoon, patroon ingevoerd
+
+De vorige ronde noemde de opgave precies: het patroon moet code van proza
+kunnen onderscheiden. Dat is nu de kern van de controle, en daarmee is de
+meting omgeslagen.
+
+**Wat er anders is.** Het patroon heet `toekenning_secret`, staat als laatste
+in `PATROON_DEFS` (zodat een leverancierspatroon dezelfde waarde eerst
+claimt) en beslaat de hele toekenning in plaats van alleen de waarde.
+`isEchteToekenning` weegt vijf dingen die de drie klassen uit ronde 1 stuk
+voor stuk afvangen:
+
+1. **De naam moet een credentialnaam zijn, per segment.** camelCase telt als
+   scheidingsteken, dus `apiKey` telt mee en `bypass` niet — een deelstring-
+   test sloeg daar wél op aan.
+2. **De naam moet zijn clausule openen.** `opentClausule` kijkt naar alles na
+   de laatste clausule-opener; staat daar nog een gewoon woord, dan is het
+   lopende tekst. Dat haalt klasse 3 weg ("geen nieuw token: `GITHUB_TOKEN`")
+   zonder `export const apiKey = "…"` te missen: declaratiewoorden zijn
+   expliciet toegestaan. Bewust op de hele voorkant en niet op het laatste
+   teken — een zin eindigt óók op een spatie, en juist die vorm gaf een
+   vals-positief in het gegenereerde JSON-overzicht, waar markdown tot één
+   regel is samengevoegd.
+3. **De waarde mag geen verwijzing zijn** — `process.env.X`, `${{ secrets.Y }}`,
+   een puntpad, iets met haakjes erin. Dat is klasse 1, de grootste.
+4. **De waarde mag geen configuratiewoord zijn** — louter letterwoorden,
+   eventueel met streepjes: `X-Frame-Options`, `no-referrer`, `nosniff`. Dat
+   is klasse 2.
+5. **De waarde mag geen afgekapte documentatiewaarde, plaatshouder,
+   credentialnaam of Jarvis-id zijn**, en telt minstens zes tekens.
+
+**Meting, beide kanten van de acceptatie-eis.**
+
+| Wat | Uitkomst |
+|---|---|
+| Probeset `tests/jarvis/sanitize-toekenning.test.ts` | 58 groen |
+| Scan engine | 39 bestanden, 0 bevindingen |
+| Scan ToVas Flow | 167 bestanden, 0 bevindingen |
+| Scan Kasboek | 22 bestanden, 0 bevindingen |
+| Volledige suite | 721 groen |
+| `tsc --noEmit` | schoon |
+| `jarvis poort` | exitcode 0 |
+
+De eerste versie van deze ronde gaf zelf nog zeven bevindingen — dezelfde
+drie klassen. Die staan nu als regressietests in de probeset, zodat het
+patroon niet stilletjes kan terugvallen.
+
+**Geaccepteerde vals-negatief, expliciet.** Een wachtwoord dat uitsluitend uit
+letters bestaat glipt langs dit patroon (regel 4). Dat is een keuze, geen
+omissie: de acceptatie-eis is tweezijdig en de stille kant weegt zwaarder —
+een poort die op elke `"key": "Cache-Control"` afgaat wordt genegeerd en
+bewaakt dan niets meer.
+
+**Ook in deze ronde.** Het postadrespatroon (`postadres_nl`, punt 2 van de
+opdracht: straat én huisnummer én postcode, anders niet) en de gedeelde
+uitzondering voor Jarvis-ids (punt 4): `isJarvisId` is losgetrokken uit
+`isVerdachtBase64` en geldt nu ook in `isVerdachteEntropie`, waar
+`isIdentifierVorm` een id met een cijfer-lettersegment (`RSK-0019-2fa-token`)
+liet vallen. De vlaggenreparatie in `zoekTreffers` uit ronde 1 is behouden.
+
+**Wat nog open staat.** Punt 5 van de opdracht — RSK-0019 naar `beheerst` —
+kan pas na een release van de engine en het opnieuw pinnen in ToVas Flow en
+Kasboek: tot dan draaien die projecten de oude sanitizer en is het risico
+daar niet beheerst.
