@@ -104,4 +104,4 @@ een korte Nederlandse eindconclusie, (11) technische bron bewaard voor audit,
 | Pins: ToVas Flow en Kasboek op de nieuwe engine | developer | wacht op CFL-0002 | |
 | Routine v8: reviewstap en eigenaarstaal in de cloud-uitvoerder | orchestrator | open | |
 | Acceptatietest 1–13 met één gecontroleerde taak | qa | open | |
-| Kennis: DEC-0045, RSK-0022-aanvulling, docs/JARVIS.md | knowledge-manager | open | |
+| Kennis: DEC-0046, RSK-0022-aanvulling, docs/JARVIS.md | knowledge-manager | open | |

@@ -1,4 +1,4 @@
-// De onafhankelijke review door een tweede model (DEC-0045).
+// De onafhankelijke review door een tweede model (DEC-0046).
 //
 // Claude bouwt; een ander model leest het resultaat met alleen de relevante
 // context (de pull request, het taakdossier, het contextpakket van de

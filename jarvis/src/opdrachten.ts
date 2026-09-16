@@ -1378,7 +1378,7 @@ function help(): number {
       "                                    en samenvoegen na akkoord van de eigenaar (DEC-0043).",
       "  review <nummer> --repo <slug> [--model <m>]",
       "                                    Onafhankelijke review van een pull request door een tweede model",
-      "                                    (DEC-0045): hoogstens één per pull request; exit 4 = correctie nodig.",
+      "                                    (DEC-0046): hoogstens één per pull request; exit 4 = correctie nodig.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
@@ -2069,7 +2069,7 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
         console.error("jarvis db bericht: --tekst <tekst> is verplicht.");
         return 2;
       }
-      // Eigenaarstaal (DEC-0045): wat de eigenaar leest is kort en zonder
+      // Eigenaarstaal (DEC-0046): wat de eigenaar leest is kort en zonder
       // technische namen; de technische bron gaat mee in context.technisch.
       const bezwaar = eigenaarstaalBezwaar(tekst);
       if (bezwaar !== null) {
@@ -2136,7 +2136,7 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
 }
 
 // ---------------------------------------------------------------------------
-// Review door een tweede model (DEC-0045). Claude bouwt; een ander model
+// Review door een tweede model (DEC-0046). Claude bouwt; een ander model
 // leest de pull request met alleen de relevante context en zegt of het
 // klopt. Hoogstens één review per pull request, hoogstens één correctieronde
 // — de engine bewaakt dat: bestaat het reviewdocument al, dan stopt de

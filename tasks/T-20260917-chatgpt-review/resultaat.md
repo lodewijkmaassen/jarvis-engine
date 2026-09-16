@@ -13,7 +13,7 @@ In uitvoering.
 - [ ] Beslissing CFL-0002, daarna de pins van ToVas Flow en Kasboek op de nieuwe engine
 - [ ] Routine v8: reviewstap (§4.7) en eigenaarstaal (§4.8) in de cloud-uitvoerder
 - [ ] Acceptatietest 1–13 met één gecontroleerde technische taak; verslag hier
-- [ ] Kennis: DEC-0045 (tweede model als reviewer; eigenaarstaal), aanvulling RSK-0022 (de sleutel in de Vault), docs/JARVIS.md
+- [ ] Kennis: DEC-0046 (tweede model als reviewer; eigenaarstaal), aanvulling RSK-0022 (de sleutel in de Vault), docs/JARVIS.md
 
 ## Wat de eigenaar nog moet doen
 

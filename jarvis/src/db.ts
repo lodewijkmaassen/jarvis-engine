@@ -152,7 +152,7 @@ export function restPadToetsingKop(repo: string, nummer: number, kop: string): s
   );
 }
 
-// De onafhankelijke review door een tweede model (DEC-0045). De engine geeft
+// De onafhankelijke review door een tweede model (DEC-0046). De engine geeft
 // de aanroep als JSON; jarvis.vraag_review zet er in de database de
 // API-sleutel uit de Vault bij en verstuurt hem (pg_net, asynchroon). Het
 // antwoord komt terug via jarvis.lees_review op het verzoeknummer. Zo komt

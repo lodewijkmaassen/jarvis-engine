@@ -382,7 +382,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   }
 
   // Wat bij de eigenaar ligt leest hij op zijn telefoon: kort en zonder
-  // technische namen (DEC-0045). Een technisch punt blijft staan — het kan
+  // technische namen (DEC-0046). Een technisch punt blijft staan — het kan
   // een echte handeling zijn — maar de poort zegt dat het herschreven hoort.
   for (const punt of invoer.eigenaarsPunten ?? []) {
     const markers = technischeMarkers(punt.tekst);
@@ -393,7 +393,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
         "waarschuwing",
         punt.bestand,
         `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" bevat technische namen (${markers.slice(0, 3).join(", ")}); ` +
-          `schrijf voor de eigenaar wat hij moet doen en waarom in gewone taal, en houd de techniek voor het team (DEC-0045).`,
+          `schrijf voor de eigenaar wat hij moet doen en waarom in gewone taal, en houd de techniek voor het team (DEC-0046).`,
       ),
     );
   }

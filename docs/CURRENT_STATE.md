@@ -56,7 +56,7 @@ verdwijnt stil uit het blok met exit 0 — pre-existent gedrag van
 `leesTaakDossiers`, en het verandert wélke taken als open tellen, dus een
 eigen ronde.
 
-Sinds `jarvis review` (DEC-0045 in ToVas Flow) heeft de engine een rol
+Sinds `jarvis review` (DEC-0046 in ToVas Flow) heeft de engine een rol
 `reviewer`: een tweede model leest een pull request met alleen de relevante
 context — de PR, het taakdossier en het contextpakket van de kennislaag — en
 oordeelt op aannames, risico's en samenhang; hoogstens één ronde per pull
