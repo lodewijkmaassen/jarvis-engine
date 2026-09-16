@@ -61,9 +61,11 @@ describe("genereerFeitenblok", () => {
     });
     const rij = blok.split("\n").find((r) => r.includes("T-0001"))!;
     // De backslash uit het dossier wordt zelf ontsnapt, zodat de pijp
-    // beschermd blijft: vier cellen, niet vijf.
+    // beschermd blijft: de pijp staat achter een oneven aantal backslashes en
+    // blijft dus inhoud. De stringgelijkheid is hier de dragende assertie —
+    // cellen tellen met een eigen regexp zou precies de fout goedkeuren die
+    // dit dichtzet, want zo'n telling hanteert dezelfde naïeve aanname.
     expect(rij).toBe("| T-0001 | actief | Import \\\\\\| export |");
-    expect(rij.split(/(?<!\\)\|/)).toHaveLength(5);
   });
 
   it("houdt een ontsnapte markering uit een dossier onderscheidbaar van een echte", () => {
