@@ -59,14 +59,13 @@ export type StateFeiten = {
  * remedie maakt het dus erger in plaats van beter. Een regel uit een dossier
  * mag nooit als opmaak gelezen worden; het is inhoud.
  *
- * De volgorde draagt de omkeerbaarheid en is daarom niet vrij. Eerst de twee
- * tekens waarmee ontsnapt wórdt — de ampersand en de backslash — en pas
- * daarna de tekens die ermee ontsnapt worden. Anders ontsnapt de tekst zijn
- * eigen ontsnapping: een titel met `\|` erin gaf `\\|`, waarin de backslash
- * de backslash dekt en de pijp alsnog een kolom opent, en een titel met
- * `&lt;!--` was in het blok niet te onderscheiden van een titel met `<!--`.
- * Met deze volgorde is uit een cel altijd terug te lezen wat er in het
- * dossier stond.
+ * De volgorde van de vervangingen is dragend, want de ontsnapping moet
+ * omkeerbaar zijn — anders is niet meer te zien wat er in het dossier stond.
+ * De backslash gaat vóór de pijp: zonder dat wordt `a\|b` tot `a\\|b`, wat
+ * als een losse backslash plus een onbeschermde pijp leest en de rij alsnog
+ * in tweeën breekt. De ampersand gaat vóór `<!--`: zonder dat is `&lt;!--`
+ * uit een dossier niet te onderscheiden van een echte `<!--` die hier zelf
+ * tot `&lt;!--` wordt gemaakt.
  */
 function veiligeCel(tekst: string): string {
   return tekst

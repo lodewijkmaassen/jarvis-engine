@@ -54,6 +54,32 @@ describe("genereerFeitenblok", () => {
     expect(rij).toBe("| T-0001 | actief | Import \\| export |");
   });
 
+  it("houdt de tabel ook heel als er al een backslash vóór de pijp staat", () => {
+    const blok = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Import \\| export", status: "actief" }],
+    });
+    const rij = blok.split("\n").find((r) => r.includes("T-0001"))!;
+    // De backslash uit het dossier wordt zelf ontsnapt, zodat de pijp
+    // beschermd blijft: vier cellen, niet vijf.
+    expect(rij).toBe("| T-0001 | actief | Import \\\\\\| export |");
+    expect(rij.split(/(?<!\\)\|/)).toHaveLength(5);
+  });
+
+  it("houdt een ontsnapte markering uit een dossier onderscheidbaar van een echte", () => {
+    const echt = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Markering <!-- erin", status: "actief" }],
+    });
+    const alOntsnapt = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Markering &lt;!-- erin", status: "actief" }],
+    });
+    expect(echt).toContain("Markering &lt;!-- erin");
+    expect(alOntsnapt).toContain("Markering &amp;lt;!-- erin");
+    expect(echt).not.toBe(alOntsnapt);
+  });
+
   it("laat een taaktitel het blok niet van binnenuit sluiten", () => {
     const blok = genereerFeitenblok({
       ...FEITEN,
@@ -65,30 +91,6 @@ describe("genereerFeitenblok", () => {
     // Zonder ontsnapping kapt `leesFeitenblok` het blok af op de eerste
     // eindmarkering, dus de titel zou de helft van het blok opeten.
     expect(leesFeitenblok(`# Titel\n\n${blok}\n\n## Narratief\nBlijft staan.\n`)).toBe(blok);
-  });
-
-  it("houdt de tabel heel als een taaktitel een backslash vlak vóór een pijp heeft", () => {
-    const blok = genereerFeitenblok({
-      ...FEITEN,
-      openTaken: [{ id: "T-0001", titel: "Pad C:\\ | rest", status: "actief" }],
-    });
-    const rij = blok.split("\n").find((r) => r.includes("T-0001"))!;
-    // Drie kolommen, niet vier: de backslash dekt zijn eigen ontsnapping en
-    // laat de pijp daardoor niet alsnog een kolom openen.
-    expect(rij).toBe("| T-0001 | actief | Pad C:\\\\ \\| rest |");
-    expect(rij.split(/(?<!\\)\|/)).toHaveLength(5); // lege rand, drie cellen, lege rand
-  });
-
-  it("maakt een ontsnapte markering in een taaktitel te onderscheiden van een echte", () => {
-    const rij = (titel: string) =>
-      genereerFeitenblok({ ...FEITEN, openTaken: [{ id: "T-0001", titel, status: "actief" }] })
-        .split("\n")
-        .find((r) => r.includes("T-0001"))!;
-    // Een dossier dat de ontsnapping zelf als tekst draagt, mag in het blok
-    // niet op een dossier met een echte markering lijken.
-    expect(rij("&lt;!-- x --&gt;")).not.toBe(rij("<!-- x --&gt;"));
-    expect(rij("&lt;!-- x --&gt;")).toContain("&amp;lt;!--");
-    expect(rij("<!-- x -->")).toContain("&lt;!--");
   });
 
   it("vouwt regeleindes in een taaktitel op tot spaties, zodat de rij één regel blijft", () => {

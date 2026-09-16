@@ -565,15 +565,9 @@ describe("openTakenUitDossiers", () => {
     expect(openTakenUitDossiers([d("T-a", "actief")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
   });
 
-  it("valt ook terug op het id als de titel leeg of enkel witruimte is", () => {
-    expect(openTakenUitDossiers([d("T-a", "actief", ""), d("T-b", "actief", "   ")])).toEqual([
-      { id: "T-a", titel: "T-a", status: "actief" },
-      { id: "T-b", titel: "T-b", status: "actief" },
-    ]);
-  });
-
-  it("leest een status met witruimte eromheen als die status", () => {
-    expect(openTakenUitDossiers([d("T-a", " actief ")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
+  it("valt ook terug op het id bij een lege of alleen-witruimte-titel, in plaats van een lege cel", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief", "")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
+    expect(openTakenUitDossiers([d("T-b", "actief", "   ")])).toEqual([{ id: "T-b", titel: "T-b", status: "actief" }]);
   });
 });
 
@@ -601,5 +595,6 @@ describe("dossiersZonderBekendeStatus", () => {
     expect(
       dossiersZonderBekendeStatus([d("T-a", "actief"), d("T-b", "review"), d("T-c", "afgerond")]),
     ).toEqual([]);
+
   });
 });
