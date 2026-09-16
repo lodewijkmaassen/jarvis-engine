@@ -327,6 +327,16 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
     }
     const start = /^(?:\d+\.|[-*])\s+(.*)$/.exec(regel);
     if (start) {
+      // "- Stap N: …" en "- Controle: …" op het hoogste niveau (LRN-0014, zoals de
+      // cloud-uitvoerder ze schrijft onder een vette kop) zijn de stappen van één
+      // handeling, geen losse handelingen — en een controle is werk van Jarvis,
+      // nooit een actie voor de eigenaar (CON-0016).
+      const stap = /^\**(Stap \d+|Controle)\**:\s*(.*)$/i.exec(start[1]);
+      if (stap) {
+        if (!huidig) huidig = [context || stap[2]];
+        regels.push({ label: stap[1].trim(), tekst: stap[2].trim() });
+        continue;
+      }
       sluit();
       huidig = [start[1]];
       continue;

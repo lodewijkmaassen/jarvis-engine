@@ -569,3 +569,22 @@ describe("openTakenUitDossiers", () => {
     expect(openTakenUitDossiers([d("T-b", "actief", "   ")])).toEqual([{ id: "T-b", titel: "T-b", status: "actief" }]);
   });
 });
+
+describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
+  it("bundelt '- Stap N:' en '- Controle:' onder de vette kop tot één handeling", () => {
+    const tekst = "## Wat de eigenaar nog moet doen\n\n**Handeling 2 — de trigger bijstellen**\n\n- Stap 1: beperk de trigger tot main.\n- Stap 2: zet het rooster op twee keer per dag.\n- Controle: Jarvis meet daarna in de logboeken dat het werkt.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Handeling 2 — de trigger bijstellen");
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Stap 2", "Controle"]);
+    const uit = bouwOpties(items[0].regels, []);
+    expect(uit.stappen).toHaveLength(2);
+    expect(uit.controle).toMatch(/^Jarvis meet/);
+  });
+  it("hangt losse stappen aan een gewoon punt ervoor en maakt van een controle nooit een actie", () => {
+    const tekst = "## Wat de eigenaar nog moet doen\n\n- Pull request #17 opnieuw goedkeuren.\n- Stap 1: open de PR.\n- Controle: de poort wordt groen.\n- Kies een naam voor het project.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items.map((i) => i.titel)).toEqual(["Pull request #17 opnieuw goedkeuren.", "Kies een naam voor het project."]);
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle"]);
+  });
+});
