@@ -102,6 +102,10 @@ const WACHT_OP_TAAK = /wacht(?:en)?\s+op\s+(T-\d{8}-[a-z0-9-]+)/i;
 // "wacht op PR #26", "wacht op pull request lodewijkmaassen/jarvis-engine#26".
 const WACHT_OP_PR = /wacht(?:en)?\s+op\s+(?:pr|pull request)\s*(?:([\w.-]+\/[\w.-]+))?#?(\d+)/i;
 const AKKOORD_STAP = /\bakkoord\b.*\beigenaar\b|\beigenaar\b.*\bakkoord\b/i;
+// "**Uitvoerder: laptop.**" — een stap die per ontwerp bij één uitvoerder hoort.
+// Zonder deze markering valt zo'n stap door naar QUEUED en biedt de regie hem
+// aan elke uitvoerder aan, ook aan de uitvoerder die hem niet kán doen.
+const UITVOERDER_STAP = /\bUitvoerder:\s*\*{0,2}\s*([a-z][a-z0-9_-]*)/i;
 
 export type Uitvoering = {
   readonly claim: Activiteit;
@@ -159,7 +163,7 @@ export function prGemerged(overzicht: Overzicht, activiteit: readonly Activiteit
     p.recent.some((r) => r.soort === "merge" && onderwerp.test(r.onderwerp)));
 }
 
-function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date): TaakRegie {
+function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date, uitvoerder: string | null): TaakRegie {
   const stappen = t.stappen ?? [];
   const open = stappen.filter((s) => !s.gedaan);
   const volgende = open[0]?.tekst ?? null;
@@ -204,6 +208,23 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
         waarom: `wacht op pull request ${label}, die nog niet is samengevoegd; de controller hervat na de merge` };
     }
     // Een gemergede PR is geen wachtreden meer: de stap wordt weer uitvoerbaar werk.
+
+    // Een stap die aan één uitvoerder is toegewezen is alleen werk voor die
+    // uitvoerder. Voor elke andere — en voor een regieronde die niet weet wie
+    // ze draait — is het een wachttoestand, geen wachtrij.
+    const toegewezen = UITVOERDER_STAP.exec(volgende);
+    if (toegewezen) {
+      const naam = toegewezen[1].toLowerCase();
+      if (uitvoerder === null || uitvoerder.toLowerCase() !== naam) {
+        return { ...basis, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: naam, sinds: laatste, uitvoerbaar: false, wacht_op: naam,
+          waarom: uitvoerder === null
+            ? `de stap is toegewezen aan uitvoerder ${naam}; deze regieronde weet niet welke uitvoerder ze draait`
+            : `de stap is toegewezen aan uitvoerder ${naam}, niet aan ${uitvoerder}` };
+      }
+      const rolToegewezen = rolVoorStap(volgende);
+      return { ...basis, toestand: "QUEUED", verantwoordelijke: rolToegewezen, uitvoerder: naam, sinds: laatste, uitvoerbaar: true,
+        waarom: `uitvoerbaar, aan ${naam} toegewezen en niemand werkt eraan` };
+    }
   }
   if (open.length === 0 && stappen.length > 0) {
     return { ...basis, toestand: "DONE", verantwoordelijke: "knowledge-manager", uitvoerder: null, sinds: laatste, uitvoerbaar: true,
@@ -230,8 +251,13 @@ function prioriteit(t: TaakRegie): number {
   return 3;
 }
 
-/** De regie over alle open taken en alle rollen. */
-export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date = new Date()): Regie {
+/**
+ * De regie over alle open taken en alle rollen. `uitvoerder` is de uitvoerder
+ * die deze ronde draait (`laptop`, `cloud`, …); stappen die aan een ándere
+ * uitvoerder zijn toegewezen tellen dan niet als uitvoerbaar werk. Zonder
+ * uitvoerder telt geen enkele toegewezen stap mee.
+ */
+export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date = new Date(), uitvoerder: string | null = null): Regie {
   const taken: TaakRegie[] = [];
   const gezien = new Set<string>();
   for (const p of overzicht.projecten) {
@@ -239,7 +265,7 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
       if (t.status !== "actief" && t.status !== "review") continue;
       if (gezien.has(t.id)) continue; // een dossierspiegel in een ander project telt niet als tweede taak
       gezien.add(t.id);
-      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu));
+      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu, uitvoerder));
     }
   }
   const uitvoerbaar = taken
