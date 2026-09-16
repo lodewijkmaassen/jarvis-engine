@@ -17,6 +17,7 @@ import {
   leesRecent,
   leesStandSecties,
   leesVoortgang,
+  dossiersZonderBekendeStatus,
   openTakenUitDossiers,
   sleutelVan,
   type GitRegel,
@@ -567,5 +568,33 @@ describe("openTakenUitDossiers", () => {
   it("valt ook terug op het id bij een lege of alleen-witruimte-titel, in plaats van een lege cel", () => {
     expect(openTakenUitDossiers([d("T-a", "actief", "")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
     expect(openTakenUitDossiers([d("T-b", "actief", "   ")])).toEqual([{ id: "T-b", titel: "T-b", status: "actief" }]);
+  });
+});
+
+describe("dossiersZonderBekendeStatus", () => {
+  const d = (id: string, status: string, titel?: string): TaakDossier => ({
+    id,
+    opdracht: titel === undefined ? { status } : { status, titel },
+    resultaat: null,
+  });
+
+  it("noemt de dossiers die stil uit het feitenblok vallen, op id gesorteerd", () => {
+    const uit = dossiersZonderBekendeStatus([
+      d("T-b", "gepland", "Later"),
+      d("T-a", "open", "Onbekend woord"),
+      { id: "T-c", opdracht: {}, resultaat: null },
+    ]);
+    expect(uit).toEqual([
+      { id: "T-a", titel: "Onbekend woord", status: "open" },
+      { id: "T-b", titel: "Later", status: "gepland" },
+      { id: "T-c", titel: "T-c", status: "onbekend" },
+    ]);
+  });
+
+  it("zwijgt over de statussen die de engine wél kent", () => {
+    expect(
+      dossiersZonderBekendeStatus([d("T-a", "actief"), d("T-b", "review"), d("T-c", "afgerond")]),
+    ).toEqual([]);
+
   });
 });
