@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-15._
+_Gegenereerd op 2026-09-16._
 
 | Feit | Waarde |
 |---|---|
@@ -51,14 +51,21 @@ niet stil een vierde kolom geeft; de ontsnapping van `<!--` is omkeerbaar
 gemaakt door `&` als eerste te vervangen, zodat een titel die letterlijk
 `&lt;!--` bevat niet dezelfde cel oplevert als een titel met `<!--`; en de
 terugval op het id grijpt nu ook bij een lege of alleen-witruimte-titel, die
-als lege string langs de nullish-variant glipte.
+als lege string langs de nullish-variant glipte. Dat laatste geval is smaller
+dan het lijkt: een kale `titel:` parseert als `null` en viel al weg bij de
+`typeof v === "string"`-filter van de dossierlezer, zodat de oude terugval hem
+ving. Een lege string ontstaat pas bij een aangehaalde waarde.
 
 Eén bevinding uit dezelfde ronde staat bewust open: een dossier met kapotte
 front-matter of een ander statuswoord (`open`, `gepland`) verdwijnt stil uit
-het blok, met exit 0. Dat is geen slordigheid maar een vastgelegde keuze — de
-test "laat afgeronde, geblokkeerde en statusloze taken buiten het feitenblok"
-legt hem expliciet vast. Het omdraaien verandert wat "open taak" betekent en
-hoort daarom langs een besluit te lopen, niet langs een backlogregel.
+het blok, met exit 0. Voor de statusloze vorm is dat een vastgelegde keuze —
+de test "laat afgeronde, geblokkeerde en statusloze taken buiten het
+feitenblok" dekt hem expliciet. Voor een *ander* statuswoord geldt dat niet:
+`open` en `gepland` komen in geen enkele test voor, dus daar is het gedrag
+niet vastgelegd maar alleen een gevolg van de witte lijst. Het uitstel blijft
+verdedigbaar omdat er nergens statusvalidatie is: dit omdraaien verandert wat
+"open taak" betekent én het exitgedrag van de poort, en hoort daarom langs een
+besluit te lopen, niet langs een backlogregel.
 
 ## Volgende stap
 
