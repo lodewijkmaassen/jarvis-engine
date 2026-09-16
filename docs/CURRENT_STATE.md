@@ -55,6 +55,17 @@ verdwijnt stil uit het blok met exit 0 — pre-existent gedrag van
 `leesTaakDossiers`, en het verandert wélke taken als open tellen, dus een
 eigen ronde.
 
+`jarvis pr attesteren` noemt zijn eigen terugval. Een geweigerde
+workflow-dispatch gaf een kale 403, waarna de uitvoerder per run opnieuw moest
+uitzoeken dat dezelfde workflow langs een andere weg wél op gang komt. De
+opdracht scheidt nu de weigering van het uitvoeringsplatform ("not permitted
+for this session type" — geen uitspraak over de bevoegdheid van Jarvis) van
+een ontbrekend `actions: write`-recht en van alle overige weigeringen, en
+noemt bij de eerste twee de terugval mét workflow, ref en invoer. De weigering
+zelf blijft de eerste regel, zodat de meting niet uit het logboek verdwijnt;
+bij een bruikbare terugval is de exitcode 4 in plaats van 1, zodat een routine
+erop kan vertakken zonder de tekst te lezen.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.
