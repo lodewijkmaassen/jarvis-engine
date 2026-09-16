@@ -55,6 +55,18 @@ verdwijnt stil uit het blok met exit 0 — pre-existent gedrag van
 `leesTaakDossiers`, en het verandert wélke taken als open tellen, dus een
 eigen ronde.
 
+Sinds `jarvis review` (DEC-0045 in ToVas Flow) heeft de engine een rol
+`reviewer`: een tweede model leest een pull request met alleen de relevante
+context — de PR, het taakdossier en het contextpakket van de kennislaag — en
+oordeelt op aannames, risico's en samenhang; hoogstens één ronde per pull
+request (het document `review/<repo>#<n>` in de eigen database is de grendel),
+daarna hoogstens één correctie. De aanroep gaat via de database
+(`jarvis.vraag_review`/`jarvis.lees_review`, pg_net), zodat de API-sleutel in
+de Vault blijft; de engine kent geen leveranciersnaam en spreekt het gangbare
+chat-completions-formaat. Tegelijk bewaakt `jarvis db bericht` de
+eigenaarstaal: een bericht met technische namen wordt geweigerd, de
+technische bron gaat mee in `--technisch` en de app toont hem ingeklapt.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.

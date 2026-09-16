@@ -262,6 +262,7 @@ details.stand .md{padding:0 12px 10px}
 .bericht{max-width:92%;padding:9px 11px;border:1px solid var(--lijn);background:var(--vlak2);font-size:14px;line-height:1.5}
 .bericht.jarvis{border-left:3px solid var(--cyaan);align-self:flex-start}
 .bericht.eigenaar{border-right:3px solid var(--midden);align-self:flex-end}
+.bericht .technisch{margin-top:6px;font-size:12px}.bericht .technisch summary{cursor:pointer;color:var(--cyaan);font-family:var(--display);font-size:11px;letter-spacing:.12em;text-transform:uppercase}.bericht .technisch pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0;font-size:12px;color:var(--gedempt);font-family:var(--mono)}
 .bericht .van{font-family:var(--display);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--cyaan);display:block;margin-bottom:2px}
 .bericht.eigenaar .van{color:var(--midden)}
 .bericht .tijd{font-family:var(--mono);font-size:10.5px;color:var(--zacht);margin-left:8px}
@@ -334,10 +335,10 @@ function relatief(iso) {
 const kort = (t, n) => (t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t);
 const SOORT = { beslissing: "beslissing", conflict: "conflict", actie: "actie", risico: "risico", blokkade: "blokkade" };
 /* Het digitale team: stabiele functionele rollen, geen sessies. Namen zoals de eigenaar ze leest. */
-const ROLNAAM = { eigenaar: "Jij", orchestrator: "Jarvis · Orchestrator", "task-controller": "Task Controller", architect: "Architect", developer: "Engineering", qa: "QA", "knowledge-manager": "Knowledge Manager" };
-const ROLWAT = { orchestrator: "verdeelt het werk en bewaakt de regels", "task-controller": "bewaakt dat uitvoerbaar werk doorloopt", architect: "onderzoekt en ontwerpt vóór de bouw", developer: "bouwt, test en opent pull requests", qa: "toetst onafhankelijk wat gebouwd is", "knowledge-manager": "houdt dossiers, kennis en de stand bij" };
+const ROLNAAM = { eigenaar: "Jij", orchestrator: "Jarvis · Orchestrator", "task-controller": "Task Controller", architect: "Architect", developer: "Engineering", reviewer: "Second opinion", qa: "QA", "knowledge-manager": "Knowledge Manager" };
+const ROLWAT = { orchestrator: "verdeelt het werk en bewaakt de regels", "task-controller": "bewaakt dat uitvoerbaar werk doorloopt", architect: "onderzoekt en ontwerpt vóór de bouw", developer: "bouwt, test en opent pull requests", reviewer: "leest als ander model mee: aannames, risico's en samenhang", qa: "toetst onafhankelijk wat gebouwd is", "knowledge-manager": "houdt dossiers, kennis en de stand bij" };
 const TOESTAND_TEKST = { QUEUED: "wacht op een uitvoerder", RUNNING: "in uitvoering", BLOCKED: "geblokkeerd", WAITING_FOR_USER: "wacht op jou", WAITING_FOR_DEPENDENCY: "wacht op iets anders", DONE: "klaar, afronding volgt", AFWIJKING: "afwijking, in onderzoek" };
-const ACT_TEKST = { claim: "pakt op", stap: "stap gezet", heartbeat: "nog bezig", pr: "pull request", toetsing: "toetsing", attestatie: "attestatie", merge: "samengevoegd", fout: "fout", klaar: "klaar", vrijgave: "losgelaten", regie: "regieronde", herstel: "herstel" };
+const ACT_TEKST = { claim: "pakt op", stap: "stap gezet", heartbeat: "nog bezig", pr: "pull request", toetsing: "toetsing", review: "tweede lezing", attestatie: "attestatie", merge: "samengevoegd", fout: "fout", klaar: "klaar", vrijgave: "losgelaten", regie: "regieronde", herstel: "herstel" };
 function duur(iso) { const m = Math.round((Date.now() - new Date(iso).getTime()) / 6e4); if (Number.isNaN(m)) return "onbekend"; if (m < 1) return "net"; if (m < 60) return `${m} min`; const u = Math.floor(m / 60); return u < 48 ? `${u} u ${m % 60} min` : `${Math.round(u / 24)} d`; }
 function regieVan(taakId) { return (staat.regie?.taken ?? []).find((t) => t.id === taakId) ?? null; }
 const URG = { hoog: 0, midden: 1, laag: 2 };
@@ -846,6 +847,11 @@ function akkoordHtml(t) {
   s += `</div>`;
   return s;
 }
+/* De technische bron achter een bericht in eigenaarstaal (context.technisch): ingeklapt, voor wie het wil nakijken. */
+function technischHtml(b) {
+  const t = b.context?.technisch; if (typeof t !== "string" || !t.trim()) return "";
+  return `<details class="technisch"><summary>Technische details</summary><pre>${esc(t)}</pre></details>`;
+}
 /* Een apart akkoord voor één pull request (harde uitzondering): Jarvis vraagt het als bericht met context.akkoord_pr. */
 function akkoordPrHtml(b) {
   const v = b.context?.akkoord_pr; if (!v || b.van !== "jarvis") return "";
@@ -882,7 +888,7 @@ function itemHtml(n) {
 function draadHtml(n) {
   const live = jarvisLive(); const draad = draadVan(n.id);
   const hint = n.soort === "item" ? "Praat hier over dit punt — of beslis in tekst; Jarvis leest het als antwoord." : n.soort === "root" ? "Praat met Jarvis over het geheel." : `Praat hier over ${n.soort === "project" ? "dit project" : n.soort === "taak" ? "deze taak" : "deze tak"}.`;
-  let s = `<div class="draad"><span class="eyebrow">Gesprek · ${draad.length ? `${draad.length} berichten` : "nog leeg"}</span><div class="berichten">${draad.map((b) => `<div class="bericht ${b.van === "jarvis" ? "jarvis" : "eigenaar"} ${b.status === "nieuw" && b.van !== "jarvis" ? "wacht" : ""}"><span class="van">${b.van === "jarvis" ? "Jarvis" : "Jij"}<span class="tijd">${esc(datumKort(b.op))} ${esc(tijd(b.op))}${b.van !== "jarvis" && b.status === "nieuw" ? " · wacht op Jarvis" : ""}</span></span>${inlineMd(b.tekst)}${akkoordPrHtml(b)}</div>`).join("")}</div>`;
+  let s = `<div class="draad"><span class="eyebrow">Gesprek · ${draad.length ? `${draad.length} berichten` : "nog leeg"}</span><div class="berichten">${draad.map((b) => `<div class="bericht ${b.van === "jarvis" ? "jarvis" : "eigenaar"} ${b.status === "nieuw" && b.van !== "jarvis" ? "wacht" : ""}"><span class="van">${b.van === "jarvis" ? "Jarvis" : "Jij"}<span class="tijd">${esc(datumKort(b.op))} ${esc(tijd(b.op))}${b.van !== "jarvis" && b.status === "nieuw" ? " · wacht op Jarvis" : ""}</span></span>${inlineMd(b.tekst)}${technischHtml(b)}${akkoordPrHtml(b)}</div>`).join("")}</div>`;
   s += `<div class="invoer"><textarea data-draad="${esc(n.id)}" placeholder="${esc(hint)}${live.live ? "" : " (geen sessie actief; wacht tot de volgende)"}" aria-label="Bericht"></textarea><button class="knop" data-actie="verstuur" data-id="${esc(n.id)}">Verstuur</button></div>`;
   const stemmen = ("speechSynthesis" in window) ? speechSynthesis.getVoices().filter((v) => /^nl/i.test(v.lang)) : [];
   s += `<div class="stemregel"><label><input type="checkbox" data-actie="stem-aan" ${staat.stem.aan ? "checked" : ""}> voorlezen</label>${stemmen.length ? `<label>stem <select data-actie="stem-kies">${stemmen.map((v) => `<option value="${esc(v.name)}" ${v.name === staat.stem.naam ? "selected" : ""}>${esc(v.name)}</option>`).join("")}</select></label>` : ""}<span>dicteren: microfoon van je toetsenbord (pc: Win+H)</span></div></div>`;

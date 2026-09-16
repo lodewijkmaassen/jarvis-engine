@@ -123,9 +123,12 @@ Vaste volgorde, geen stap overslaan:
 1. **Architect** — analyse, acceptatiecriteria, uitvoeringsplan, beide checklists.
 2. **Orchestrator** — plan goedkeuren of terugsturen (§4.4).
 3. **Developer** — implementatie volgens het goedgekeurde plan.
-4. **QA** — onafhankelijke validatie tegen opdracht en acceptatiecriteria.
-5. **Knowledge Manager** — vastleggen wat duurzaam is.
-6. **Orchestrator** — consolideren tot `resultaat.md`.
+4. **Reviewer** — tweede lezing door een ander model (`jarvis review`, §4.7),
+   alleen voor technisch werk; hoogstens één ronde.
+5. **QA** — onafhankelijke validatie tegen opdracht en acceptatiecriteria.
+6. **Knowledge Manager** — vastleggen wat duurzaam is.
+7. **Orchestrator** — consolideren tot `resultaat.md` en de conclusie voor
+   de eigenaar in eigenaarstaal (§4.8).
 
 Parallel uitvoeren mag alleen voor deeltaken die aantoonbaar geen gedeelde
 bestanden raken; leg de bestandsverdeling per deeltaak vooraf vast in
@@ -161,6 +164,42 @@ Een taak is pas af wanneer: het validatierapport per acceptatiecriterium een
 oordeel met bewijs geeft; alles wat is toegezegd ook is opgeleverd of expliciet
 als niet-gedaan is benoemd; de kennislaag is bijgewerkt of gemotiveerd niet
 bijgewerkt; en `resultaat.md` bestaat.
+
+### 4.7 Tweede lezing (Reviewer)
+
+Voor elke pull request met technisch werk — code, tests, migraties,
+configuratie, workflows — vraag je na het openen één review van een ander
+model: `jarvis review <nummer> --repo <slug>`. Niet voor administratieve
+pull requests (alleen dossiers, kennisrecords, index en feitenblok). De engine
+stuurt de PR, het dossier en het contextpakket mee en legt het oordeel vast.
+
+- Exit 0 (`akkoord`): door naar QA. Neem de punten met ernst `midden` en
+  `laag` mee als opmerkingen in het dossier; ze zijn geen werk.
+- Exit 4 (`correctie`): de Developer herstelt uitsluitend de punten met ernst
+  `hoog`, in één commit op dezelfde branch, en meldt dat als voortgangsstap.
+  Daarna géén tweede review: QA beoordeelt de herstelde kop.
+- Exit 3 (al beoordeeld): er is al een ronde geweest; ga door.
+- Exit 1 (mislukt: geen sleutel, geen antwoord, leverancier weigert): dat is
+  werk voor Jarvis (CON-0015), nooit een reden om de eigenaar te vragen. Meld
+  het in het dossier en ga door zonder review.
+
+Dat is de hele lus: bouwer → Reviewer → hoogstens één correctie → QA. Er is
+nooit een gesprek tussen twee modellen.
+
+### 4.8 Eigenaarstaal
+
+Alles wat de eigenaar in de app leest — een bericht, een beslisverzoek, een
+punt onder "Wat de eigenaar nog moet doen", de conclusie van een taak — is
+Nederlands, kort, en zonder technische namen: geen nummers van pull requests
+of commits, geen bestandsnamen, geen opdrachtregels, geen woorden als
+attestatie, branch, workflow of migratie. De eigenaar leest in één oogopslag:
+wat er gebeurt, wat het resultaat is, of Jarvis zelf verdergaat, en of er iets
+van hem nodig is. `jarvis db bericht` weigert een tekst die dat niet haalt;
+de technische bron gaat mee in `--technisch` en blijft zo bewaard voor het
+team en de audit. Voorbeeld — technisch: "PR #10 head 2a2ea92, attestatie
+pending"; voor de eigenaar: "De wijziging is technisch goedgekeurd. Alleen
+jouw akkoord is nog nodig." De `conclusie_eigenaar` van de Reviewer is
+materiaal daarvoor, geen vervanging: jij schrijft wat de eigenaar leest.
 
 ## 5. Mandaat
 
@@ -230,6 +269,9 @@ Toetsbaar; een taak die hier niet aan voldoet, is niet af.
 - [ ] Geen geleverde regel spreekt een harde projectregel of een harde
       randvoorwaarde uit de kennislaag tegen.
 - [ ] `resultaat.md` is te begrijpen zonder de code te openen.
+- [ ] Technisch werk heeft één review van een ander model gehad, of het dossier
+      zegt waarom niet.
+- [ ] Wat de eigenaar leest haalt de eigenaarstaalwacht (§4.8).
 
 ## 9. Escalatie — BLOCKING_DECISION
 
