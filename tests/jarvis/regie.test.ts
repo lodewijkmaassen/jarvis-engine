@@ -60,6 +60,33 @@ describe("regie — toestand per open taak", () => {
     const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: "Inrichten — wacht op T-20260101-spook", gedaan: false }] })]), [], NU);
     expect(r.taken[0]).toMatchObject({ toestand: "AFWIJKING", uitvoerbaar: true, wacht_op: "T-20260101-spook" });
   });
+  it("een stap die aan een uitvoerder is toegewezen is alleen werk voor die uitvoerder", () => {
+    const stap = "Stap 1 — repository `ideeen` aanleggen. **Uitvoerder: laptop.** De cloud kan dit niet.";
+    const t = taak("T-1", { stappen: [{ tekst: stap, gedaan: false }], wacht_op: stap });
+    const cloud = bepaalRegie(overzicht([t]), [], NU, "cloud");
+    expect(cloud.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", wacht_op: "laptop", uitvoerder: "laptop", uitvoerbaar: false });
+    expect(cloud.taken[0].waarom).toMatch(/toegewezen aan uitvoerder laptop, niet aan cloud/);
+    expect(cloud.uitvoerbaar).toEqual([]);
+    const laptop = bepaalRegie(overzicht([t]), [], NU, "laptop");
+    expect(laptop.taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerder: "laptop", uitvoerbaar: true });
+    expect(laptop.uitvoerbaar.map((x) => x.id)).toEqual(["T-1"]);
+  });
+  it("zonder bekende uitvoerder wacht een toegewezen stap, in plaats van aan iedereen te worden aangeboden", () => {
+    const stap = "De app uitrollen. **Uitvoerder: laptop.**";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", wacht_op: "laptop", uitvoerbaar: false });
+    expect(r.taken[0].waarom).toMatch(/weet niet welke uitvoerder ze draait/);
+  });
+  it("de toewijzing geldt alleen bij de markering, niet bij het woord uitvoerder in lopende tekst", () => {
+    const stap = "Meten of de cloud-uitvoerder de branches kan opruimen";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU, "cloud");
+    expect(r.taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerbaar: true });
+  });
+  it("een lopende uitvoering en een wachtende dependency gaan vóór de toewijzing", () => {
+    const stap = "Herpinnen — wacht op PR #26. **Uitvoerder: cloud.**";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU, "cloud");
+    expect(r.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", wacht_op: "PR #26" });
+  });
   it("WAITING_FOR_DEPENDENCY op een pull request tot die is samengevoegd (merge-activiteit of mergecommit)", () => {
     const wacht = taak("T-1", { stappen: [{ tekst: "Herpinnen — wacht op PR #26", gedaan: false }], wacht_op: "Herpinnen — wacht op PR #26" });
     const open = bepaalRegie(overzicht([wacht]), [], NU);
