@@ -54,6 +54,32 @@ describe("genereerFeitenblok", () => {
     expect(rij).toBe("| T-0001 | actief | Import \\| export |");
   });
 
+  it("houdt de tabel ook heel als er al een backslash vóór de pijp staat", () => {
+    const blok = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Import \\| export", status: "actief" }],
+    });
+    const rij = blok.split("\n").find((r) => r.includes("T-0001"))!;
+    // De backslash uit het dossier wordt zelf ontsnapt, zodat de pijp
+    // beschermd blijft: vier cellen, niet vijf.
+    expect(rij).toBe("| T-0001 | actief | Import \\\\\\| export |");
+    expect(rij.split(/(?<!\\)\|/)).toHaveLength(5);
+  });
+
+  it("houdt een ontsnapte markering uit een dossier onderscheidbaar van een echte", () => {
+    const echt = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Markering <!-- erin", status: "actief" }],
+    });
+    const alOntsnapt = genereerFeitenblok({
+      ...FEITEN,
+      openTaken: [{ id: "T-0001", titel: "Markering &lt;!-- erin", status: "actief" }],
+    });
+    expect(echt).toContain("Markering &lt;!-- erin");
+    expect(alOntsnapt).toContain("Markering &amp;lt;!-- erin");
+    expect(echt).not.toBe(alOntsnapt);
+  });
+
   it("laat een taaktitel het blok niet van binnenuit sluiten", () => {
     const blok = genereerFeitenblok({
       ...FEITEN,

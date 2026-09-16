@@ -563,4 +563,9 @@ describe("openTakenUitDossiers", () => {
   it("valt terug op het id als titel, zodat een taak nooit onzichtbaar wordt", () => {
     expect(openTakenUitDossiers([d("T-a", "actief")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
   });
+
+  it("valt ook terug op het id bij een lege of alleen-witruimte-titel, in plaats van een lege cel", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief", "")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
+    expect(openTakenUitDossiers([d("T-b", "actief", "   ")])).toEqual([{ id: "T-b", titel: "T-b", status: "actief" }]);
+  });
 });

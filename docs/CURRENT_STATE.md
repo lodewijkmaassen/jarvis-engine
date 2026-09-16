@@ -44,6 +44,17 @@ taakdossiers afleidt. Daarvoor gaf de verzamelaar het veld hardgecodeerd leeg
 mee, zodat `CURRENT_STATE.md` in elke repository "Open taken: geen" meldde —
 ook met acht actieve taken. Precies de drift die dit document zou dichtzetten.
 
+De ontsnapping van dossiertekst in dat blok is nu omkeerbaar. Een backslash
+direct vóór een pijp brak de rij alsnog in tweeën, en `&lt;!--` uit een
+dossier was niet te onderscheiden van een echte `<!--`; backslash en
+ampersand worden daarom zelf ontsnapt, in die volgorde. Een lege of
+alleen-witruimte-titel valt nu terug op het taak-id in plaats van een lege
+cel te geven. Eén bevinding uit dezelfde QA-ronde staat nog open: een dossier
+met kapotte front-matter of een ander statuswoord (`open`, `gepland`)
+verdwijnt stil uit het blok met exit 0 — pre-existent gedrag van
+`leesTaakDossiers`, en het verandert wélke taken als open tellen, dus een
+eigen ronde.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.
