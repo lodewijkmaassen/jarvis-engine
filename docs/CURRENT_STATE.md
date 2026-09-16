@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-15._
+_Gegenereerd op 2026-09-16._
 
 | Feit | Waarde |
 |---|---|
@@ -54,6 +54,15 @@ met kapotte front-matter of een ander statuswoord (`open`, `gepland`)
 verdwijnt stil uit het blok met exit 0 — pre-existent gedrag van
 `leesTaakDossiers`, en het verandert wélke taken als open tellen, dus een
 eigen ronde.
+
+De regie leest sinds deze wijziging ook een toewijzing aan een uitvoerder. Ze
+kende drie wachtredenen in de tekst van de eerste open stap — een akkoord van
+de eigenaar, een andere taak, een pull request — en een stap die per ontwerp
+bij één uitvoerder hoort viel daardoor door naar `QUEUED`, `uitvoerbaar: true`.
+Werk dat de cloud niet kán doen stond zo bovenaan elke cloud-dispatchlijst.
+`**Uitvoerder: <naam>.**` in de steptekst maakt de stap nu uitvoerbaar voor die
+uitvoerder en `WAITING_FOR_DEPENDENCY` voor elke andere; `jarvis regie` zegt
+met `--door` wie de ronde draait, en zonder dat wacht een toegewezen stap.
 
 ## Volgende stap
 
