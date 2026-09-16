@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, type PullRequestFeiten } from "@/jarvis/src/pr";
+import { ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, eigenaarVan, SAMENVOEGMETHODE, type PullRequestFeiten } from "@/jarvis/src/pr";
 
 const KOP = "c".repeat(40);
 const OUD = "d".repeat(40);
@@ -108,5 +108,39 @@ describe("vaste keuzes", () => {
   });
   it("leest de eigenaar uit de slug", () => {
     expect(eigenaarVan("eigenaar/repo")).toBe("eigenaar");
+  });
+});
+
+describe("duidDispatchWeigering", () => {
+  const PLATFORM = "Dispatching, enabling or disabling workflows and deleting workflow runs, logs or artifacts are not permitted for this session type.";
+
+  it("herkent de weigering van het uitvoeringsplatform en noemt de terugval met workflow, ref en invoer", () => {
+    const uit = duidDispatchWeigering(403, PLATFORM, "eigenaar/repo", 82);
+    expect(uit.soort).toBe("sessietype");
+    expect(uit.terugvalMogelijk).toBe(true);
+    const tekst = uit.regels.join(" ");
+    expect(tekst).toContain(ATTESTATIE_WORKFLOW);
+    expect(tekst).toContain("pr: 82");
+    expect(tekst).toContain("eigenaar/repo");
+    // De weigering mag niet als een uitspraak over bevoegdheid gelezen worden.
+    expect(tekst).toContain("niet het bottoken");
+  });
+
+  it("scheidt een ontbrekend recht van de weigering van het platform", () => {
+    const uit = duidDispatchWeigering(403, "Resource not accessible by integration", "eigenaar/repo", 7);
+    expect(uit.soort).toBe("recht");
+    expect(uit.terugvalMogelijk).toBe(true);
+    expect(uit.regels.join(" ")).toContain("actions: write");
+  });
+
+  it("biedt geen terugval bij een weigering die geen van beide is", () => {
+    const uit = duidDispatchWeigering(404, "Not Found", "eigenaar/repo", 7);
+    expect(uit.soort).toBe("anders");
+    expect(uit.terugvalMogelijk).toBe(false);
+    expect(uit.regels.join(" ")).toContain("op main van eigenaar/repo");
+  });
+
+  it("houdt de weigering zelf als eerste regel, zodat de meting niet verdwijnt", () => {
+    expect(duidDispatchWeigering(403, PLATFORM, "eigenaar/repo", 82).regels[0]).toContain("403: Dispatching");
   });
 });

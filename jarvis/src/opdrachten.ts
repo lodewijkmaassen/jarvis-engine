@@ -97,7 +97,7 @@ import {
   WIE_SQL,
 } from "./db";
 import { randomBytes } from "node:crypto";
-import { ATTESTATIE_GEBRUIKER, beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
+import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
 import { homedir } from "node:os";
 
 const uitvoeren = promisify(execFile);
@@ -1450,6 +1450,12 @@ function foutTekst(a: GitHubAntwoord): string {
   return typeof l?.message === "string" ? `${a.status}: ${l.message}` : `HTTP ${a.status}`;
 }
 
+/** Alleen de boodschap van GitHub, zonder de status ervoor; voor duiding. */
+function berichtVan(a: GitHubAntwoord): string {
+  const l = a.lading as { message?: unknown } | null;
+  return typeof l?.message === "string" ? l.message : "";
+}
+
 async function slugUitOrigin(wortel: string): Promise<string | null> {
   const url = await git(wortel, ["remote", "get-url", "origin"]);
   const m = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
@@ -1629,13 +1635,16 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
   if (wat === "attesteren") {
     // Start de attestatieworkflow op main; die beoordeelt zelf en keurt goed
     // of niet. De bot kan hier niets afdwingen: hij vraagt alleen om de toets.
-    const start = await github(token, "POST", `/repos/${slug}/actions/workflows/jarvis-attestatie.yml/dispatches`, {
+    const start = await github(token, "POST", `/repos/${slug}/actions/workflows/${ATTESTATIE_WORKFLOW}/dispatches`, {
       ref: "main",
       inputs: { pr: String(nummer) },
     });
     if (start.status !== 204) {
-      console.error(`jarvis pr attesteren: workflow niet gestart (${foutTekst(start)}); staat jarvis-attestatie.yml op main?`);
-      return 1;
+      const duiding = duidDispatchWeigering(start.status, berichtVan(start), slug, nummer);
+      for (const regel of duiding.regels) console.error(`jarvis pr attesteren: ${regel}`);
+      // Exitcode 4 zegt: de attestatie is niet gevraagd, maar er is een weg die
+      // wél werkt. Een routine kan daarop vertakken zonder de tekst te lezen.
+      return duiding.terugvalMogelijk ? 4 : 1;
     }
     console.log(`jarvis pr: attestatie gevraagd voor #${nummer} op ${feiten.kop.slice(0, 7)}; de workflow beoordeelt en geeft bij een schone uitkomst de review af (zie Actions → jarvis-attestatie).`);
     return 0;
