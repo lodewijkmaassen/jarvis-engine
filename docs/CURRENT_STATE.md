@@ -12,7 +12,7 @@ _Gegenereerd op 2026-09-16._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 30 |
+| Testbestanden | 31 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -26,6 +26,7 @@ _Gegenereerd op 2026-09-16._
 | T-20260913-akkoord-geven | actief | Autorisatie van de eigenaar via de Jarvis-interface, niet via handelingen op GitHub |
 | T-20260914-agent-operations | actief | Jarvis als observeerbaar en autonoom digitaal team — Operations-view en Task Controller |
 | T-20260914-eigen-laag | actief | De eigen Jarvis-laag (app en database) leidend; de artifact-database en sessiegebonden bestanden geen afhankelijkheid meer |
+| T-20260917-chatgpt-review | actief | Een tweede model als onafhankelijke reviewer in de keten, en eigenaarstaal in de app |
 
 <!-- jarvis:feiten:eind -->
 
