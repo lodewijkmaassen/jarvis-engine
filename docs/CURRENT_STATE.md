@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-15._
+_Gegenereerd op 2026-09-16._
 
 | Feit | Waarde |
 |---|---|
@@ -54,6 +54,15 @@ met kapotte front-matter of een ander statuswoord (`open`, `gepland`)
 verdwijnt stil uit het blok met exit 0 — pre-existent gedrag van
 `leesTaakDossiers`, en het verandert wélke taken als open tellen, dus een
 eigen ronde.
+
+Dat dossier verdwijnt inmiddels niet meer stil. Wélke taken als open tellen is
+onveranderd — `OPEN_STATUSSEN` blijft `actief` en `review` — maar wat buiten
+die tweedeling valt wordt nu gemeld: `dossiersZonderBekendeStatus` leidt het
+af en `jarvis state` waarschuwt met het dossier bij naam en de status die er
+staat. Een waarschuwing, geen fout: het blok blijft kloppend voor wat het wél
+noemt, en één slordig dossier hoort geen repository de poort uit te werken. De
+vraag of `gepland` een open taak hóórt te zijn blijft dus openstaan voor die
+eigen ronde; hij is alleen niet meer onzichtbaar zolang niemand hem stelt.
 
 ## Volgende stap
 
