@@ -44,6 +44,12 @@ taakdossiers afleidt. Daarvoor gaf de verzamelaar het veld hardgecodeerd leeg
 mee, zodat `CURRENT_STATE.md` in elke repository "Open taken: geen" meldde —
 ook met acht actieve taken. Precies de drift die dit document zou dichtzetten.
 
+Een taak zonder bruikbare titel valt daarbij terug op zijn id, en dat geldt nu
+ook als de titel er wél staat maar leeg of alleen witruimte is — in het
+feitenblok en op de taakkaart van de app. Een regel in het blok die naar een
+taak wijst zonder hem te kunnen benoemen, is even onbruikbaar als een
+ontbrekende regel.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.
