@@ -31,7 +31,7 @@ import {
   vervangFeitenblok,
   type StateFeiten,
 } from "./state";
-import { ALLOWLIST_BESTANDSNAAM, LEGE_ALLOWLIST, laadAllowlist, scanTekst, type Allowlist } from "./sanitize";
+import { ALLOWLIST_BESTANDSNAAM, ENTROPIE_MINIMUM_LENGTE, LEGE_ALLOWLIST, laadAllowlist, scanTekst, type Allowlist } from "./sanitize";
 import {
   RECENT_DAGEN,
   bouwOverzicht,
@@ -715,7 +715,7 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
  * Jarvis-data die de repository verlaat, en daar geldt CON-0008 dubbel.
  */
 /** Het overzicht zoals `jarvis overzicht` het bouwt, voor hergebruik door `jarvis regie`. */
-async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; overzicht: Overzicht }> {
+async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
   const { wortel, config, lading } = await laadAlles();
   const nu = new Date();
 
@@ -764,16 +764,41 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
-  return { wortel, overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+}
+
+/**
+ * De namen van branches en tags van de betrokken repositories, als
+ * allowlist-tokens voor de scan van gegenereerde uitvoer. Een branchnaam als
+ * `cloud-20260915-attestatie-dispatch` (34 tekens, cijfers en letters) haalt
+ * de entropiedrempel en blokkeerde het overzicht en de regie — terwijl bij het
+ * scannen al bekend is dát het een naam is: hij staat in de refs. De
+ * uitzondering geldt alleen hier, op uitvoer die uit die refs is opgebouwd;
+ * de scan van bestanden en de algemene entropieregel veranderen niet.
+ */
+async function refNamenAlsAllowlist(wortels: readonly string[], basis: Allowlist): Promise<Allowlist> {
+  const namen = new Set<string>();
+  for (const w of wortels) {
+    const refs = await git(w, ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes", "refs/tags"]);
+    for (const ref of refs.split("\n")) {
+      const naam = ref.trim();
+      if (!naam) continue;
+      // De hele ref én het laatste padsegment: in een mergeonderwerp staat
+      // `lodewijkmaassen/jarvis/<naam>`, in een branchlijst `origin/jarvis/<naam>`.
+      for (const deel of [naam, naam.split("/").pop() ?? naam]) if (deel.length >= ENTROPIE_MINIMUM_LENGTE) namen.add(deel);
+    }
+  }
+  return namen.size === 0 ? basis : { ...basis, tokens: [...basis.tokens, ...namen] };
 }
 
 async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<number> {
-  const { wortel, overzicht } = await bouwOverzichtVanuit(vlaggen);
+  const { wortel, wortels, overzicht } = await bouwOverzichtVanuit(vlaggen);
   const json = `${JSON.stringify(overzicht, null, 2)}\n`;
 
   // De poort voor alles wat de repository verlaat. Geen uitzonderingen: een
   // overzicht met een tenant-UUID of een adres erin is erger dan geen overzicht.
-  const allowlist = await laadAllowlistVanSchijf(wortel);
+  // Alleen de eigen ref-namen (branches, tags) tellen als bekend.
+  const allowlist = await refNamenAlsAllowlist(wortels, await laadAllowlistVanSchijf(wortel));
   const bevindingen = scanTekst(json, allowlist, "overzicht.json");
   if (bevindingen.length > 0) {
     console.error(`jarvis overzicht: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);
@@ -1886,7 +1911,7 @@ async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<strin
  * zijn ronde als activiteit.
  */
 async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<number> {
-  const { wortel, overzicht } = await bouwOverzichtVanuit(vlaggen);
+  const { wortel, wortels, overzicht } = await bouwOverzichtVanuit(vlaggen);
   let activiteit: Activiteit[] = [];
   const verbinding = await verbindDb();
   if (verbinding !== null) {
@@ -1902,7 +1927,7 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   const regie = bepaalRegie(overzicht, activiteit, new Date());
   const json = `${JSON.stringify(regie, null, 2)}\n`;
 
-  const allowlist = await laadAllowlistVanSchijf(wortel);
+  const allowlist = await refNamenAlsAllowlist(wortels, await laadAllowlistVanSchijf(wortel));
   const bevindingen = scanTekst(json, allowlist, "regie.json");
   if (bevindingen.length > 0) {
     console.error(`jarvis regie: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);
