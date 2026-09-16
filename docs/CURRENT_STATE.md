@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-15._
+_Gegenereerd op 2026-09-16._
 
 | Feit | Waarde |
 |---|---|
