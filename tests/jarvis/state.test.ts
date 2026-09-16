@@ -89,11 +89,13 @@ describe("genereerFeitenblok", () => {
       genereerFeitenblok({ ...FEITEN, openTaken: [{ id: "T-0001", titel, status: "actief" }] })
         .split("\n")
         .find((r) => r.startsWith("| T-0001 "))!;
-    // Zonder de `&`-ontsnapping leverden deze twee titels dezelfde rij op, en
-    // was uit het feitenblok niet meer af te leiden wat er in het dossier stond.
-    expect(alsTitel("<!-- echt")).not.toBe(alsTitel("&lt;!-- letterlijk"));
-    expect(alsTitel("<!-- echt")).toContain("&lt;!-- echt");
-    expect(alsTitel("&lt;!-- letterlijk")).toContain("&amp;lt;!-- letterlijk");
+    // Dezelfde staart aan beide kanten, anders bewijst dit niets: met een
+    // verschillende staart lopen de rijen sowieso uiteen en slaagt de
+    // assertie ook tegen de oude implementatie. Het verschil moet uit de
+    // ontsnapping komen, niet uit de rest van de titel.
+    expect(alsTitel("<!-- x")).not.toBe(alsTitel("&lt;!-- x"));
+    expect(alsTitel("<!-- x")).toContain("&lt;!-- x");
+    expect(alsTitel("&lt;!-- x")).toContain("&amp;lt;!-- x");
   });
 
   it("vouwt regeleindes in een taaktitel op tot spaties, zodat de rij één regel blijft", () => {
