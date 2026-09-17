@@ -331,10 +331,26 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
       // cloud-uitvoerder ze schrijft onder een vette kop) zijn de stappen van één
       // handeling, geen losse handelingen — en een controle is werk van Jarvis,
       // nooit een actie voor de eigenaar (CON-0016).
-      const stap = /^\**(Stap \d+|Controle)\**:\s*(.*)$/i.exec(start[1]);
+      //
+      // De dubbele punt mag binnen de sterretjes staan (`**Controle:** …`); dat
+      // is dezelfde regel en krijgt dezelfde grens. Zonder `\**` ná de dubbele
+      // punt bleven de sluitende sterretjes in de tekst staan.
+      const stap = /^\**(Stap \d+|Controle)\**\s*:\**\s*(.*)$/i.exec(start[1]);
       if (stap) {
-        if (!huidig) huidig = [context || stap[2]];
-        regels.push({ label: stap[1].trim(), tekst: stap[2].trim() });
+        const label = stap[1].trim();
+        const regel = { label, tekst: stap[2].replace(/\*+$/, "").trim() };
+        // Een controle opent nooit een handeling. Stond er een lege regel tussen
+        // de stappen en de controle, dan is het lopende punt al gesloten; de
+        // controle hoort dan bij het punt dat er net was, en anders bij niets.
+        // Zonder deze grens werd de controletekst zelf een item, en daarmee in
+        // "Voor jou" en in de regie een "wacht op jou" voor werk van Jarvis.
+        if (!huidig && /^controle$/i.test(label)) {
+          const vorige = items[items.length - 1];
+          if (vorige) items[items.length - 1] = { ...vorige, regels: [...vorige.regels, regel] };
+          continue;
+        }
+        if (!huidig) huidig = [context || regel.tekst];
+        regels.push(regel);
         continue;
       }
       sluit();
