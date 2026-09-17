@@ -59,6 +59,31 @@ describe("beoordeelEngine", () => {
     expect(beoordeelEngine({ modus: "engine" }, null, SLUG)).toEqual([]);
   });
 
+  // RSK-0024: een storing bij GitHub en een pin die naast de hoofdbranch ligt
+  // gaven dezelfde rode poort met dezelfde tekst. De uitkomst blijft rood — de
+  // controle weghalen zou de vangrail weghalen — maar de melding zegt nu wie
+  // er niet antwoordde, en zegt er uitdrukkelijk bij dat dit niets over de pin
+  // zelf zegt.
+  it("noemt de reden als de vergelijking niet te maken was, en houdt hem los van de pin", () => {
+    const redenen = beoordeelEngine(gezond, { onbekend: "GitHub antwoordde met 403" }, SLUG);
+    expect(redenen).toHaveLength(1);
+    expect(redenen[0]).toContain("GitHub antwoordde met 403");
+    expect(redenen[0]).toContain("zegt niets over de pin zelf");
+    expect(redenen[0]).not.toContain("alleen een door een mens samengevoegde");
+  });
+
+  it("houdt een pin die aantoonbaar naast de hoofdbranch ligt een andere melding dan een storing", () => {
+    const naast = beoordeelEngine(gezond, "diverged", SLUG);
+    expect(naast[0]).toContain("staat niet op de hoofdbranch");
+    expect(naast[0]).not.toContain("zegt niets over de pin zelf");
+  });
+
+  it("onderscheidt 'niet gevraagd' (null) van 'gevraagd, geen antwoord'", () => {
+    expect(beoordeelEngine(gezond, null, SLUG)[0]).toBe(
+      `kon niet vaststellen of ${SHA_A.slice(0, 7)} op de hoofdbranch van ${SLUG} staat`,
+    );
+  });
+
   it("weigert een engine uit een andere repository dan jarvis.config.yml noemt, ook een fork met dezelfde naam", () => {
     // QA-bevinding B-2: de vergelijking met main liep tegen de repository die
     // de lockfile noemde; een fork met dezelfde naam gaf zo een groene poort.
