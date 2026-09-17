@@ -49,6 +49,34 @@ export type StateFeiten = {
  * interpretatie in: "we wachten op de provider" is narratief, "migratie 0011
  * is de hoogste" is een feit.
  */
+/**
+ * Tekst uit een taakdossier veilig in een cel van de tabel zetten.
+ *
+ * Twee faalpaden, allebei gemeten. Een pijp breekt de tabel in tweeën. En een
+ * titel die `<!-- jarvis:feiten:eind -->` bevat, sluit het blok van binnenuit:
+ * `state --schrijf` slaagt dan nog, maar `state --controleer` is daarna rood
+ * en elke volgende `--schrijf` plakt er rommel bij — de gedocumenteerde
+ * remedie maakt het dus erger in plaats van beter. Een regel uit een dossier
+ * mag nooit als opmaak gelezen worden; het is inhoud.
+ *
+ * De volgorde van de vervangingen is dragend, want de ontsnapping moet
+ * omkeerbaar zijn — anders is niet meer te zien wat er in het dossier stond.
+ * De backslash gaat vóór de pijp: zonder dat wordt `a\|b` tot `a\\|b`, wat
+ * als een losse backslash plus een onbeschermde pijp leest en de rij alsnog
+ * in tweeën breekt. De ampersand gaat vóór `<!--`: zonder dat is `&lt;!--`
+ * uit een dossier niet te onderscheiden van een echte `<!--` die hier zelf
+ * tot `&lt;!--` wordt gemaakt.
+ */
+function veiligeCel(tekst: string): string {
+  return tekst
+    .replace(/\s+/g, " ")
+    .replace(/&/g, "&amp;")
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/<!--/g, "&lt;!--")
+    .trim();
+}
+
 export function genereerFeitenblok(feiten: StateFeiten): string {
   const tellingen = (["DEC", "CON", "LRN", "RSK", "CFL"] as const)
     .map((t) => `${t} ${feiten.recordTellingen[t] ?? 0}`)
@@ -76,7 +104,7 @@ export function genereerFeitenblok(feiten: StateFeiten): string {
   if (feiten.openTaken.length > 0) {
     regels.push("**Open taken**", "", "| Taak | Status | Titel |", "|---|---|---|");
     for (const taak of feiten.openTaken) {
-      regels.push(`| ${taak.id} | ${taak.status} | ${taak.titel} |`);
+      regels.push(`| ${veiligeCel(taak.id)} | ${veiligeCel(taak.status)} | ${veiligeCel(taak.titel)} |`);
     }
     regels.push("");
   } else {

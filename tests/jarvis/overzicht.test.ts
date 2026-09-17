@@ -17,9 +17,11 @@ import {
   leesRecent,
   leesStandSecties,
   leesVoortgang,
+  openTakenUitDossiers,
   sleutelVan,
   type GitRegel,
   type ProjectInvoer,
+  type TaakDossier,
 } from "@/jarvis/src/overzicht";
 import type { KnowledgeRecord } from "@/jarvis/src/records";
 
@@ -531,5 +533,58 @@ describe("wie is aan zet", () => {
     expect(t.id).toBe("T-20260901-c");
     expect([t.aan_zet, t.stil]).toEqual(["eigenaar", false]);
     expect(t.wacht_op).toBe("T-20260901-a: Maak de repository aan.");
+  });
+});
+
+describe("openTakenUitDossiers", () => {
+  const d = (id: string, status: string, titel?: string): TaakDossier => ({
+    id,
+    opdracht: titel === undefined ? { status } : { status, titel },
+    resultaat: null,
+  });
+
+  it("noemt de taken waar nog aan gewerkt of over geoordeeld wordt, op id gesorteerd", () => {
+    const uit = openTakenUitDossiers([d("T-b", "review", "Tweede"), d("T-a", "actief", "Eerste")]);
+    expect(uit).toEqual([
+      { id: "T-a", titel: "Eerste", status: "actief" },
+      { id: "T-b", titel: "Tweede", status: "review" },
+    ]);
+  });
+
+  it("laat afgeronde, geblokkeerde en statusloze taken buiten het feitenblok", () => {
+    const uit = openTakenUitDossiers([
+      d("T-a", "afgerond", "Klaar"),
+      d("T-b", "geblokkeerd", "Vast"),
+      { id: "T-c", opdracht: {}, resultaat: null },
+    ]);
+    expect(uit).toEqual([]);
+  });
+
+  it("valt terug op het id als titel, zodat een taak nooit onzichtbaar wordt", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
+  });
+
+  it("valt ook terug op het id bij een lege of alleen-witruimte-titel, in plaats van een lege cel", () => {
+    expect(openTakenUitDossiers([d("T-a", "actief", "")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
+    expect(openTakenUitDossiers([d("T-b", "actief", "   ")])).toEqual([{ id: "T-b", titel: "T-b", status: "actief" }]);
+  });
+});
+
+describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
+  it("bundelt '- Stap N:' en '- Controle:' onder de vette kop tot één handeling", () => {
+    const tekst = "## Wat de eigenaar nog moet doen\n\n**Handeling 2 — de trigger bijstellen**\n\n- Stap 1: beperk de trigger tot main.\n- Stap 2: zet het rooster op twee keer per dag.\n- Controle: Jarvis meet daarna in de logboeken dat het werkt.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Handeling 2 — de trigger bijstellen");
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Stap 2", "Controle"]);
+    const uit = bouwOpties(items[0].regels, []);
+    expect(uit.stappen).toHaveLength(2);
+    expect(uit.controle).toMatch(/^Jarvis meet/);
+  });
+  it("hangt losse stappen aan een gewoon punt ervoor en maakt van een controle nooit een actie", () => {
+    const tekst = "## Wat de eigenaar nog moet doen\n\n- Pull request #17 opnieuw goedkeuren.\n- Stap 1: open de PR.\n- Controle: de poort wordt groen.\n- Kies een naam voor het project.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items.map((i) => i.titel)).toEqual(["Pull request #17 opnieuw goedkeuren.", "Kies een naam voor het project."]);
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle"]);
   });
 });
