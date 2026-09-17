@@ -97,7 +97,7 @@ import {
   WIE_SQL,
 } from "./db";
 import { randomBytes } from "node:crypto";
-import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
+import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, duidRechten, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
 import { homedir } from "node:os";
 
 const uitvoeren = promisify(execFile);
@@ -1580,14 +1580,13 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
       const repo = await github(token, "GET", `/repos/${slug}`);
       const rechten = (repo.lading as { permissions?: { push?: boolean; admin?: boolean } } | null)?.permissions;
       if (repo.status !== 200) console.error(`jarvis pr: ${slug} is met dit token niet bereikbaar (${foutTekst(repo)}).`);
-      // Achter de proxy van de cloud zegt het permissions-veld niets over wat de
-      // proxy werkelijk doorlaat: op 2026-09-14 ontbrak het veld terwijl pushen
-      // lukte, op 2026-09-15 stond er push:false terwijl de cloud gewoon branches
-      // pushte, PR's opende, attesteerde en samenvoegde (drie PR's van de hub).
-      // Daar is het recht onbekend, niet afwezig: melden en gewoon proberen.
-      else if (rechten === undefined || dezeUitvoerder() === "cloud") console.log(`jarvis pr: ${slug} is leesbaar; ${rechten === undefined ? "het token meldt zijn rechten niet (app-installatie)" : "achter de proxy van de cloud zegt het permissions-veld niets"} — schrijfrecht onbekend, probeer gewoon.`);
-      else if (!rechten.push) console.error(`jarvis pr: ${slug} is leesbaar maar de bot heeft er geen schrijfrecht; nodig hem uit.`);
-      else console.log(`jarvis pr: ${slug}: schrijfrecht ${rechten.admin ? "en admin (te veel!)" : "zonder admin"}.`);
+      // De drie rechten die `jarvis pr` nodig heeft vallen niet samen; ze worden
+      // dus apart gemeld en nergens tot één "schrijfrecht" samengevat (RSK-0025).
+      for (const oordeel of duidRechten(repo.status === 200, rechten, dezeUitvoerder() === "cloud")) {
+        const regel = `jarvis pr: ${slug}: ${oordeel.regel}`;
+        if (oordeel.heeft === false) console.error(regel);
+        else console.log(regel);
+      }
     }
     return 0;
   }
