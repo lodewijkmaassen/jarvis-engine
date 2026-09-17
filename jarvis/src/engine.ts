@@ -88,9 +88,21 @@ export function leesEngineStand(
  * De uitkomst van GitHub's vergelijking `main...<sha>`: "identical" of
  * "behind" betekent dat de SHA op of achter de kop van main ligt, en dus
  * via main is binnengekomen. "ahead" en "diverged" betekenen een commit die
- * main nooit heeft gezien. null: de vergelijking was niet te maken.
+ * main nooit heeft gezien. null: er is niet gevraagd (geen pin, geen slug).
+ *
+ * Was de vraag wél gesteld maar niet te beantwoorden, dan draagt de uitkomst
+ * de reden mee (`{ onbekend }`). Zonder die reden zag `beoordeelEngine` geen
+ * verschil tussen "de pin ligt aantoonbaar naast de hoofdbranch" en "GitHub
+ * gaf geen antwoord", en las de melding altijd als het tweede — RSK-0024.
  */
-export type HoofdbranchVergelijking = "identical" | "behind" | "ahead" | "diverged" | null;
+export type VergelijkingOnbekend = { readonly onbekend: string };
+
+export type HoofdbranchVergelijking = "identical" | "behind" | "ahead" | "diverged" | VergelijkingOnbekend | null;
+
+/** Is dit een uitkomst die de reden van het mislukken draagt? */
+export function isOnbekend(v: HoofdbranchVergelijking): v is VergelijkingOnbekend {
+  return typeof v === "object" && v !== null && typeof v.onbekend === "string";
+}
 
 /**
  * Alle redenen waarom de engine niet te vertrouwen is. Leeg betekent in orde.
@@ -139,6 +151,14 @@ export function beoordeelEngine(
   }
   if (vergelijking === null) {
     redenen.push(`kon niet vaststellen of ${stand.shaLock.slice(0, 7)} op de hoofdbranch van ${stand.slug} staat`);
+  } else if (isOnbekend(vergelijking)) {
+    // Rood blijft rood: de controle weghalen zou de vangrail weghalen. Wat er
+    // verandert is dat de melding zegt wie er niet antwoordde, zodat een
+    // storing bij GitHub niet leest als een pin die naast de hoofdbranch ligt.
+    redenen.push(
+      `kon niet vaststellen of ${stand.shaLock.slice(0, 7)} op de hoofdbranch van ${stand.slug} staat ` +
+        `(${vergelijking.onbekend}); dit zegt niets over de pin zelf`,
+    );
   } else if (vergelijking !== "identical" && vergelijking !== "behind") {
     redenen.push(
       `${stand.shaLock.slice(0, 7)} staat niet op de hoofdbranch van ${stand.slug} (${vergelijking}); ` +

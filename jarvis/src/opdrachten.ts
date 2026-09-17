@@ -326,25 +326,53 @@ async function leesOfNull(pad: string): Promise<string | null> {
   }
 }
 
+/** Hoe vaak de vergelijking opnieuw wordt geprobeerd, en met hoeveel uitstel. */
+export const VERGELIJK_UITSTEL_MS: readonly number[] = [500, 1500];
+
+/** Een uitkomst die bij een volgende poging anders kan zijn (limiet, storing, netwerk). */
+function vluchtig(status: number): boolean {
+  return status === 403 || status === 429 || status >= 500;
+}
+
 /**
  * Vraagt GitHub hoe een commit zich verhoudt tot de hoofdbranch van de
- * engine-repository. Publieke API, geen token; bij een privé repository of
- * zonder netwerk is het antwoord null en oordeelt de poort streng.
+ * engine-repository. Publieke API, geen token.
+ *
+ * Elke uitkomst die geen vergelijking is, draagt de reden mee in plaats van
+ * `null` — anders leest een limiet of storing bij GitHub als een pin die naast
+ * de hoofdbranch ligt (RSK-0024). Een uitkomst die vluchtig kan zijn wordt met
+ * uitstel opnieuw geprobeerd; pas na de laatste poging is het een oordeel. Een
+ * 404 of een onbekende status is niet vluchtig en wordt niet herhaald.
  */
-async function vergelijkMetHoofdbranch(slug: string, sha: string): Promise<HoofdbranchVergelijking> {
-  try {
-    const antwoord = await fetch(`https://api.github.com/repos/${slug}/compare/main...${sha}`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "jarvis-poort" },
-    });
-    if (!antwoord.ok) return null;
-    const lading = (await antwoord.json()) as { status?: unknown };
-    const status = lading.status;
-    return status === "identical" || status === "behind" || status === "ahead" || status === "diverged"
-      ? status
-      : null;
-  } catch {
-    return null;
+export async function vergelijkMetHoofdbranch(
+  slug: string,
+  sha: string,
+  haal: typeof fetch = fetch,
+  wacht: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<HoofdbranchVergelijking> {
+  let laatste = "geen antwoord van GitHub";
+  for (let poging = 0; poging <= VERGELIJK_UITSTEL_MS.length; poging++) {
+    if (poging > 0) await wacht(VERGELIJK_UITSTEL_MS[poging - 1]);
+    let herhaalbaar = false;
+    try {
+      const antwoord = await haal(`https://api.github.com/repos/${slug}/compare/main...${sha}`, {
+        headers: { Accept: "application/vnd.github+json", "User-Agent": "jarvis-poort" },
+      });
+      if (antwoord.ok) {
+        const lading = (await antwoord.json()) as { status?: unknown };
+        const status = lading.status;
+        if (status === "identical" || status === "behind" || status === "ahead" || status === "diverged") return status;
+        return { onbekend: `GitHub gaf een antwoord zonder bruikbare status` };
+      }
+      laatste = `GitHub antwoordde met ${antwoord.status}`;
+      herhaalbaar = vluchtig(antwoord.status);
+    } catch (fout) {
+      laatste = `de oproep mislukte: ${fout instanceof Error ? fout.message : String(fout)}`;
+      herhaalbaar = true;
+    }
+    if (!herhaalbaar) break;
   }
+  return { onbekend: laatste };
 }
 
 /**
