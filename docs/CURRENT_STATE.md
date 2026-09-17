@@ -39,6 +39,15 @@ staat de canonieke workflow in `jarvis/canonical/`, bij een consumer komt hij
 mee met de geïnstalleerde engine; de stap `engine` controleert bij een consumer
 dat de gepinde, geïnstalleerde engine-SHA op `main` van deze repository staat.
 
+De regie kent sinds deze wijziging een achtste toestand, `WAITING_FOR_EVENT`:
+een taak die wacht op iets buiten Jarvis dat niemand kan afdwingen — de
+eigenaar die de volgende opdracht typt, een klant die zich meldt. Zo'n stap
+viel eerder terug op `QUEUED` en werd elke run opnieuw aan een uitvoerder
+aangeboden die er niets mee kon. De markering is expliciet (`wacht op
+gebeurtenis: <wat>`) en geen woordpatroon over lopende tekst; de
+verantwoordelijke blijft de task-controller, want er wordt niets van de
+eigenaar gevraagd (CON-0016).
+
 Het feitenblok noemt sinds deze wijziging de open taken die het uit de
 taakdossiers afleidt. Daarvoor gaf de verzamelaar het veld hardgecodeerd leeg
 mee, zodat `CURRENT_STATE.md` in elke repository "Open taken: geen" meldde —
