@@ -74,6 +74,47 @@ describe("regie — toestand per open taak", () => {
     (o.projecten[0] as unknown as { recent: unknown[] }).recent = [{ datum: iso(1), hash: "abc1234", onderwerp: "Merge pull request #26 from x/jarvis/regie", rol: null, taak: null, soort: "merge" }];
     expect(bepaalRegie(o, [], NU).taken[0].toestand).toBe("QUEUED");
   });
+  // Een taak die op iets buiten Jarvis wacht viel terug op QUEUED en werd elke
+  // run opnieuw aangeboden aan een uitvoerder die er niets mee kon — gemeten op
+  // T-20260911-jarvis-app. De markering is expliciet en geen woordpatroon over
+  // lopende tekst, zodat "er valt niets te dispatchen" nooit per ongeluk uit
+  // een zinswending volgt.
+  it("WAITING_FOR_EVENT bij een stap die op een gebeurtenis buiten Jarvis wacht, en niet uitvoerbaar", () => {
+    const stap = "Wacht op gebeurtenis: de eigenaar typt de volgende opdracht in de app";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU);
+    expect(r.taken[0]).toMatchObject({
+      toestand: "WAITING_FOR_EVENT",
+      verantwoordelijke: "task-controller",
+      uitvoerder: null,
+      uitvoerbaar: false,
+      wacht_op: "de eigenaar typt de volgende opdracht in de app",
+    });
+    expect(r.uitvoerbaar.some((t) => t.id === "T-1")).toBe(false);
+  });
+
+  it("legt WAITING_FOR_EVENT niet bij de eigenaar: er wordt niets van hem gevraagd (CON-0016)", () => {
+    const stap = "Wacht op gebeurtenis: een klant meldt zich via het formulier";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU);
+    expect(r.taken[0].verantwoordelijke).not.toBe("eigenaar");
+    expect(r.taken[0].toestand).not.toBe("WAITING_FOR_USER");
+    expect(r.taken[0].waarom).toMatch(/er wordt niets van de eigenaar gevraagd/);
+  });
+
+  it("laat een gewone stap die het woord gebeurtenis noemt gewoon QUEUED", () => {
+    const stap = "De gebeurtenistabel opschonen en de brug opnieuw meten";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerbaar: true });
+  });
+
+  it("geeft de eigenaar voorrang: een akkoordstap blijft WAITING_FOR_USER, ook met een gebeurtenisstap erna", () => {
+    const stappen = [
+      { tekst: "Akkoord van de eigenaar op deze taak", gedaan: false },
+      { tekst: "Wacht op gebeurtenis: de eerste import komt binnen", gedaan: false },
+    ];
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen, aan_zet: "eigenaar", akkoord_nodig: true })]), [], NU);
+    expect(r.taken[0].toestand).toBe("WAITING_FOR_USER");
+  });
+
   it("DONE als alle stappen af zijn: de afronding is uitvoerbaar werk voor de kennisbeheerder", () => {
     const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: "Klaar", gedaan: true }] })]), [], NU);
     expect(r.taken[0]).toMatchObject({ toestand: "DONE", verantwoordelijke: "knowledge-manager", uitvoerbaar: true });

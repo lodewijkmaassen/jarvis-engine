@@ -204,6 +204,7 @@ textarea::placeholder{color:var(--zacht)}
 .toestand.t-BLOCKED,.toestand.t-AFWIJKING{border-color:var(--hoog);color:var(--hoog)}
 .toestand.t-WAITING_FOR_USER{border-color:var(--midden);color:var(--midden)}
 .toestand.t-WAITING_FOR_DEPENDENCY{border-color:var(--midden);color:var(--midden)}
+.toestand.t-WAITING_FOR_EVENT{border-color:var(--midden);color:var(--midden)}
 .toestand.t-DONE{border-color:var(--ok);color:var(--ok)}
 .activiteit{margin-top:6px;display:flex;flex-direction:column;gap:4px}
 .activiteit .rij{display:grid;grid-template-columns:52px 1fr;gap:8px;font-size:13px;color:var(--inkt);padding:4px 0;border-bottom:1px solid var(--lijn)}
@@ -336,7 +337,7 @@ const SOORT = { beslissing: "beslissing", conflict: "conflict", actie: "actie", 
 /* Het digitale team: stabiele functionele rollen, geen sessies. Namen zoals de eigenaar ze leest. */
 const ROLNAAM = { eigenaar: "Jij", orchestrator: "Jarvis · Orchestrator", "task-controller": "Task Controller", architect: "Architect", developer: "Engineering", qa: "QA", "knowledge-manager": "Knowledge Manager" };
 const ROLWAT = { orchestrator: "verdeelt het werk en bewaakt de regels", "task-controller": "bewaakt dat uitvoerbaar werk doorloopt", architect: "onderzoekt en ontwerpt vóór de bouw", developer: "bouwt, test en opent pull requests", qa: "toetst onafhankelijk wat gebouwd is", "knowledge-manager": "houdt dossiers, kennis en de stand bij" };
-const TOESTAND_TEKST = { QUEUED: "wacht op een uitvoerder", RUNNING: "in uitvoering", BLOCKED: "geblokkeerd", WAITING_FOR_USER: "wacht op jou", WAITING_FOR_DEPENDENCY: "wacht op iets anders", DONE: "klaar, afronding volgt", AFWIJKING: "afwijking, in onderzoek" };
+const TOESTAND_TEKST = { QUEUED: "wacht op een uitvoerder", RUNNING: "in uitvoering", BLOCKED: "geblokkeerd", WAITING_FOR_USER: "wacht op jou", WAITING_FOR_DEPENDENCY: "wacht op iets anders", WAITING_FOR_EVENT: "wacht op iets buiten Jarvis", DONE: "klaar, afronding volgt", AFWIJKING: "afwijking, in onderzoek" };
 const ACT_TEKST = { claim: "pakt op", stap: "stap gezet", heartbeat: "nog bezig", pr: "pull request", toetsing: "toetsing", attestatie: "attestatie", merge: "samengevoegd", fout: "fout", klaar: "klaar", vrijgave: "losgelaten", regie: "regieronde", herstel: "herstel" };
 function duur(iso) { const m = Math.round((Date.now() - new Date(iso).getTime()) / 6e4); if (Number.isNaN(m)) return "onbekend"; if (m < 1) return "net"; if (m < 60) return `${m} min`; const u = Math.floor(m / 60); return u < 48 ? `${u} u ${m % 60} min` : `${Math.round(u / 24)} d`; }
 function regieVan(taakId) { return (staat.regie?.taken ?? []).find((t) => t.id === taakId) ?? null; }
@@ -771,7 +772,7 @@ function teamHtml() {
   let s = `<div class="blok"><span class="eyebrow">Het team · stand ${esc(relatief(r.gegenereerd_op))}</span>${(r.rollen ?? []).map(rolKaartHtml).join("")}</div>`;
   const open = r.taken ?? [];
   const per = (t) => open.filter((x) => x.toestand === t);
-  s += `<div class="blok"><span class="eyebrow">Open taken · ${open.length}</span>${["RUNNING", "BLOCKED", "AFWIJKING", "QUEUED", "WAITING_FOR_DEPENDENCY", "WAITING_FOR_USER", "DONE"].map((ts) => per(ts).map((t) => `<button class="regel" data-actie="kies" data-id="t:${esc(t.id)}"><span class="t">${esc(t.titel)}<small>${esc(ROLNAAM[t.verantwoordelijke] ?? t.verantwoordelijke)} · ${esc(t.waarom)}</small></span><span class="toestand t-${esc(t.toestand)}">${esc(TOESTAND_TEKST[t.toestand] ?? t.toestand)}</span></button>`).join("")).join("")}</div>`;
+  s += `<div class="blok"><span class="eyebrow">Open taken · ${open.length}</span>${["RUNNING", "BLOCKED", "AFWIJKING", "QUEUED", "WAITING_FOR_DEPENDENCY", "WAITING_FOR_EVENT", "WAITING_FOR_USER", "DONE"].map((ts) => per(ts).map((t) => `<button class="regel" data-actie="kies" data-id="t:${esc(t.id)}"><span class="t">${esc(t.titel)}<small>${esc(ROLNAAM[t.verantwoordelijke] ?? t.verantwoordelijke)} · ${esc(t.waarom)}</small></span><span class="toestand t-${esc(t.toestand)}">${esc(TOESTAND_TEKST[t.toestand] ?? t.toestand)}</span></button>`).join("")).join("")}</div>`;
   s += `<div class="blok"><span class="eyebrow">Activiteit</span>${activiteitHtml(staat.activiteit.slice(0, 25))}</div>`;
   return s;
 }

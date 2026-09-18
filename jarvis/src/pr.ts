@@ -228,6 +228,70 @@ export type DispatchWeigering = {
   readonly regels: readonly string[];
 };
 
+/** Wat er van één rechtensoort bekend is, en waarom. */
+export type Rechtenoordeel = {
+  /** De rechtensoort zoals hij in de uitvoer heet. */
+  readonly soort: "lezen" | "schrijven op inhoud" | "workflow starten";
+  /** `true` gemeten, `false` gemeten, `null` niet vast te stellen zonder bijwerking. */
+  readonly heeft: boolean | null;
+  /** Eén regel voor de uitvoerder: wat er bekend is en waaruit. */
+  readonly regel: string;
+};
+
+/**
+ * Meet de drie rechten die `jarvis pr` werkelijk nodig heeft, elk apart.
+ *
+ * Waarom dit bestaat: tot 2026-09-15 vatte `jarvis pr wie` alles samen in één
+ * uitspraak over "schrijfrecht". Die uitspraak was op de cloud onjuist en
+ * stuurde elke run naar de verkeerde conclusie (RSK-0025): de bot had op de
+ * repository de rol `write` en pushte, opende pull requests en voegde samen,
+ * maar `wie` meldde "geen schrijfrecht" omdat de attestatie een 403 gaf. Die
+ * 403 gaat over iets anders — het recht een workflow te starten — en op de
+ * cloud zelfs niet over een GitHub-recht maar over het sessietype.
+ *
+ * De drie rechten vallen dus niet samen en worden niet samengevat. Lezen en
+ * schrijven op inhoud volgen uit `permissions` van de repository; het recht een
+ * workflow te starten is zonder bijwerking niet te meten — een dispatch ís de
+ * handeling — en blijft daarom eerlijk `null`, met de vindplaats waar het wél
+ * blijkt. Achter de proxy van de cloud zegt `permissions` niets (gemeten op
+ * 2026-09-14 en 2026-09-15: veld afwezig, en `push: false` terwijl pushen
+ * lukte), dus daar is elk oordeel `null` in plaats van `false`.
+ */
+export function duidRechten(
+  leesbaar: boolean,
+  permissies: { readonly push?: boolean; readonly admin?: boolean } | undefined,
+  inDeCloud: boolean,
+): readonly Rechtenoordeel[] {
+  if (!leesbaar) {
+    return [
+      { soort: "lezen", heeft: false, regel: "lezen: nee — de repository is met dit token niet bereikbaar" },
+      { soort: "schrijven op inhoud", heeft: null, regel: "schrijven op inhoud: niet vast te stellen zolang lezen niet lukt" },
+      { soort: "workflow starten", heeft: null, regel: "workflow starten: niet vast te stellen zolang lezen niet lukt" },
+    ];
+  }
+
+  const onbekendWaarom = permissies === undefined
+    ? "het token meldt zijn rechten niet (app-installatie)"
+    : "achter de proxy van de cloud zegt het permissions-veld niets";
+  const schrijven: Rechtenoordeel = permissies === undefined || inDeCloud
+    ? { soort: "schrijven op inhoud", heeft: null, regel: `schrijven op inhoud: onbekend — ${onbekendWaarom}; probeer gewoon, pushen en een pull request openen lukken hier doorgaans wel` }
+    : permissies.push === true
+      ? { soort: "schrijven op inhoud", heeft: true, regel: `schrijven op inhoud: ja${permissies.admin === true ? " — en admin, dat is te veel" : ""}` }
+      : { soort: "schrijven op inhoud", heeft: false, regel: "schrijven op inhoud: nee — de bot is geen collaborator met schrijfrecht; nodig hem uit" };
+
+  return [
+    { soort: "lezen", heeft: true, regel: "lezen: ja" },
+    schrijven,
+    {
+      soort: "workflow starten",
+      heeft: null,
+      regel: inDeCloud
+        ? `workflow starten: onbekend tot je het probeert — een dispatch is zelf de handeling, dus niet vooraf te meten; op de cloud weigert het uitvoeringsplatform dit sessietype meestal (RSK-0025), en \`jarvis pr attesteren\` noemt dan de weigeraar en de terugval`
+        : `workflow starten: onbekend tot je het probeert — een dispatch is zelf de handeling, dus niet vooraf te meten; \`jarvis pr attesteren\` noemt bij een weigering het ontbrekende recht (actions: write) of het sessietype`,
+    },
+  ];
+}
+
 /**
  * Duidt een mislukte workflow-dispatch en noemt de terugval bij naam.
  *
