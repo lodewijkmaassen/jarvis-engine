@@ -12,7 +12,7 @@ _Gegenereerd op 2026-09-17._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 31 |
+| Testbestanden | 32 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -66,6 +66,15 @@ hem op als git-afhankelijkheid op een vastgepinde commit en roepen
 staat de canonieke workflow in `jarvis/canonical/`, bij een consumer komt hij
 mee met de geïnstalleerde engine; de stap `engine` controleert bij een consumer
 dat de gepinde, geïnstalleerde engine-SHA op `main` van deze repository staat.
+
+De regie kent sinds deze wijziging een achtste toestand, `WAITING_FOR_EVENT`:
+een taak die wacht op iets buiten Jarvis dat niemand kan afdwingen — de
+eigenaar die de volgende opdracht typt, een klant die zich meldt. Zo'n stap
+viel eerder terug op `QUEUED` en werd elke run opnieuw aan een uitvoerder
+aangeboden die er niets mee kon. De markering is expliciet (`wacht op
+gebeurtenis: <wat>`) en geen woordpatroon over lopende tekst; de
+verantwoordelijke blijft de task-controller, want er wordt niets van de
+eigenaar gevraagd (CON-0016).
 
 Het feitenblok noemt sinds deze wijziging de open taken die het uit de
 taakdossiers afleidt. Daarvoor gaf de verzamelaar het veld hardgecodeerd leeg
