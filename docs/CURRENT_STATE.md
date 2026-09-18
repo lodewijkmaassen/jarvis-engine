@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-17._
+_Gegenereerd op 2026-09-18._
 
 | Feit | Waarde |
 |---|---|
@@ -93,6 +93,20 @@ noemt bij de eerste twee de terugval mét workflow, ref en invoer. De weigering
 zelf blijft de eerste regel, zodat de meting niet uit het logboek verdwijnt;
 bij een bruikbare terugval is de exitcode 4 in plaats van 1, zodat een routine
 erop kan vertakken zonder de tekst te lezen.
+
+**De Task Controller hervat onderbroken werk vóór hij nieuw werk uitdeelt.**
+Een uitvoerder die halverwege stopt geeft zijn taak terug met `jarvis werk
+vrijgave`. Die taak had daarna geen levende claim meer, werd dus `QUEUED`, viel
+in de restklasse van `prioriteit()` en sorteerde daarbinnen op oudste
+`laatste_activiteit` — terwijl de vrijgave juist de jóngste activiteit is. Werk
+dat halverwege was afgebroken kwam zo achter werk dat nog nooit was begonnen.
+`onderbrokenVan()` leest dat signaal nu uit de activiteitenstroom: de laatste
+werkgang eindigde in een vrijgave en er staat geen nieuwe claim achter. Het
+resultaat reist mee als `TaakRegie.onderbroken` en krijgt een eigen klasse in
+`prioriteit()`, tussen de administratieve afronding en nieuw werk. Onderbroken
+werk dringt dus niet vóór een blokkade — een vastgelopen uitvoerder blijft
+`BLOCKED` en blijft eerst — maar wel vóór een tweede halve levering. De reden
+staat in `waarom`, met de tekst die de uitvoerder achterliet.
 
 ## Volgende stap
 
