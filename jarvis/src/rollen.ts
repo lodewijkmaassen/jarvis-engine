@@ -7,6 +7,12 @@
 // en een afgeleide die met de hand wordt bijgehouden drift: bij de eerste QA
 // van v1 miste de afgeleide van het QA-contract twee volledige secties.
 //
+// Naast die omgevingsvormen levert de module een leveranciersneutrale vorm:
+// één machineleesbaar bestand met alle contracten, zonder front-matter en
+// zonder gereedschapsnamen, zodat een tweede gereedschap dezelfde contracten
+// kan inlezen zonder handwerk. Een wissel van leverancier is daarmee een
+// kwestie van configuratie en niet van overtypen.
+//
 // Deze module genereert de afgeleiden deterministisch uit de bron. Alles wat
 // omgevingsspecifiek is - de doelmap, het voorvoegsel, welke gereedschapsnamen
 // bij "lezen", "schrijven" en "uitvoeren" horen - komt uit de configuratie.
@@ -43,6 +49,13 @@ export type AfgeleidenConfig = {
   readonly overzicht: string;
   /** Vermogen -> door komma's gescheiden gereedschapsnamen van de omgeving. */
   readonly gereedschap: Readonly<Partial<Record<Vermogen, string>>>;
+  /**
+   * Bestand voor de leveranciersneutrale afgeleide; leeg of afwezig = geen.
+   * Dit is de tweede vorm: machineleesbaar, zonder front-matter en zonder
+   * gereedschapsnamen, zodat een ander gereedschap de contracten kan inlezen
+   * zonder handwerk (AC-6: een rol kan van leverancier wisselen).
+   */
+  readonly neutraal?: string;
 };
 
 export const ROLLEN_START = "<!-- jarvis:rollen:start -->";
@@ -139,6 +152,39 @@ export function vervangOverzichtsblok(document: string, blok: string): string {
   return `${tekst.trimEnd()}\n\n${blok}\n`;
 }
 
+/** Versie van de neutrale vorm; hoger zodra de vorm breekt voor een lezer. */
+export const NEUTRALE_VORM_VERSIE = 1 as const;
+
+/**
+ * De leveranciersneutrale afgeleide: één machineleesbaar bestand met elk
+ * contract volledig — rol, titel, samenvatting, vermogens, of de omgeving er
+ * een agent van maakt, en de contracttekst zelf. Geen front-matter, geen
+ * gereedschaps-, model- of leveranciersnaam: wat hier staat kan een ander
+ * gereedschap inlezen zonder de vorm van deze werkomgeving te kennen.
+ *
+ * Deterministisch: rollen op naam gesorteerd, vaste sleutelvolgorde, JSON met
+ * twee spaties en een afsluitende regelovergang, zodat de driftcontrole hem
+ * net zo hard bewaakt als de andere afgeleiden.
+ */
+export function genereerNeutraleAfgeleide(contracten: readonly Rolcontract[], rollenMap: string): string {
+  const document = {
+    versie: NEUTRALE_VORM_VERSIE,
+    bron: rollenMap,
+    rollen: [...contracten]
+      .sort((a, b) => a.rol.localeCompare(b.rol))
+      .map((c) => ({
+        rol: c.rol,
+        titel: c.titel,
+        samenvatting: c.samenvatting.replace(/\s+/g, " "),
+        vermogens: [...c.vermogens],
+        agent: c.agent,
+        bron: `${rollenMap}/${c.rol}.md`,
+        contract: `${c.tekst.trimEnd()}\n`,
+      })),
+  };
+  return `${JSON.stringify(document, null, 2)}\n`;
+}
+
 export type Afgeleide = { readonly pad: string; readonly inhoud: string };
 
 /**
@@ -163,6 +209,9 @@ export function genereerAfgeleiden(
   if (config.overzicht) {
     const blok = genereerOverzichtsblok(contracten, rollenMap);
     uit.push({ pad: config.overzicht, inhoud: vervangOverzichtsblok(bestaandOverzicht ?? "", blok) });
+  }
+  if (config.neutraal) {
+    uit.push({ pad: config.neutraal, inhoud: genereerNeutraleAfgeleide(contracten, rollenMap) });
   }
   return uit;
 }
