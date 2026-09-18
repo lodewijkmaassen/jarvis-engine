@@ -121,6 +121,21 @@ vastlegt waar de poort op kan varen (DEC-0043); zo'n punt zet nu
 geldt aan beide kanten: wat gedaan is verdwijnt, en een vereist akkoord
 verschijnt precies één keer, in de vorm die het vastlegt.
 
+`jarvis pr wie` meet de drie rechten apart en vat ze nergens samen. Lezen,
+schrijven op inhoud en het recht een workflow te starten zijn verschillende
+dingen, maar de opdracht goot ze in één uitspraak over "schrijfrecht". Op de
+cloud was die uitspraak onjuist — de bot had de rol `write` en pushte, opende
+pull requests en voegde samen, terwijl `wie` "geen schrijfrecht" meldde omdat
+de attestatie een 403 gaf over iets heel anders — en de routineprompt bindt er
+een gevolg aan: bij "geen schrijfrecht" slaat een run alles over wat een pull
+request opent, attesteert of samenvoegt. `duidRechten` geeft nu per soort een
+eigen regel. Schrijfrecht blijft `null` zodra het permissions-veld ontbreekt of
+de uitvoerder in de cloud draait, want daar zegt dat veld niets (gemeten
+2026-09-14 en 2026-09-15). Het recht een workflow te starten is nooit `true` of
+`false`: een dispatch ís de handeling, dus vooraf niet te meten zonder
+bijwerking; de regel verwijst naar waar het wél blijkt, en in de cloud naar de
+vastgelegde weigering van het sessietype.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.

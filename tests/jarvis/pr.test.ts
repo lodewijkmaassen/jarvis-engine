@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, eigenaarVan, SAMENVOEGMETHODE, type PullRequestFeiten } from "@/jarvis/src/pr";
+import { ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, duidRechten, eigenaarVan, SAMENVOEGMETHODE, type PullRequestFeiten } from "@/jarvis/src/pr";
 
 const KOP = "c".repeat(40);
 const OUD = "d".repeat(40);
@@ -142,5 +142,56 @@ describe("duidDispatchWeigering", () => {
 
   it("houdt de weigering zelf als eerste regel, zodat de meting niet verdwijnt", () => {
     expect(duidDispatchWeigering(403, PLATFORM, "eigenaar/repo", 82).regels[0]).toContain("403: Dispatching");
+  });
+});
+
+describe("duidRechten", () => {
+  const soorten = (uit: readonly { soort: string }[]) => uit.map((o) => o.soort);
+
+  it("meldt de drie rechten altijd apart, in vaste volgorde", () => {
+    expect(soorten(duidRechten(true, { push: true }, false))).toEqual(["lezen", "schrijven op inhoud", "workflow starten"]);
+    expect(soorten(duidRechten(false, undefined, true))).toEqual(["lezen", "schrijven op inhoud", "workflow starten"]);
+  });
+
+  it("noemt het recht een workflow te starten nooit aanwezig of afwezig — een dispatch is zelf de handeling", () => {
+    for (const uit of [duidRechten(true, { push: true }, false), duidRechten(true, { push: false }, false), duidRechten(true, undefined, true)]) {
+      const workflow = uit.find((o) => o.soort === "workflow starten");
+      expect(workflow?.heeft).toBeNull();
+    }
+  });
+
+  it("leidt schrijfrecht af uit permissions buiten de cloud", () => {
+    const ja = duidRechten(true, { push: true }, false).find((o) => o.soort === "schrijven op inhoud");
+    expect(ja?.heeft).toBe(true);
+    const nee = duidRechten(true, { push: false }, false).find((o) => o.soort === "schrijven op inhoud");
+    expect(nee?.heeft).toBe(false);
+    expect(nee?.regel).toContain("nodig hem uit");
+  });
+
+  it("noemt te veel recht bij naam", () => {
+    expect(duidRechten(true, { push: true, admin: true }, false).find((o) => o.soort === "schrijven op inhoud")?.regel).toContain("te veel");
+  });
+
+  it("houdt schrijfrecht onbekend in de cloud, ook als permissions push:false meldt (RSK-0025)", () => {
+    const uit = duidRechten(true, { push: false }, true).find((o) => o.soort === "schrijven op inhoud");
+    expect(uit?.heeft).toBeNull();
+    expect(uit?.regel).toContain("probeer gewoon");
+  });
+
+  it("houdt schrijfrecht onbekend wanneer het token zijn rechten niet meldt", () => {
+    const uit = duidRechten(true, undefined, false).find((o) => o.soort === "schrijven op inhoud");
+    expect(uit?.heeft).toBeNull();
+    expect(uit?.regel).toContain("app-installatie");
+  });
+
+  it("stelt niets vast over schrijven of workflows zolang lezen niet lukt", () => {
+    const uit = duidRechten(false, undefined, false);
+    expect(uit.find((o) => o.soort === "lezen")?.heeft).toBe(false);
+    expect(uit.find((o) => o.soort === "schrijven op inhoud")?.heeft).toBeNull();
+    expect(uit.find((o) => o.soort === "workflow starten")?.heeft).toBeNull();
+  });
+
+  it("verwijst in de cloud naar RSK-0025 in plaats van naar het workflowbestand", () => {
+    expect(duidRechten(true, undefined, true).find((o) => o.soort === "workflow starten")?.regel).toContain("RSK-0025");
   });
 });
