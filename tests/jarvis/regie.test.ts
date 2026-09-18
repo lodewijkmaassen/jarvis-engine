@@ -24,14 +24,14 @@ describe("regie — toestand per open taak", () => {
     expect(r.taken[0]).toMatchObject({ toestand: "QUEUED", verantwoordelijke: "developer", uitvoerbaar: true, volgende_stap: "Bouw de knop" });
     expect(r.uitvoerbaar.map((t) => t.id)).toEqual(["T-1"]);
   });
-  it("RUNNING zolang de heartbeat leeft; daarna weer QUEUED als uitgevallen", () => {
+  it("RUNNING zolang de heartbeat leeft; daarna BLOCKED omdat de uitvoerder stilviel", () => {
     const claim = act({ soort: "claim", op: iso(30), tekst: "opgepakt" });
     const levend = bepaalRegie(overzicht([taak("T-1")]), [claim, act({ soort: "heartbeat", op: iso(10) })], NU);
     expect(levend.taken[0]).toMatchObject({ toestand: "RUNNING", verantwoordelijke: "developer", uitvoerder: "cloud", uitvoerbaar: false });
     expect(levend.rollen.find((r) => r.rol === "developer")).toMatchObject({ status: "bezig", taak: "T-1" });
     const oud = act({ soort: "claim", op: iso(HEARTBEAT_MINUTEN.developer + 40), tekst: "opgepakt" });
     const dood = bepaalRegie(overzicht([taak("T-1")]), [oud, act({ soort: "heartbeat", op: iso(HEARTBEAT_MINUTEN.developer + 5) })], NU);
-    expect(dood.taken[0].toestand).toBe("QUEUED");
+    expect(dood.taken[0].toestand).toBe("BLOCKED");
     expect(dood.taken[0].waarom).toMatch(/geen teken meer/);
   });
   it("vrijgave of klaar beëindigt de uitvoering", () => {
@@ -93,6 +93,87 @@ describe("regie — toestand per open taak", () => {
     const tc = r.rollen.find((x) => x.rol === "task-controller");
     expect(tc).toMatchObject({ status: "bezig", wachtrij: 1 });
     expect(tc?.volgende_stap).toMatch(/^T-1: Bouw de knop/);
+  });
+});
+
+// Een uitvoerder mag blokkeren; de regie mag dat nooit ongemerkt laten
+// gebeuren. Gemeten geval (2026-09-17): een cloud-uitvoerder stond op een
+// goedkeuringsvraag van een tool, hield zijn claim vast en meldde niets meer,
+// terwijl opeenvolgende regierondes een rustige wachtrij bleven rapporteren.
+describe("regie — een uitvoerder die stilvalt", () => {
+  const stil = (minutenStil: number, over: Partial<Activiteit> = {}) => [
+    act({ soort: "claim", op: iso(minutenStil + 10), tekst: "opgepakt", ...over }),
+    act({ soort: "stap", op: iso(minutenStil), tekst: "bezig", ...over }),
+  ];
+
+  it("wordt BLOCKED en niet QUEUED zodra de heartbeat verloopt", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), stil(HEARTBEAT_MINUTEN.developer + 5), NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_stil", blokkade_rol: "developer", uitvoerder: "cloud" });
+    expect(r.taken[0].waarom).toMatch(/houdt de claim vast/);
+  });
+
+  it("telt als afwijking, want hij meldt zichzelf niet", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), stil(HEARTBEAT_MINUTEN.developer + 5), NU);
+    expect(r.afwijkingen.map((t) => t.id)).toEqual(["T-1"]);
+    expect(r.rollen.find((x) => x.rol === "task-controller")?.wat).toMatch(/1 afwijking/);
+  });
+
+  it("legt het herstel bij de task-controller en nooit bij de eigenaar", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), stil(HEARTBEAT_MINUTEN.developer + 5), NU);
+    expect(r.taken[0].verantwoordelijke).toBe("task-controller");
+    expect(r.taken[0].verantwoordelijke).not.toBe("eigenaar");
+    expect(r.taken[0].volgende_stap).toMatch(/claim van developer \(cloud\) vrijgeven/);
+    expect(r.taken[0].waarom).toMatch(/werk voor Jarvis, niet voor de eigenaar/);
+  });
+
+  it("blijft uitvoerbaar en gaat vóór op gewoon werk, zodat herstel eerst komt", () => {
+    const r = bepaalRegie(overzicht([taak("T-1"), taak("T-2")]), stil(HEARTBEAT_MINUTEN.developer + 5), NU);
+    expect(r.taken[0].uitvoerbaar).toBe(true);
+    expect(r.uitvoerbaar[0].id).toBe("T-1");
+  });
+
+  it("laat ander onafhankelijk werk gewoon doorlopen", () => {
+    const r = bepaalRegie(overzicht([taak("T-1"), taak("T-2")]), stil(HEARTBEAT_MINUTEN.developer + 5), NU);
+    expect(r.taken.find((t) => t.id === "T-2")).toMatchObject({ toestand: "QUEUED", uitvoerbaar: true });
+    expect(r.uitvoerbaar.map((t) => t.id)).toContain("T-2");
+  });
+
+  it("zet de rol op herstel en nooit op beschikbaar", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), stil(HEARTBEAT_MINUTEN.developer + 5), NU);
+    const dev = r.rollen.find((x) => x.rol === "developer");
+    expect(dev?.status).toBe("herstel");
+    expect(dev?.status).not.toBe("beschikbaar");
+    expect(dev?.taak).toBe("T-1");
+  });
+
+  it("hervat vanzelf zodra de blokkade is opgeheven", () => {
+    const basis = stil(HEARTBEAT_MINUTEN.developer + 5);
+    expect(bepaalRegie(overzicht([taak("T-1")]), basis, NU).taken[0].toestand).toBe("BLOCKED");
+    // vrijgave door de controller: de taak is weer gewoon werk
+    const na = bepaalRegie(overzicht([taak("T-1")]), [...basis, act({ soort: "vrijgave", op: iso(1) })], NU);
+    expect(na.taken[0]).toMatchObject({ toestand: "QUEUED", blokkade: null });
+    expect(na.afwijkingen).toHaveLength(0);
+    expect(na.rollen.find((x) => x.rol === "developer")?.status).not.toBe("herstel");
+    // of de uitvoerder komt zelf terug met een nieuwe stap
+    const terug = bepaalRegie(overzicht([taak("T-1")]), [...basis, act({ soort: "stap", op: iso(1), tekst: "weer bezig" })], NU);
+    expect(terug.taken[0].toestand).toBe("RUNNING");
+  });
+
+  it("de time-out volgt de rol: qa valt eerder stil dan developer", () => {
+    const minuten = HEARTBEAT_MINUTEN.qa + 5; // wel voorbij de qa-grens, nog binnen die van developer
+    expect(minuten).toBeLessThan(HEARTBEAT_MINUTEN.developer);
+    const alsQa = bepaalRegie(overzicht([taak("T-1")]), stil(minuten, { rol: "qa" }), NU);
+    expect(alsQa.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_stil", blokkade_rol: "qa" });
+    const alsDev = bepaalRegie(overzicht([taak("T-1")]), stil(minuten), NU);
+    expect(alsDev.taken[0].toestand).toBe("RUNNING");
+  });
+
+  it("een gemelde fout die daarna stilvalt blijft een fout, geen afwijking", () => {
+    const rijen = [act({ soort: "claim", op: iso(HEARTBEAT_MINUTEN.developer + 20) }), act({ soort: "fout", op: iso(HEARTBEAT_MINUTEN.developer + 5), tekst: "tests rood" })];
+    const r = bepaalRegie(overzicht([taak("T-1")]), rijen, NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "fout" });
+    expect(r.afwijkingen).toHaveLength(0);
+    expect(r.taken[0].waarom).toMatch(/tests rood/);
   });
 });
 

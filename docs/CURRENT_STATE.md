@@ -31,6 +31,23 @@ _Gegenereerd op 2026-09-17._
 
 ## Waar staan we
 
+De regie herkent sinds deze wijziging een uitvoerder die stilvalt. Een claim
+waarvan de heartbeat verliep zonder fout, klaar of vrijgave viel terug op
+`QUEUED`: de taak werd opnieuw aangeboden, maar de blokkade zelf stond nergens
+— ze telde niet als afwijking en de rol bleef "beschikbaar" heten. Een
+regieronde kon daardoor een rustige wachtrij melden terwijl er een sessie op
+een goedkeuringsvraag stond. Die stilte is juist de handtekening van dat geval,
+want zo'n sessie stopt met heartbeaten zonder luid te falen; detectie kan dus
+niet op een melding wachten en leunt op het uitblijven ervan. Nu wordt het
+`BLOCKED` met `blokkade: "uitvoerder_stil"`, ligt het herstel bij de
+task-controller, blijft de taak uitvoerbaar en gaat ze vóór op gewoon werk,
+komt de rol op `herstel`, en telt de blokkade als afwijking. Ander werk raakt
+dit niet en de taak hervat vanzelf zodra er weer activiteit is. Een gemelde
+fout blijft `blokkade: "fout"` en geen afwijking: die staat al luid in de
+regie. Het herstel is nooit werk voor de eigenaar — een vastgelopen sessie is
+een ontbrekende capability of een interne toolgoedkeuring, en die zijn van
+Jarvis.
+
 De engine is afgesplitst uit het project waarin hij is gebouwd, met de
 commitgeschiedenis van `jarvis/`. Deze repository is de bron; consumers nemen
 hem op als git-afhankelijkheid op een vastgepinde commit en roepen
