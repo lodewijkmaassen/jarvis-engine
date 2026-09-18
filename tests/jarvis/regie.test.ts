@@ -168,6 +168,40 @@ describe("regie — een uitvoerder die stilvalt", () => {
     expect(alsDev.taken[0].toestand).toBe("RUNNING");
   });
 
+  it("overschrijft een wachttoestand niet, maar blijft er wel in zichtbaar", () => {
+    // Wacht de taak op de eigenaar, dan blijft dat de toestand: anders raakt een
+    // kaart voor de eigenaar een ronde lang uit beeld. De blokkade reist mee.
+    const eigenaar = taak("T-1", { aan_zet: "eigenaar", wacht_op: "Akkoord van de eigenaar op deze taak", akkoord_nodig: true });
+    const r = bepaalRegie(overzicht([eigenaar]), stil(HEARTBEAT_MINUTEN.developer + 5), NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "WAITING_FOR_USER", verantwoordelijke: "eigenaar", uitvoerbaar: false, blokkade: "uitvoerder_stil" });
+    expect(r.taken[0].waarom).toMatch(/Ruim eerst de vastgelopen claim van developer \(cloud\) op\./);
+    expect(r.afwijkingen.map((t) => t.id)).toEqual(["T-1"]);
+    expect(r.rollen.find((x) => x.rol === "developer")?.status).toBe("herstel");
+  });
+
+  it("geeft geen dispatch-advies aan een taak die op een pull request wacht", () => {
+    const wacht = taak("T-1", { stappen: [{ tekst: "Pinnen — wacht op PR #7", gedaan: false }] });
+    const r = bepaalRegie(overzicht([wacht]), stil(HEARTBEAT_MINUTEN.developer + 5), NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", uitvoerbaar: false, blokkade: "uitvoerder_stil" });
+    expect(r.taken[0].volgende_stap).not.toMatch(/opnieuw dispatchen/);
+    expect(r.taken[0].waarom).toMatch(/Ruim eerst de vastgelopen claim/);
+    expect(r.afwijkingen).toHaveLength(1);
+  });
+
+  it("zet ook de task-controller zelf op herstel, niet op beschikbaar", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), stil(HEARTBEAT_MINUTEN["task-controller"] + 5, { rol: "task-controller" }), NU);
+    const tc = r.rollen.find((x) => x.rol === "task-controller");
+    expect(tc?.status).toBe("herstel");
+    expect(tc?.taak).toBe("T-1");
+  });
+
+  it("een fout die daarna stilvalt komt wél bij de rol terecht", () => {
+    const rijen = [act({ soort: "claim", op: iso(HEARTBEAT_MINUTEN.developer + 20) }), act({ soort: "fout", op: iso(HEARTBEAT_MINUTEN.developer + 5), tekst: "tests rood" })];
+    const dev = bepaalRegie(overzicht([taak("T-1")]), rijen, NU).rollen.find((x) => x.rol === "developer");
+    expect(dev?.status).toBe("geblokkeerd");
+    expect(dev?.taak).toBe("T-1");
+  });
+
   it("een gemelde fout die daarna stilvalt blijft een fout, geen afwijking", () => {
     const rijen = [act({ soort: "claim", op: iso(HEARTBEAT_MINUTEN.developer + 20) }), act({ soort: "fout", op: iso(HEARTBEAT_MINUTEN.developer + 5), tekst: "tests rood" })];
     const r = bepaalRegie(overzicht([taak("T-1")]), rijen, NU);
