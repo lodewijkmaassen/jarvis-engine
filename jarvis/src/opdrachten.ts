@@ -701,6 +701,7 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
     voorvoegsel: config.rol_afgeleiden_voorvoegsel,
     overzicht: config.rol_overzicht,
     gereedschap: config.rol_gereedschap,
+    neutraal: config.rol_neutraal,
   };
   const bestaandOverzicht = config.rol_overzicht ? (await leesBestandOfLeeg(wortel, config.rol_overzicht, "instapdocument")) || null : null;
   const afgeleiden = genereerAfgeleiden(contracten, afgeleidenConfig, rollenMap, bestaandOverzicht);
