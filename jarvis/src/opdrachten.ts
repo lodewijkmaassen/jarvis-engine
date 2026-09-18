@@ -805,7 +805,7 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
  * uitzondering geldt alleen hier, op uitvoer die uit die refs is opgebouwd;
  * de scan van bestanden en de algemene entropieregel veranderen niet.
  */
-async function refNamenAlsAllowlist(wortels: readonly string[], basis: Allowlist): Promise<Allowlist> {
+export async function refNamenAlsAllowlist(wortels: readonly string[], basis: Allowlist): Promise<Allowlist> {
   const namen = new Set<string>();
   for (const w of wortels) {
     const refs = await git(w, ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes", "refs/tags"]);
