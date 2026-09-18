@@ -94,6 +94,17 @@ zelf blijft de eerste regel, zodat de meting niet uit het logboek verdwijnt;
 bij een bruikbare terugval is de exitcode 4 in plaats van 1, zodat een routine
 erop kan vertakken zonder de tekst te lezen.
 
+De eigenaarslijst wordt gereconcilieerd vóór "Voor jou" wordt opgebouwd. Een
+punt was alleen te sluiten door de prozatekst te herschrijven, dus bleven
+reeds uitgevoerde handelingen in de lijst staan en vroeg de app ze opnieuw;
+een afgevinkt punt (`- [x] …`) telt nu niet mee. En een punt dat het akkoord
+op de taak zelf vraagt stond er twee keer — als aan te vinken punt uit het
+dossier en als akkoordkaart — terwijl alleen de kaart een autorisatie
+vastlegt waar de poort op kan varen (DEC-0043); zo'n punt zet nu
+`akkoord_nodig` op de taak in plaats van een eigen item te worden. Daarmee
+geldt aan beide kanten: wat gedaan is verdwijnt, en een vereist akkoord
+verschijnt precies één keer, in de vorm die het vastlegt.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.

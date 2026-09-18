@@ -115,6 +115,39 @@ export function isAkkoordStap(tekst: string): boolean {
   return /^\s*akkoord\b/i.test(tekst) && /\beigenaar\b/i.test(tekst);
 }
 
+/**
+ * Een punt in de eigenaarslijst dat het akkoord van de eigenaar op de taak
+ * zélf vraagt. Zo'n punt hoort niet als los aan te vinken handeling in de
+ * lijst: het akkoord loopt over de akkoordkaart, want alleen die legt een
+ * autorisatie vast waar de poort op kan varen (DEC-0043). Een punt dat het
+ * als "gedaan" laat afvinken levert een antwoord en géén autorisatie op — de
+ * eigenaar tikt dan iets af waar de poort niets mee kan, en dezelfde handeling
+ * staat twee keer in zijn lijst.
+ *
+ * Breder dan `isAkkoordStap`: die leest de voortgangslijst, waar de stap met
+ * het woord "akkoord" begint. In de eigenaarslijst staat het in gebiedende
+ * wijs ("geef in de Jarvis-app akkoord op deze taak"), dus de vorm is vrij en
+ * wat telt is de combinatie: een akkoord, op déze taak, in de app.
+ */
+export function isAkkoordVraag(tekst: string): boolean {
+  if (isAkkoordStap(tekst)) return true;
+  return /\bakkoord\b/i.test(tekst) && /\b(?:deze|de) taak\b/i.test(tekst) && /\bapp\b/i.test(tekst);
+}
+
+/**
+ * Een afgevinkte regel in de eigenaarslijst: `- [x] …`. De handeling is al
+ * gedaan en hoort niet meer in de lijst.
+ *
+ * Het faalpad dat dit dichtzet: een eigenaarshandeling was alleen te sluiten
+ * door de tekst te herschrijven. Deed niemand dat, dan bleef de handeling
+ * staan en vroeg de app hem opnieuw — er lagen items in de lijst die de
+ * eigenaar dagen eerder al had gedaan. Met een vinkje is sluiten een
+ * mechanische stap die het spoor laat staan in plaats van het weg te gummen.
+ */
+export function isAfgevinkt(tekst: string): boolean {
+  return /^\s*\[[xX]\]/.test(tekst);
+}
+
 /** Na hoeveel dagen zonder commit een taak waar Jarvis aan zet is als stil geldt. */
 export const STIL_NA_DAGEN = 2;
 
@@ -660,6 +693,11 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
     const status = taak.opdracht["status"] ?? "";
     if (status === "afgerond") continue;
     for (const item of leesItemsOnder(taak.resultaat, KOP_EIGENAAR)) {
+      // Reconciliatie vóór de lijst, niet erna. Een punt dat aantoonbaar al
+      // gedaan is (afgevinkt) of dat het akkoord op deze taak vraagt (dat
+      // loopt over de akkoordkaart) is op dit moment geen handeling van de
+      // eigenaar en hoort er dus niet in.
+      if (isAfgevinkt(item.titel) || isAkkoordVraag(item.titel)) continue;
       const blokkerend = /blokkerend/i.test(item.context);
       const naMerge = /na merge/i.test(item.context);
       // Een punt dat begint met "beslis" vraagt een keuze, geen handeling; dat
@@ -728,6 +766,17 @@ export function leesVoortgang(resultaat: string | null): readonly TaakStap[] {
   return stappen;
 }
 
+/**
+ * Vraagt de eigenaarslijst van dit dossier het akkoord op de taak zelf? Alleen
+ * een punt dat nog niet is afgevinkt telt; een afgevinkt akkoord is gegeven.
+ */
+function vraagtAkkoord(resultaat: string | null): boolean {
+  if (!resultaat) return false;
+  return leesItemsOnder(resultaat, KOP_EIGENAAR).some(
+    (item) => !isAfgevinkt(item.titel) && isAkkoordVraag(item.titel),
+  );
+}
+
 export function leesTaken(
   taken: readonly TaakDossier[],
   gastheer: string,
@@ -743,7 +792,15 @@ export function leesTaken(
       const laatste = recent.filter((r) => r.taak === t.id).map((r) => r.datum).sort().pop() ?? null;
       const volgendeStap = stappen.find((s) => !s.gedaan)?.tekst ?? null;
       const actief = status === "actief" || status === "review";
-      const akkoord_nodig = actief && t.tekst !== undefined && volgendeStap !== null && isAkkoordStap(volgendeStap);
+      // Twee wegen naar hetzelfde akkoord, zodat het nooit wegvalt én nooit
+      // dubbel staat: de voortgangslijst (`Akkoord van de eigenaar op …` als
+      // eerste open stap) en de eigenaarslijst (`geef in de app akkoord op
+      // deze taak`). Het punt uit de eigenaarslijst is hierboven uit de
+      // aandachtlijst gehouden; deze kaart neemt het over.
+      const akkoord_nodig =
+        actief &&
+        t.tekst !== undefined &&
+        ((volgendeStap !== null && isAkkoordStap(volgendeStap)) || vraagtAkkoord(t.resultaat));
       const aan_zet: TaakItem["aan_zet"] = !actief ? "niemand" : openVoorEigenaar.length > 0 || akkoord_nodig ? "eigenaar" : "jarvis";
       const dagenStil = laatste ? (nu.getTime() - new Date(laatste).getTime()) / 864e5 : Infinity;
       return {
