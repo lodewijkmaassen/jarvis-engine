@@ -31,6 +31,34 @@ _Gegenereerd op 2026-09-17._
 
 ## Waar staan we
 
+De regie herkent sinds deze wijziging een uitvoerder die stilvalt. Een claim
+waarvan de heartbeat verliep zonder fout, klaar of vrijgave viel terug op
+`QUEUED`: de taak werd opnieuw aangeboden, maar de blokkade zelf stond nergens
+— ze telde niet als afwijking en de rol bleef "beschikbaar" heten. Een
+regieronde kon daardoor een rustige wachtrij melden terwijl er een sessie op
+een goedkeuringsvraag stond. Die stilte is juist de handtekening van dat geval,
+want zo'n sessie stopt met heartbeaten zonder luid te falen; detectie kan dus
+niet op een melding wachten en leunt op het uitblijven ervan. Nu krijgt zo'n
+taak `blokkade: "uitvoerder_stil"` en telt ze als afwijking, en komt de rol
+waarvan de uitvoering vastliep op `herstel` in plaats van `beschikbaar` — voor
+elke rol, de task-controller inbegrepen, want ook die kan zelf claimen.
+
+Wat de blokkade met de *toestand* doet, hangt af van wat de taak verder
+tegenhoudt. Houdt niets anders haar tegen, dan is de vastgelopen uitvoerder de
+blokkade: `BLOCKED`, herstel bij de task-controller, uitvoerbaar en vóór op
+gewoon werk, zodat een andere uitvoerder hem kan overnemen. Wacht de taak
+daarnaast op een akkoord van de eigenaar of op een merge, dan blijft díé
+toestand staan en reist de blokkade er alleen in mee. Dat is bewust: anders zou
+een kaart voor de eigenaar een ronde lang uit beeld raken, en zou "opnieuw
+dispatchen" verkeerd advies zijn aan een taak die op een pull request wacht.
+Het `waarom` draagt dan de opdracht om eerst de vastgelopen claim op te ruimen.
+
+Ander werk raakt dit niet en de taak hervat vanzelf zodra er weer activiteit
+is. Een gemelde fout krijgt `blokkade: "fout"` en telt niet als afwijking: die
+staat al luid in de regie. Het herstel is nooit werk voor de eigenaar — een
+vastgelopen sessie is een ontbrekende capability of een interne
+toolgoedkeuring, en die zijn van Jarvis.
+
 De engine is afgesplitst uit het project waarin hij is gebouwd, met de
 commitgeschiedenis van `jarvis/`. Deze repository is de bron; consumers nemen
 hem op als git-afhankelijkheid op een vastgepinde commit en roepen
