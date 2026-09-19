@@ -6,13 +6,13 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-17._
+_Gegenereerd op 2026-09-19._
 
 | Feit | Waarde |
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 31 |
+| Testbestanden | 32 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -93,6 +93,20 @@ noemt bij de eerste twee de terugval mét workflow, ref en invoer. De weigering
 zelf blijft de eerste regel, zodat de meting niet uit het logboek verdwijnt;
 bij een bruikbare terugval is de exitcode 4 in plaats van 1, zodat een routine
 erop kan vertakken zonder de tekst te lezen.
+
+**`jarvis pr attesteren` start geen run meer die vooraf al zou weigeren.** Op
+2026-09-17 telde de audit 305 runs van `jarvis-attestatie`; een groot deel
+daarvan startte terwijl het taakakkoord, de toetsing op de huidige kop of een
+groene poort er nog niet was. De opdracht doet die beoordeling nu vooraf, met
+dezelfde `beoordeelAttestatie` en dezelfde feiten als de run zelf — geen tweede
+regelset, geen versoepeling, geen nieuwe bron of extra recht. Is er ten minste
+één reden, dan blijft de dispatch uit, staat die reden in één regel op stderr en
+is de exitcode **3**: nog niet rijp, niets gestart, en nadrukkelijk geen fout.
+De voorcontrole is fail open: kan ze haar bron niet lezen — geen
+databaseverbinding, een leesfout op GitHub, een onleesbare configuratie — dan
+volgt één waarschuwing en gaat de dispatch gewoon door. Ze mag alleen minder
+starten, nooit strenger zijn dan de run, die elke controle onveranderd zelf
+blijft doen.
 
 ## Volgende stap
 
