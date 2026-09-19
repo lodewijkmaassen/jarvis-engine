@@ -1400,13 +1400,16 @@ function help(): number {
       "  pr <wie|openen|status|attesteren|mergen|uitnodigingen> [opties]",
       "                                    Pull requests als de bot: openen, volgen, de attestatie starten",
       "                                    en samenvoegen na akkoord van de eigenaar (DEC-0043).",
+      "                                    attesteren toetst vooraf en start de workflow niet als die",
+      "                                    toch zou weigeren: exitcode 3 = nog niet rijp, niets gestart.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
       "",
-      "Exitcodes: 0 ok · 1 bevindingen · 2 gebruiksfout · 3 uitgeschakeld",
+      "Exitcodes: 0 ok · 1 bevindingen · 2 gebruiksfout · 3 uitgeschakeld,",
+      "           of bij pr attesteren: nog niet rijp, niets gestart",
     ].join("\n"),
   );
   return 0;
@@ -1661,6 +1664,19 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
   const eigenaar = eigenaarVan(slug);
 
   if (wat === "attesteren") {
+    // Eerst dezelfde beoordeling die de run zelf zou doen. Weigert die al, dan
+    // heeft starten geen zin: geen checkout, geen npm ci, geen twee API-rondes
+    // om te horen wat hier ook te lezen was. Kan de voorcontrole niet
+    // oordelen, dan start de workflow gewoon (zie voorcontroleAttestatie).
+    const voor = await voorcontroleAttestatie(token, slug, nummer, feiten);
+    if (voor.waarschuwing !== null) {
+      console.error(`jarvis pr attesteren: voorcontrole overgeslagen (${voor.waarschuwing}); de workflow beoordeelt zelf.`);
+    } else if (voor.redenen.length > 0) {
+      console.error(`jarvis pr attesteren: nog niet rijp: ${voor.redenen[0]}`);
+      // Exitcode 3: niets gestart, en geen fout. Een routine slaat deze pull
+      // request over en gaat door; alleen een 1 is een echte fout.
+      return 3;
+    }
     // Start de attestatieworkflow op main; die beoordeelt zelf en keurt goed
     // of niet. De bot kan hier niets afdwingen: hij vraagt alleen om de toets.
     const start = await github(token, "POST", `/repos/${slug}/actions/workflows/${ATTESTATIE_WORKFLOW}/dispatches`, {
@@ -2358,6 +2374,52 @@ async function verzamelAttestatieFeiten(
     checks: feiten.checks,
     verplichteCheck: VERPLICHTE_CHECK,
   };
+}
+
+/**
+ * Wat de voorcontrole van `jarvis pr attesteren` oplevert. `redenen` leeg en
+ * `waarschuwing` null: rijp, de workflow mag starten. `redenen` gevuld: de run
+ * zou weigeren, dus we starten hem niet. `waarschuwing` gevuld: de
+ * voorcontrole kon haar bron niet lezen en oordeelt dus niet — dan start de
+ * workflow gewoon, want een onbereikbare bron mag geen attestatie tegenhouden.
+ */
+type Voorcontrole = { readonly redenen: readonly string[]; readonly waarschuwing: string | null };
+
+/**
+ * Dezelfde beoordeling die de attestatierun zelf doet, maar vooraf en zonder
+ * iets te schrijven: één lezing van de configuratie, de bron en de PR-feiten,
+ * en dan `beoordeelAttestatie` — dezelfde functie, geen tweede regelset. Zo
+ * kost een pull request die toch zou worden afgewezen geen volledige run meer
+ * (T-20260917-attestatie-vooraf: 305 runs op 2026-09-17, een groot deel
+ * daarvan vooraf al kansloos).
+ *
+ * Fail open, niet fail closed: alles wat de voorcontrole níét met zekerheid
+ * kan vaststellen — geen databaseverbinding, een leesfout op GitHub, een
+ * configuratie die niet te lezen is — levert een waarschuwing op en laat de
+ * dispatch doorgaan. De run blijft de enige plek waar werkelijk wordt
+ * geweigerd; dit filter mag alleen maar minder starten, nooit minder streng
+ * zijn.
+ */
+async function voorcontroleAttestatie(token: string, slug: string, nummer: number, feiten: PullRequestFeiten): Promise<Voorcontrole> {
+  const config = await leesConfigVanRepo(token, slug);
+  if (typeof config === "string") return { redenen: [], waarschuwing: config };
+
+  const verbinding = await verbindDb();
+  const rest = config.attestatie;
+  if (verbinding === null && (!rest.url || !rest.sleutel)) {
+    return { redenen: [], waarschuwing: "geen databaseverbinding en geen attestatie.url in de configuratie" };
+  }
+  const bron = verbinding === null ? restBron(rest.url, rest.sleutel) : sqlBron(verbinding.sql);
+  try {
+    const f = await verzamelAttestatieFeiten(token, slug, nummer, feiten, config, bron);
+    if (typeof f === "string") return { redenen: [], waarschuwing: f };
+    return { redenen: beoordeelAttestatie(f), waarschuwing: null };
+  } catch (fout) {
+    const tekst = fout instanceof Error ? fout.message : String(fout);
+    return { redenen: [], waarschuwing: tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>") };
+  } finally {
+    if (verbinding !== null) await verbinding.sql.end({ timeout: 2 });
+  }
 }
 
 /**
