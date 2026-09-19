@@ -165,6 +165,100 @@ export const ACTIVITEIT_RECENT_SQL =
   "select op, uitvoerder, rol, taak, project, soort, tekst, verwijzing from jarvis.activiteit " +
   "where op > now() - interval '3 days' order by op desc limit 1000";
 
+// --- Runregister (T-20260912-altijd-aan) ----------------------------------
+//
+// Elke run laat één spoor na: wanneer hij begon, waardoor hij begon en hoe
+// hij afliep. Nodig omdat het bewijs over de starttrigger anders indirect
+// blijft — `list_triggers` bewaart per routine maar één `last_run`, en door
+// een trigger gestarte runs komen niet in `list_sessions` (gemeten
+// 2026-09-18). Een run die niets te doen had, laat dan géén spoor na, juist
+// het geval waarin je wilt weten of het vangnet draaide.
+//
+// Bewust géén eigen tabel: dat vraagt een migratie, en een migratie is een
+// harde uitzondering (DEC-0043 §2) die een apart akkoord zou vragen voor wat
+// in de kern een logregel is. Het register loopt daarom over `DOCUMENT_SQL`,
+// dat al bestaat en al in `toegestaneSql()` staat — de Edge Function hoeft
+// dus niet opnieuw te worden uitgerold.
+//
+// Omdat er geen leesweg voor documenten in `toegestaneSql()` zit, kan
+// `run klaar` het startdocument niet uit de database terughalen. De run
+// onthoudt zijn eigen startregel daarom in een bestand naast de werkmap;
+// start en afronding zitten per definitie in dezelfde uitvoering.
+
+export const RUN_OORZAKEN = ["rooster", "signaal", "vervolgbeurt", "handmatig"] as const;
+export type RunOorzaak = (typeof RUN_OORZAKEN)[number];
+
+export function isRunOorzaak(waarde: string): waarde is RunOorzaak {
+  return (RUN_OORZAKEN as readonly string[]).includes(waarde);
+}
+
+export type RunRegel = {
+  readonly id: string;
+  readonly begonnen: string;
+  readonly oorzaak: RunOorzaak;
+  readonly uitvoerder: string;
+  readonly aanleiding: string | null;
+  readonly geeindigd: string | null;
+  readonly uitkomst: string | null;
+};
+
+/**
+ * Het document-id van een run: `runs/<ISO-startmoment>`. Het startmoment is
+ * de sleutel, zodat twee uitvoerders die op dezelfde milliseconde beginnen
+ * elkaar niet overschrijven — dat is in de praktijk uitgesloten, en de
+ * oorzaak staat er hoe dan ook in.
+ */
+export function runDocumentId(nu: Date): string {
+  return `runs/${nu.toISOString()}`;
+}
+
+/** De regel zoals `jarvis db run start` hem wegschrijft: nog zonder uitkomst. */
+export function runStartRegel(nu: Date, oorzaak: RunOorzaak, uitvoerder: string, aanleiding: string | null): RunRegel {
+  return {
+    id: runDocumentId(nu),
+    begonnen: nu.toISOString(),
+    oorzaak,
+    uitvoerder,
+    aanleiding: aanleiding && aanleiding.trim().length > 0 ? aanleiding : null,
+    geeindigd: null,
+    uitkomst: null,
+  };
+}
+
+/**
+ * Dezelfde regel, aangevuld door `jarvis db run klaar`. Id, startmoment en
+ * oorzaak blijven wat ze waren: een afronding herschrijft nooit waardoor de
+ * run begon, anders vervalt juist de meting waarvoor het register bestaat.
+ */
+export function runKlaarRegel(regel: RunRegel, nu: Date, uitkomst: string): RunRegel {
+  return { ...regel, geeindigd: nu.toISOString(), uitkomst };
+}
+
+/**
+ * Waar een lopende run zijn startregel bewaart tot hij afrondt. Buiten elke
+ * repository, zodat hij nooit in een commit of in de sanitizer belandt;
+ * `JARVIS_RUN_BESTAND` overschrijft hem, wat de tests gebruiken.
+ */
+export function runStandBestand(omgeving: string | undefined, tijdelijkeMap: string): string {
+  const eigen = omgeving?.trim();
+  if (eigen && eigen.length > 0) return eigen;
+  return `${tijdelijkeMap.replace(/\/+$/, "")}/jarvis-run.json`;
+}
+
+/** Herkent een regel die uit `run start` komt; alles daarbuiten weigeren we. */
+export function isRunRegel(waarde: unknown): waarde is RunRegel {
+  if (typeof waarde !== "object" || waarde === null) return false;
+  const r = waarde as Record<string, unknown>;
+  return (
+    typeof r["id"] === "string" &&
+    r["id"].startsWith("runs/") &&
+    typeof r["begonnen"] === "string" &&
+    typeof r["oorzaak"] === "string" &&
+    isRunOorzaak(r["oorzaak"]) &&
+    typeof r["uitvoerder"] === "string"
+  );
+}
+
 /**
  * Alle statements die de engine op de eigen database uitvoert, letterlijk.
  * De Edge Function `jarvis-db` (voor de cloud, die geen Postgres kan
