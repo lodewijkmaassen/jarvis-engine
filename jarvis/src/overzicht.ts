@@ -822,9 +822,9 @@ export function leesTaken(
       return {
         id: t.id,
         // `?? id` grijpt alleen bij een ontbrekend veld; een lege of
-      // alleen-witruimte-titel gaf een lege cel in plaats van het taak-id.
-      // `|| id` vangt allebei.
-      titel: t.opdracht["titel"]?.trim() || t.id,
+        // alleen-witruimte-titel gaf een lege cel in plaats van het taak-id.
+        // `|| id` vangt allebei.
+        titel: t.opdracht["titel"]?.trim() || t.id,
         status,
         klasse: t.opdracht["klasse"] ?? null,
         project: t.opdracht["project"] ?? gastheer,

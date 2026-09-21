@@ -18,6 +18,7 @@ import {
   leesOptieRegels,
   leesRecent,
   leesStandSecties,
+  leesTaken,
   leesVoortgang,
   openTakenUitDossiers,
   sleutelVan,
@@ -569,6 +570,23 @@ describe("openTakenUitDossiers", () => {
   it("valt ook terug op het id bij een lege of alleen-witruimte-titel, in plaats van een lege cel", () => {
     expect(openTakenUitDossiers([d("T-a", "actief", "")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
     expect(openTakenUitDossiers([d("T-b", "actief", "   ")])).toEqual([{ id: "T-b", titel: "T-b", status: "actief" }]);
+  });
+});
+
+describe("leesTaken", () => {
+  const d = (id: string, opdracht: Record<string, string>): TaakDossier => ({ id, opdracht, resultaat: null });
+
+  it("valt terug op het id bij een ontbrekende, lege of alleen-witruimte-titel", () => {
+    const uit = leesTaken(
+      [
+        d("T-a", { status: "actief" }),
+        d("T-b", { status: "actief", titel: "" }),
+        d("T-c", { status: "actief", titel: "   " }),
+        d("T-d", { status: "actief", titel: "  Met spaties eromheen  " }),
+      ],
+      "tovas-flow",
+    );
+    expect(uit.map((t) => t.titel)).toEqual(["T-a", "T-b", "T-c", "Met spaties eromheen"]);
   });
 });
 

@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-18._
+_Gegenereerd op 2026-09-21._
 
 | Feit | Waarde |
 |---|---|
@@ -83,8 +83,9 @@ ook met acht actieve taken. Precies de drift die dit document zou dichtzetten.
 
 De ontsnapping van dossiertekst in dat blok is nu omkeerbaar. Een backslash
 direct vóór een pijp brak de rij alsnog in tweeën, en `&lt;!--` uit een
-dossier was niet te onderscheiden van een echte `<!--`; backslash en
-ampersand worden daarom zelf ontsnapt, in die volgorde. Een lege of
+dossier was niet te onderscheiden van een echte `<!--`; ampersand en
+backslash worden daarom zelf ontsnapt, elk vóór de vervanging die ze moeten
+beschermen — de ampersand vóór `<!--`, de backslash vóór de pijp. Een lege of
 alleen-witruimte-titel valt nu terug op het taak-id in plaats van een lege
 cel te geven. Eén bevinding uit dezelfde QA-ronde staat nog open: een dossier
 met kapotte front-matter of een ander statuswoord (`open`, `gepland`)
