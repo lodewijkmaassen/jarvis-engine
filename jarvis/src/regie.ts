@@ -8,6 +8,7 @@
 // niemand werkt eraan), RUNNING (geclaimd met levende heartbeat), BLOCKED
 // (laatste uitvoering meldde een fout), WAITING_FOR_USER (de eigenaar is aan
 // zet), WAITING_FOR_DEPENDENCY (wacht op een andere taak of pull request),
+// WAITING_FOR_EVENT (wacht op iets buiten Jarvis dat niemand kan afdwingen),
 // DONE (alles af, dossier nog te sluiten) of AFWIJKING (de zes vragen zijn
 // niet te beantwoorden; de controller onderzoekt).
 
@@ -16,7 +17,7 @@ import type { Overzicht, TaakItem } from "./overzicht";
 export const ROLLEN = ["orchestrator", "task-controller", "architect", "developer", "qa", "knowledge-manager"] as const;
 export type Rol = (typeof ROLLEN)[number];
 
-export const TOESTANDEN = ["QUEUED", "RUNNING", "BLOCKED", "WAITING_FOR_USER", "WAITING_FOR_DEPENDENCY", "DONE", "AFWIJKING"] as const;
+export const TOESTANDEN = ["QUEUED", "RUNNING", "BLOCKED", "WAITING_FOR_USER", "WAITING_FOR_DEPENDENCY", "WAITING_FOR_EVENT", "DONE", "AFWIJKING"] as const;
 export type Toestand = (typeof TOESTANDEN)[number];
 
 export type Activiteit = {
@@ -47,7 +48,7 @@ export type TaakRegie = {
   readonly sinds: string | null;
   /** Kan een uitvoerder dit nu oppakken zonder de eigenaar? */
   readonly uitvoerbaar: boolean;
-  /** Bij WAITING_FOR_DEPENDENCY: waarop. */
+  /** Bij WAITING_FOR_DEPENDENCY of WAITING_FOR_EVENT: waarop. */
   readonly wacht_op: string | null;
   /**
    * Aard van de blokkade bij BLOCKED. `fout`: de uitvoerder meldde zelf een
@@ -119,6 +120,19 @@ const WACHT_OP_TAAK = /wacht(?:en)?\s+op\s+(T-\d{8}-[a-z0-9-]+)/i;
 // "wacht op PR #26", "wacht op pull request lodewijkmaassen/jarvis-engine#26".
 const WACHT_OP_PR = /wacht(?:en)?\s+op\s+(?:pr|pull request)\s*(?:([\w.-]+\/[\w.-]+))?#?(\d+)/i;
 const AKKOORD_STAP = /\bakkoord\b.*\beigenaar\b|\beigenaar\b.*\bakkoord\b/i;
+// "wacht op gebeurtenis: de eigenaar typt de volgende opdracht in de app".
+//
+// Anders dan de drie patronen hierboven is dit een expliciete markering en
+// geen woordpatroon over lopende tekst. Dat is met opzet: een taak die op iets
+// buiten Jarvis wacht valt anders terug op QUEUED en wordt elke run opnieuw
+// aan een uitvoerder aangeboden die er niets mee kan. Wie zo'n stap schrijft
+// zegt daarmee uitdrukkelijk dat er niets te dispatchen valt — dat mag niet
+// per ongeluk uit een zinswending volgen.
+//
+// Dit is nadrukkelijk géén eigenaarswerk: er wordt niets van de eigenaar
+// gevraagd, er is alleen niets te doen tot de gebeurtenis zich voordoet
+// (CON-0016). Daarom blijft de verantwoordelijke de task-controller.
+const WACHT_OP_GEBEURTENIS = /^\s*wacht(?:en)?\s+op\s+gebeurtenis\s*:\s*(.+?)\s*$/i;
 
 export type Uitvoering = {
   readonly claim: Activiteit;
@@ -268,6 +282,11 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
         waarom: `wacht op pull request ${label}, die nog niet is samengevoegd; de controller hervat na de merge` + opruimen };
     }
     // Een gemergede PR is geen wachtreden meer: de stap wordt weer uitvoerbaar werk.
+    const gebeurtenis = WACHT_OP_GEBEURTENIS.exec(volgende);
+    if (gebeurtenis) {
+      return { ...basis, toestand: "WAITING_FOR_EVENT", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: false, wacht_op: gebeurtenis[1],
+        waarom: `wacht op een gebeurtenis buiten Jarvis: ${gebeurtenis[1]}; er is niets te dispatchen tot die zich voordoet, en er wordt niets van de eigenaar gevraagd` };
+    }
   }
   // Niets anders houdt de taak tegen: dan ís de vastgelopen uitvoerder de
   // blokkade. Het herstel ligt bij de task-controller — een vastgelopen sessie

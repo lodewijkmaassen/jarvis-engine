@@ -5,10 +5,12 @@
 // drift wordt gezien.
 import { describe, expect, it } from "vitest";
 import {
+  NEUTRALE_VORM_VERSIE,
   ROLLEN_EIND,
   ROLLEN_START,
   genereerAfgeleiden,
   genereerAgentdefinitie,
+  genereerNeutraleAfgeleide,
   leesRolcontract,
   vervangOverzichtsblok,
   vindDrift,
@@ -87,6 +89,67 @@ describe("agentdefinitie", () => {
     if (!r.ok) throw new Error(r.fout);
     const uit = genereerAgentdefinitie(r.contract, { ...CONFIG, gereedschap: {} }, "rollen/qa.md");
     expect(uit).not.toContain("tools:");
+  });
+});
+
+describe("leveranciersneutrale afgeleide", () => {
+  const contracten = () => {
+    const qa = leesRolcontract("qa.md", CONTRACT);
+    const orch = leesRolcontract(
+      "orchestrator.md",
+      "---\nsamenvatting: Stuurt.\nvermogens:\n  - lezen\nagent: nee\n---\n# Rolcontract — Orchestrator\n\nStuurt de rollen aan.\n",
+    );
+    if (!qa.ok || !orch.ok) throw new Error("fixture");
+    return [qa.contract, orch.contract];
+  };
+
+  it("draagt elk contract volledig, ook een rol zonder eigen agentdefinitie", () => {
+    const uit = JSON.parse(genereerNeutraleAfgeleide(contracten(), "rollen"));
+    expect(uit.versie).toBe(NEUTRALE_VORM_VERSIE);
+    expect(uit.bron).toBe("rollen");
+    expect(uit.rollen.map((r: { rol: string }) => r.rol)).toEqual(["orchestrator", "qa"]);
+    const qa = uit.rollen[1];
+    expect(qa.titel).toBe("Rolcontract — QA");
+    expect(qa.samenvatting).toBe("Toetst onafhankelijk.");
+    expect(qa.vermogens).toEqual(["lezen", "uitvoeren", "rapporteren"]);
+    expect(qa.agent).toBe(true);
+    expect(qa.bron).toBe("rollen/qa.md");
+    expect(qa.contract).toContain("## 8. Escalatie");
+    expect(qa.contract).toContain("BLOCKING_DECISION wanneer nodig.");
+    expect(uit.rollen[0].agent).toBe(false);
+    expect(uit.rollen[0].contract).toContain("Stuurt de rollen aan.");
+  });
+
+  it("noemt geen gereedschap en draagt geen front-matter", () => {
+    const uit = genereerNeutraleAfgeleide(contracten(), "rollen");
+    for (const naam of ["Lees", "Zoek", "Schrijf", "Bewerk", "Voer"]) expect(uit).not.toContain(naam);
+    expect(uit).not.toContain("tools:");
+    expect(uit).not.toContain("name: j-");
+    expect(uit.startsWith("{")).toBe(true);
+    expect(uit.endsWith("}\n")).toBe(true);
+  });
+
+  it("is deterministisch, ongeacht de volgorde van de contracten", () => {
+    const [qa, orch] = contracten();
+    expect(genereerNeutraleAfgeleide([qa, orch], "rollen")).toBe(genereerNeutraleAfgeleide([orch, qa], "rollen"));
+  });
+
+  it("komt als afgeleide mee zodra hij geconfigureerd is, en de driftcontrole ziet hem", () => {
+    const [qa, orch] = contracten();
+    const config: AfgeleidenConfig = { ...CONFIG, neutraal: "rollen/contracten.json" };
+    const uit = genereerAfgeleiden([qa, orch], config, "rollen", null);
+    expect(uit.map((a) => a.pad)).toEqual(["agents/j-qa.md", "INSTAP.md", "rollen/contracten.json"]);
+    const neutraal = uit[2];
+    expect(neutraal.inhoud).toBe(genereerNeutraleAfgeleide([qa, orch], "rollen"));
+    expect(vindDrift([neutraal], new Map([["rollen/contracten.json", "{}\n"]]))).toEqual([
+      { pad: "rollen/contracten.json", reden: "wijkt af van de bron" },
+    ]);
+    expect(vindDrift([neutraal], new Map([["rollen/contracten.json", neutraal.inhoud]]))).toEqual([]);
+  });
+
+  it("blijft weg zolang hij niet geconfigureerd is", () => {
+    const [qa] = contracten();
+    expect(genereerAfgeleiden([qa], CONFIG, "rollen", null).some((a) => a.pad.endsWith(".json"))).toBe(false);
   });
 });
 

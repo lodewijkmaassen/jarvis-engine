@@ -9,6 +9,8 @@ import {
   bouwOverzicht,
   korteSleutel,
   isAkkoordStap,
+  isAkkoordVraag,
+  isAfgevinkt,
   bouwOpties,
   leesAandacht,
   leesFeiten,
@@ -643,5 +645,67 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
     const uit = bouwOpties(items[0].regels, []);
     expect(uit.stappen).toHaveLength(1);
     expect(uit.controle).toMatch(/^Jarvis meet/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// De invariant van "Voor jou"
+// ---------------------------------------------------------------------------
+//
+// "Voor jou" is de actuele minimale actielijst van de eigenaar: ieder item
+// vereist op dit moment aantoonbaar een handeling van hem, en iedere handeling
+// die op dit moment aantoonbaar van hem vereist is, staat er precies één keer
+// in. Het faalpad dat deze tests dichtzetten: de lijst groeide met reeds
+// uitgevoerde handelingen en bood hetzelfde akkoord twee keer aan — één keer
+// als aan te vinken punt uit het taakdossier (dat geen autorisatie oplevert)
+// en één keer als akkoordkaart (die dat wél doet).
+describe("de invariant van de eigenaarslijst", () => {
+  const SCOPE = "---" + "\n" + "status: actief" + "\n" + "---" + "\n" + "Scope." + "\n";
+  const met = (res: string) => ({
+    id: "T-20260917-a",
+    opdracht: { status: "actief", titel: "Taak", project: "p" },
+    resultaat: res,
+    tekst: SCOPE,
+  });
+  const eigenaarslijst = (regels: string) =>
+    "## Voortgang" + "\n" + "- [ ] Bouwen" + "\n\n" + "## Wat de eigenaar nog moet doen" + "\n\n" + regels;
+
+  it("laat een afgevinkte handeling verdwijnen: wat gedaan is, wordt niet opnieuw gevraagd", () => {
+    const doc = eigenaarslijst("- [x] Zet de sleutel in de kluis.\n- Kies een naam voor het project.\n");
+    const items = leesAandacht(project({ taken: [met(doc)] }));
+    expect(items.map((i) => i.titel)).toEqual(["Kies een naam voor het project."]);
+    expect(isAfgevinkt("[x] Zet de sleutel in de kluis.")).toBe(true);
+    expect(isAfgevinkt("Zet de sleutel in de kluis.")).toBe(false);
+  });
+
+  it("biedt het akkoord op de taak niet óók als los punt aan, maar precies één keer als akkoordkaart", () => {
+    const doc = eigenaarslijst("- Stap 1: geef in de Jarvis-app akkoord op deze taak, zodat de poort kan attesteren.\n");
+    const p = project({ taken: [met(doc)] });
+    // Geen los punt in de lijst: een vinkje erop levert een antwoord en geen
+    // autorisatie, en de poort kan er dus niets mee.
+    expect(leesAandacht(p)).toEqual([]);
+    // Maar het akkoord valt niet weg: de taak draagt het als akkoordkaart.
+    const t = bouwOverzicht([p], NU).projecten[0].taken[0];
+    expect([t.akkoord_nodig, t.aan_zet]).toEqual([true, "eigenaar"]);
+  });
+
+  it("herkent het akkoordverzoek in gebiedende wijs, en niet elke regel met het woord akkoord", () => {
+    expect(isAkkoordVraag("geef in de Jarvis-app akkoord op deze taak")).toBe(true);
+    expect(isAkkoordVraag("bij (a) — geef akkoord in de Jarvis-app op deze taak met de reikwijdte \"deploygrens\"")).toBe(true);
+    expect(isAkkoordVraag("Akkoord van de eigenaar op deze taak in de Jarvis-app")).toBe(true);
+    expect(isAkkoordVraag("Kies tussen (a) een ignoreCommand en (b) niets doen.")).toBe(false);
+    expect(isAkkoordVraag("Jarvis verwerkt het akkoord uit de app zelf")).toBe(false);
+  });
+
+  it("houdt een gegeven akkoord weg uit de lijst zodra het punt is afgevinkt", () => {
+    const doc = eigenaarslijst("- [x] Stap 1: geef in de Jarvis-app akkoord op deze taak.\n");
+    const p = project({ taken: [met(doc)] });
+    expect(leesAandacht(p)).toEqual([]);
+    expect(bouwOverzicht([p], NU).projecten[0].taken[0].akkoord_nodig).toBe(false);
+  });
+
+  it("houdt een echte eigenaarskeuze staan: die vereist hem nog steeds", () => {
+    const doc = eigenaarslijst("- Stap 1: kies tussen (a) een vercel.json met een ignoreCommand, of (b) niets doen.\n");
+    expect(leesAandacht(project({ taken: [met(doc)] })).map((i) => i.soort)).toEqual(["actie"]);
   });
 });

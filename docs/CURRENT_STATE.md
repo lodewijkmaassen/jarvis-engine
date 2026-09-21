@@ -12,7 +12,7 @@ _Gegenereerd op 2026-09-21._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 31 |
+| Testbestanden | 33 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -67,6 +67,15 @@ staat de canonieke workflow in `jarvis/canonical/`, bij een consumer komt hij
 mee met de geïnstalleerde engine; de stap `engine` controleert bij een consumer
 dat de gepinde, geïnstalleerde engine-SHA op `main` van deze repository staat.
 
+De regie kent sinds deze wijziging een achtste toestand, `WAITING_FOR_EVENT`:
+een taak die wacht op iets buiten Jarvis dat niemand kan afdwingen — de
+eigenaar die de volgende opdracht typt, een klant die zich meldt. Zo'n stap
+viel eerder terug op `QUEUED` en werd elke run opnieuw aan een uitvoerder
+aangeboden die er niets mee kon. De markering is expliciet (`wacht op
+gebeurtenis: <wat>`) en geen woordpatroon over lopende tekst; de
+verantwoordelijke blijft de task-controller, want er wordt niets van de
+eigenaar gevraagd (CON-0016).
+
 Het feitenblok noemt sinds deze wijziging de open taken die het uit de
 taakdossiers afleidt. Daarvoor gaf de verzamelaar het veld hardgecodeerd leeg
 mee, zodat `CURRENT_STATE.md` in elke repository "Open taken: geen" meldde —
@@ -94,6 +103,39 @@ noemt bij de eerste twee de terugval mét workflow, ref en invoer. De weigering
 zelf blijft de eerste regel, zodat de meting niet uit het logboek verdwijnt;
 bij een bruikbare terugval is de exitcode 4 in plaats van 1, zodat een routine
 erop kan vertakken zonder de tekst te lezen.
+
+De rolcontracten in `jarvis/roles/` zijn de bron; `jarvis rollen` leidt er drie
+vormen uit af en bewaakt ze op drift: de agentdefinities en het rollenblok van
+de werkomgeving, en een leveranciersneutrale, machineleesbare vorm zonder
+front-matter of gereedschapsnamen, zodat een tweede gereedschap dezelfde
+contracten kan inlezen. Die derde vorm komt alleen mee als een project hem
+configureert (`rol_neutraal`); deze repository laat hem leeg.
+
+De eigenaarslijst wordt gereconcilieerd vóór "Voor jou" wordt opgebouwd. Een
+punt was alleen te sluiten door de prozatekst te herschrijven, dus bleven
+reeds uitgevoerde handelingen in de lijst staan en vroeg de app ze opnieuw;
+een afgevinkt punt (`- [x] …`) telt nu niet mee. En een punt dat het akkoord
+op de taak zelf vraagt stond er twee keer — als aan te vinken punt uit het
+dossier en als akkoordkaart — terwijl alleen de kaart een autorisatie
+vastlegt waar de poort op kan varen (DEC-0043); zo'n punt zet nu
+`akkoord_nodig` op de taak in plaats van een eigen item te worden. Daarmee
+geldt aan beide kanten: wat gedaan is verdwijnt, en een vereist akkoord
+verschijnt precies één keer, in de vorm die het vastlegt.
+
+`jarvis pr wie` meet de drie rechten apart en vat ze nergens samen. Lezen,
+schrijven op inhoud en het recht een workflow te starten zijn verschillende
+dingen, maar de opdracht goot ze in één uitspraak over "schrijfrecht". Op de
+cloud was die uitspraak onjuist — de bot had de rol `write` en pushte, opende
+pull requests en voegde samen, terwijl `wie` "geen schrijfrecht" meldde omdat
+de attestatie een 403 gaf over iets heel anders — en de routineprompt bindt er
+een gevolg aan: bij "geen schrijfrecht" slaat een run alles over wat een pull
+request opent, attesteert of samenvoegt. `duidRechten` geeft nu per soort een
+eigen regel. Schrijfrecht blijft `null` zodra het permissions-veld ontbreekt of
+de uitvoerder in de cloud draait, want daar zegt dat veld niets (gemeten
+2026-09-14 en 2026-09-15). Het recht een workflow te starten is nooit `true` of
+`false`: een dispatch ís de handeling, dus vooraf niet te meten zonder
+bijwerking; de regel verwijst naar waar het wél blijkt, en in de cloud naar de
+vastgelegde weigering van het sessietype.
 
 ## Volgende stap
 
