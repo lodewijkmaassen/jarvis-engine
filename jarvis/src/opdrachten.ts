@@ -31,7 +31,7 @@ import {
   vervangFeitenblok,
   type StateFeiten,
 } from "./state";
-import { ALLOWLIST_BESTANDSNAAM, LEGE_ALLOWLIST, laadAllowlist, scanTekst, type Allowlist } from "./sanitize";
+import { ALLOWLIST_BESTANDSNAAM, ENTROPIE_MINIMUM_LENGTE, LEGE_ALLOWLIST, laadAllowlist, scanTekst, type Allowlist } from "./sanitize";
 import {
   RECENT_DAGEN,
   bouwOverzicht,
@@ -97,7 +97,7 @@ import {
   WIE_SQL,
 } from "./db";
 import { randomBytes } from "node:crypto";
-import { ATTESTATIE_GEBRUIKER, beoordeelOpenen, beoordeelSamenvoegen, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
+import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
 import { homedir } from "node:os";
 
 const uitvoeren = promisify(execFile);
@@ -326,25 +326,53 @@ async function leesOfNull(pad: string): Promise<string | null> {
   }
 }
 
+/** Hoe vaak de vergelijking opnieuw wordt geprobeerd, en met hoeveel uitstel. */
+export const VERGELIJK_UITSTEL_MS: readonly number[] = [500, 1500];
+
+/** Een uitkomst die bij een volgende poging anders kan zijn (limiet, storing, netwerk). */
+function vluchtig(status: number): boolean {
+  return status === 403 || status === 429 || status >= 500;
+}
+
 /**
  * Vraagt GitHub hoe een commit zich verhoudt tot de hoofdbranch van de
- * engine-repository. Publieke API, geen token; bij een privé repository of
- * zonder netwerk is het antwoord null en oordeelt de poort streng.
+ * engine-repository. Publieke API, geen token.
+ *
+ * Elke uitkomst die geen vergelijking is, draagt de reden mee in plaats van
+ * `null` — anders leest een limiet of storing bij GitHub als een pin die naast
+ * de hoofdbranch ligt (RSK-0024). Een uitkomst die vluchtig kan zijn wordt met
+ * uitstel opnieuw geprobeerd; pas na de laatste poging is het een oordeel. Een
+ * 404 of een onbekende status is niet vluchtig en wordt niet herhaald.
  */
-async function vergelijkMetHoofdbranch(slug: string, sha: string): Promise<HoofdbranchVergelijking> {
-  try {
-    const antwoord = await fetch(`https://api.github.com/repos/${slug}/compare/main...${sha}`, {
-      headers: { Accept: "application/vnd.github+json", "User-Agent": "jarvis-poort" },
-    });
-    if (!antwoord.ok) return null;
-    const lading = (await antwoord.json()) as { status?: unknown };
-    const status = lading.status;
-    return status === "identical" || status === "behind" || status === "ahead" || status === "diverged"
-      ? status
-      : null;
-  } catch {
-    return null;
+export async function vergelijkMetHoofdbranch(
+  slug: string,
+  sha: string,
+  haal: typeof fetch = fetch,
+  wacht: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<HoofdbranchVergelijking> {
+  let laatste = "geen antwoord van GitHub";
+  for (let poging = 0; poging <= VERGELIJK_UITSTEL_MS.length; poging++) {
+    if (poging > 0) await wacht(VERGELIJK_UITSTEL_MS[poging - 1]);
+    let herhaalbaar = false;
+    try {
+      const antwoord = await haal(`https://api.github.com/repos/${slug}/compare/main...${sha}`, {
+        headers: { Accept: "application/vnd.github+json", "User-Agent": "jarvis-poort" },
+      });
+      if (antwoord.ok) {
+        const lading = (await antwoord.json()) as { status?: unknown };
+        const status = lading.status;
+        if (status === "identical" || status === "behind" || status === "ahead" || status === "diverged") return status;
+        return { onbekend: `GitHub gaf een antwoord zonder bruikbare status` };
+      }
+      laatste = `GitHub antwoordde met ${antwoord.status}`;
+      herhaalbaar = vluchtig(antwoord.status);
+    } catch (fout) {
+      laatste = `de oproep mislukte: ${fout instanceof Error ? fout.message : String(fout)}`;
+      herhaalbaar = true;
+    }
+    if (!herhaalbaar) break;
   }
+  return { onbekend: laatste };
 }
 
 /**
@@ -715,7 +743,7 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
  * Jarvis-data die de repository verlaat, en daar geldt CON-0008 dubbel.
  */
 /** Het overzicht zoals `jarvis overzicht` het bouwt, voor hergebruik door `jarvis regie`. */
-async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; overzicht: Overzicht }> {
+async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
   const { wortel, config, lading } = await laadAlles();
   const nu = new Date();
 
@@ -764,16 +792,41 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
-  return { wortel, overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+}
+
+/**
+ * De namen van branches en tags van de betrokken repositories, als
+ * allowlist-tokens voor de scan van gegenereerde uitvoer. Een branchnaam als
+ * `cloud-20260915-attestatie-dispatch` (34 tekens, cijfers en letters) haalt
+ * de entropiedrempel en blokkeerde het overzicht en de regie — terwijl bij het
+ * scannen al bekend is dát het een naam is: hij staat in de refs. De
+ * uitzondering geldt alleen hier, op uitvoer die uit die refs is opgebouwd;
+ * de scan van bestanden en de algemene entropieregel veranderen niet.
+ */
+async function refNamenAlsAllowlist(wortels: readonly string[], basis: Allowlist): Promise<Allowlist> {
+  const namen = new Set<string>();
+  for (const w of wortels) {
+    const refs = await git(w, ["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes", "refs/tags"]);
+    for (const ref of refs.split("\n")) {
+      const naam = ref.trim();
+      if (!naam) continue;
+      // De hele ref én het laatste padsegment: in een mergeonderwerp staat
+      // `lodewijkmaassen/jarvis/<naam>`, in een branchlijst `origin/jarvis/<naam>`.
+      for (const deel of [naam, naam.split("/").pop() ?? naam]) if (deel.length >= ENTROPIE_MINIMUM_LENGTE) namen.add(deel);
+    }
+  }
+  return namen.size === 0 ? basis : { ...basis, tokens: [...basis.tokens, ...namen] };
 }
 
 async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<number> {
-  const { wortel, overzicht } = await bouwOverzichtVanuit(vlaggen);
+  const { wortel, wortels, overzicht } = await bouwOverzichtVanuit(vlaggen);
   const json = `${JSON.stringify(overzicht, null, 2)}\n`;
 
   // De poort voor alles wat de repository verlaat. Geen uitzonderingen: een
   // overzicht met een tenant-UUID of een adres erin is erger dan geen overzicht.
-  const allowlist = await laadAllowlistVanSchijf(wortel);
+  // Alleen de eigen ref-namen (branches, tags) tellen als bekend.
+  const allowlist = await refNamenAlsAllowlist(wortels, await laadAllowlistVanSchijf(wortel));
   const bevindingen = scanTekst(json, allowlist, "overzicht.json");
   if (bevindingen.length > 0) {
     console.error(`jarvis overzicht: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);
@@ -1425,6 +1478,12 @@ function foutTekst(a: GitHubAntwoord): string {
   return typeof l?.message === "string" ? `${a.status}: ${l.message}` : `HTTP ${a.status}`;
 }
 
+/** Alleen de boodschap van GitHub, zonder de status ervoor; voor duiding. */
+function berichtVan(a: GitHubAntwoord): string {
+  const l = a.lading as { message?: unknown } | null;
+  return typeof l?.message === "string" ? l.message : "";
+}
+
 async function slugUitOrigin(wortel: string): Promise<string | null> {
   const url = await git(wortel, ["remote", "get-url", "origin"]);
   const m = /github\.com[/:]([^/]+)\/([^/]+?)(?:\.git)?$/.exec(url);
@@ -1604,13 +1663,16 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
   if (wat === "attesteren") {
     // Start de attestatieworkflow op main; die beoordeelt zelf en keurt goed
     // of niet. De bot kan hier niets afdwingen: hij vraagt alleen om de toets.
-    const start = await github(token, "POST", `/repos/${slug}/actions/workflows/jarvis-attestatie.yml/dispatches`, {
+    const start = await github(token, "POST", `/repos/${slug}/actions/workflows/${ATTESTATIE_WORKFLOW}/dispatches`, {
       ref: "main",
       inputs: { pr: String(nummer) },
     });
     if (start.status !== 204) {
-      console.error(`jarvis pr attesteren: workflow niet gestart (${foutTekst(start)}); staat jarvis-attestatie.yml op main?`);
-      return 1;
+      const duiding = duidDispatchWeigering(start.status, berichtVan(start), slug, nummer);
+      for (const regel of duiding.regels) console.error(`jarvis pr attesteren: ${regel}`);
+      // Exitcode 4 zegt: de attestatie is niet gevraagd, maar er is een weg die
+      // wél werkt. Een routine kan daarop vertakken zonder de tekst te lezen.
+      return duiding.terugvalMogelijk ? 4 : 1;
     }
     console.log(`jarvis pr: attestatie gevraagd voor #${nummer} op ${feiten.kop.slice(0, 7)}; de workflow beoordeelt en geeft bij een schone uitkomst de review af (zie Actions → jarvis-attestatie).`);
     return 0;
@@ -1886,7 +1948,7 @@ async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<strin
  * zijn ronde als activiteit.
  */
 async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<number> {
-  const { wortel, overzicht } = await bouwOverzichtVanuit(vlaggen);
+  const { wortel, wortels, overzicht } = await bouwOverzichtVanuit(vlaggen);
   let activiteit: Activiteit[] = [];
   const verbinding = await verbindDb();
   if (verbinding !== null) {
@@ -1902,7 +1964,7 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   const regie = bepaalRegie(overzicht, activiteit, new Date());
   const json = `${JSON.stringify(regie, null, 2)}\n`;
 
-  const allowlist = await laadAllowlistVanSchijf(wortel);
+  const allowlist = await refNamenAlsAllowlist(wortels, await laadAllowlistVanSchijf(wortel));
   const bevindingen = scanTekst(json, allowlist, "regie.json");
   if (bevindingen.length > 0) {
     console.error(`jarvis regie: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);

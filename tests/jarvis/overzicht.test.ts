@@ -587,3 +587,61 @@ describe("leesTaken", () => {
     expect(uit.map((t) => t.titel)).toEqual(["T-a", "T-b", "T-c", "Met spaties eromheen"]);
   });
 });
+
+describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
+  it("bundelt '- Stap N:' en '- Controle:' onder de vette kop tot één handeling", () => {
+    const tekst = "## Wat de eigenaar nog moet doen\n\n**Handeling 2 — de trigger bijstellen**\n\n- Stap 1: beperk de trigger tot main.\n- Stap 2: zet het rooster op twee keer per dag.\n- Controle: Jarvis meet daarna in de logboeken dat het werkt.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Handeling 2 — de trigger bijstellen");
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Stap 2", "Controle"]);
+    const uit = bouwOpties(items[0].regels, []);
+    expect(uit.stappen).toHaveLength(2);
+    expect(uit.controle).toMatch(/^Jarvis meet/);
+  });
+  it("hangt losse stappen aan een gewoon punt ervoor en maakt van een controle nooit een actie", () => {
+    const tekst = "## Wat de eigenaar nog moet doen\n\n- Pull request #17 opnieuw goedkeuren.\n- Stap 1: open de PR.\n- Controle: de poort wordt groen.\n- Kies een naam voor het project.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items.map((i) => i.titel)).toEqual(["Pull request #17 opnieuw goedkeuren.", "Kies een naam voor het project."]);
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle"]);
+  });
+
+  // CON-0016 regel 0: een controle is de meting die Jarvis zelf doet. Stond er
+  // een lege regel tussen de stappen en de controle, dan was het lopende punt
+  // al gesloten en werd de controle zelf een handeling voor de eigenaar — met
+  // zijn eigen tekst als titel, in "Voor jou" en in de regie als "wacht op jou".
+  it("maakt van een losgeraakte controle geen eigen handeling, ook niet na een lege regel", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**Handeling 1 — de sleutel zetten**\n\n" +
+      "- Stap 1: zet de sleutel in de app.\n\n" +
+      "- Controle: Jarvis meet daarna zelf dat de sleutel er staat.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Handeling 1 — de sleutel zetten");
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle"]);
+  });
+
+  it("maakt van een controle zonder enig punt ervoor helemaal geen handeling", () => {
+    const tekst = "## Wat de eigenaar nog moet doen\n\n- Controle: Jarvis meet na de merge dat de poort groen is.\n";
+    expect(leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m)).toEqual([]);
+  });
+
+  // De dossiers schrijven het label soms vet, met de dubbele punt binnen de
+  // sterretjes. Dat is dezelfde regel en hoort dezelfde grens te krijgen.
+  it("herkent '**Stap N:**' en '**Controle:**' met de dubbele punt binnen de sterretjes", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**Handeling 3 — het recht toekennen**\n\n" +
+      "- **Stap 1:** open de instellingen.\n" +
+      "- **Controle:** Jarvis meet daarna zelf dat het recht er is.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Handeling 3 — het recht toekennen");
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle"]);
+    expect(items[0].regels[0].tekst).toBe("open de instellingen.");
+    const uit = bouwOpties(items[0].regels, []);
+    expect(uit.stappen).toHaveLength(1);
+    expect(uit.controle).toMatch(/^Jarvis meet/);
+  });
+});

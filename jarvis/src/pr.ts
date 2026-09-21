@@ -210,3 +210,58 @@ export function beoordeelSamenvoegen(
  * vastgepind (de engine in een consumer) niet meer bereikbaar vanaf main.
  */
 export const SAMENVOEGMETHODE = "merge" as const;
+
+/** Het bestand van de attestatieworkflow; de terugval start dezelfde workflow. */
+export const ATTESTATIE_WORKFLOW = "jarvis-attestatie.yml";
+
+export type DispatchWeigering = {
+  /**
+   * `sessietype`: niet het bottoken maar de proxy van het uitvoeringsplatform
+   * weigert; dezelfde workflow langs de eigen GitHub-weg van de sessie komt
+   * wél op gang (LRN-0016). `recht`: het token zelf mist `actions: write`.
+   * `anders`: alles wat geen van beide is, zoals een ontbrekende workflow.
+   */
+  readonly soort: "sessietype" | "recht" | "anders";
+  /** Of een uitvoerder de attestatie nog langs een andere weg kan starten. */
+  readonly terugvalMogelijk: boolean;
+  /** Regels voor de uitvoerder, de eerste is de weigering zelf. */
+  readonly regels: readonly string[];
+};
+
+/**
+ * Duidt een mislukte workflow-dispatch en noemt de terugval bij naam.
+ *
+ * Waarom dit hier staat: een kale `403` liet de uitvoerder raden, waardoor de
+ * omweg per run opnieuw moest worden gevonden (gemeten op 2026-09-15 en
+ * 2026-09-16, zie T-20260914-agent-operations). De weigering van het platform
+ * is géén uitspraak over de bevoegdheid van Jarvis: dezelfde workflow, gestart
+ * langs de eigen GitHub-weg van de sessie, loopt tot een inhoudelijk oordeel.
+ * De opdracht zegt dat nu zelf, met de invoer die ervoor nodig is.
+ */
+export function duidDispatchWeigering(
+  status: number,
+  bericht: string,
+  slug: string,
+  nummer: number,
+): DispatchWeigering {
+  const sessietype = status === 403 && /not permitted for this session type/i.test(bericht);
+  const recht = status === 403 && !sessietype;
+  const soort: DispatchWeigering["soort"] = sessietype ? "sessietype" : recht ? "recht" : "anders";
+  const regels: string[] = [`workflow niet gestart (${status}: ${bericht})`];
+
+  if (sessietype) {
+    regels.push(
+      "dit weigert het uitvoeringsplatform, niet GitHub en niet het bottoken: de attestatie zelf is toegestaan",
+      `terugval: start ${ATTESTATIE_WORKFLOW} op main met invoer pr: ${nummer} in ${slug} langs de eigen GitHub-weg van de sessie`,
+      "de workflow beoordeelt daarna zelf en geeft bij een schone uitkomst de review af",
+    );
+  } else if (recht) {
+    regels.push(
+      "het token mist actions: write (workflow-dispatch)",
+      `terugval: start ${ATTESTATIE_WORKFLOW} op main met invoer pr: ${nummer} in ${slug} langs een weg die dat recht wél heeft`,
+    );
+  } else {
+    regels.push(`staat ${ATTESTATIE_WORKFLOW} op main van ${slug}?`);
+  }
+  return { soort, terugvalMogelijk: sessietype || recht, regels };
+}
