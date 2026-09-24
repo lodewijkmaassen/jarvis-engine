@@ -7,10 +7,14 @@
      onder het blok, niet erin. -->
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 _Gegenereerd op 2026-09-21._
 =======
 _Gegenereerd op 2026-09-16._
 >>>>>>> origin/jarvis/regie-uitvoerdersmarkering
+=======
+_Gegenereerd op 2026-09-16._
+>>>>>>> origin/jarvis/feitenblok-celopmaak
 
 | Feit | Waarde |
 |---|---|
@@ -124,6 +128,7 @@ verdwijnt stil uit het blok met exit 0 — pre-existent gedrag van
 eigen ronde.
 
 <<<<<<< HEAD
+<<<<<<< HEAD
 `jarvis pr attesteren` noemt zijn eigen terugval. Een geweigerde
 workflow-dispatch gaf een kale 403, waarna de uitvoerder per run opnieuw moest
 uitzoeken dat dezelfde workflow langs een andere weg wél op gang komt. De
@@ -177,6 +182,16 @@ Werk dat de cloud niet kán doen stond zo bovenaan elke cloud-dispatchlijst.
 uitvoerder en `WAITING_FOR_DEPENDENCY` voor elke andere; `jarvis regie` zegt
 met `--door` wie de ronde draait, en zonder dat wacht een toegewezen stap.
 >>>>>>> origin/jarvis/regie-uitvoerdersmarkering
+=======
+Dat dossier verdwijnt inmiddels niet meer stil. Wélke taken als open tellen is
+onveranderd — `OPEN_STATUSSEN` blijft `actief` en `review` — maar wat buiten
+die tweedeling valt wordt nu gemeld: `dossiersZonderBekendeStatus` leidt het
+af en `jarvis state` waarschuwt met het dossier bij naam en de status die er
+staat. Een waarschuwing, geen fout: het blok blijft kloppend voor wat het wél
+noemt, en één slordig dossier hoort geen repository de poort uit te werken. De
+vraag of `gepland` een open taak hóórt te zijn blijft dus openstaan voor die
+eigen ronde; hij is alleen niet meer onzichtbaar zolang niemand hem stelt.
+>>>>>>> origin/jarvis/feitenblok-celopmaak
 
 ## Volgende stap
 
