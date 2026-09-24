@@ -212,6 +212,10 @@ const AKKOORD_STAP = /\bakkoord\b.*\beigenaar\b|\beigenaar\b.*\bakkoord\b/i;
 // gevraagd, er is alleen niets te doen tot de gebeurtenis zich voordoet
 // (CON-0016). Daarom blijft de verantwoordelijke de task-controller.
 const WACHT_OP_GEBEURTENIS = /^\s*wacht(?:en)?\s+op\s+gebeurtenis\s*:\s*(.+?)\s*$/i;
+// "**Uitvoerder: laptop.**" — een stap die per ontwerp bij één uitvoerder hoort.
+// Zonder deze markering valt zo'n stap door naar QUEUED en biedt de regie hem
+// aan elke uitvoerder aan, ook aan de uitvoerder die hem niet kán doen.
+const UITVOERDER_STAP = /\bUitvoerder:\s*\*{0,2}\s*([a-z][a-z0-9_-]*)/i;
 
 export type Uitvoering = {
   readonly claim: Activiteit;
@@ -297,7 +301,7 @@ export function prGemerged(overzicht: Overzicht, activiteit: readonly Activiteit
 /** Oordeel over één uitvoerder, zoals `bepaalTaak` het nodig heeft. */
 type UitvoerderOordeel = (naam: string) => { readonly toestand: UitvoerderToestand; readonly reden: string };
 
-function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date, oordeel: UitvoerderOordeel): TaakRegie {
+function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date, oordeel: UitvoerderOordeel, uitvoerder: string | null): TaakRegie {
   const stappen = t.stappen ?? [];
   const open = stappen.filter((s) => !s.gedaan);
   const volgende = open[0]?.tekst ?? null;
@@ -386,6 +390,23 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
       return { ...basis, toestand: "WAITING_FOR_EVENT", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: false, wacht_op: gebeurtenis[1],
         waarom: `wacht op een gebeurtenis buiten Jarvis: ${gebeurtenis[1]}; er is niets te dispatchen tot die zich voordoet, en er wordt niets van de eigenaar gevraagd` };
     }
+
+    // Een stap die aan één uitvoerder is toegewezen is alleen werk voor die
+    // uitvoerder. Voor elke andere — en voor een regieronde die niet weet wie
+    // ze draait — is het een wachttoestand, geen wachtrij.
+    const toegewezen = UITVOERDER_STAP.exec(volgende);
+    if (toegewezen) {
+      const naam = toegewezen[1].toLowerCase();
+      if (uitvoerder === null || uitvoerder.toLowerCase() !== naam) {
+        return { ...basis, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: naam, sinds: laatste, uitvoerbaar: false, wacht_op: naam,
+          waarom: uitvoerder === null
+            ? `de stap is toegewezen aan uitvoerder ${naam}; deze regieronde weet niet welke uitvoerder ze draait`
+            : `de stap is toegewezen aan uitvoerder ${naam}, niet aan ${uitvoerder}` };
+      }
+      const rolToegewezen = rolVoorStap(volgende);
+      return { ...basis, toestand: "QUEUED", verantwoordelijke: rolToegewezen, uitvoerder: naam, sinds: laatste, uitvoerbaar: true,
+        waarom: `uitvoerbaar, aan ${naam} toegewezen en niemand werkt eraan` };
+    }
   }
   // Niets anders houdt de taak tegen: dan ís de vastgelopen uitvoerder de
   // blokkade. Het herstel ligt bij de task-controller — een vastgelopen sessie
@@ -443,8 +464,17 @@ function prioriteit(t: TaakRegie): number {
   return 4;
 }
 
-/** De regie over alle open taken en alle rollen. */
-export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date = new Date(), uitvoerders: Uitvoerders | null = null): Regie {
+/**
+ * De regie over alle open taken en alle rollen.
+ *
+ * `uitvoerders` is het uitvoerdersregister: het bepaalt of een uitvoerder nog
+ * leeft. `uitvoerder` is de uitvoerder die déze ronde draait (`laptop`,
+ * `cloud`, …); stappen die aan een ándere uitvoerder zijn toegewezen tellen
+ * dan niet als uitvoerbaar werk. Zonder uitvoerder telt geen enkele
+ * toegewezen stap mee. Beide zijn optioneel, zodat bestaande aanroepen blijven
+ * werken.
+ */
+export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date = new Date(), uitvoerders: Uitvoerders | null = null, uitvoerder: string | null = null): Regie {
   // Het register is optioneel, zodat bestaande aanroepen blijven werken.
   // Ontbreekt het, dan geldt `onbekend` — en `onbekend` is een toestand, geen
   // leegte: zonder vers teken telt hij als blokkade.
@@ -468,7 +498,7 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
       if (t.status !== "actief" && t.status !== "review") continue;
       if (gezien.has(t.id)) continue; // een dossierspiegel in een ander project telt niet als tweede taak
       gezien.add(t.id);
-      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu, oordeel));
+      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu, oordeel, uitvoerder));
     }
   }
   const uitvoerbaar = taken

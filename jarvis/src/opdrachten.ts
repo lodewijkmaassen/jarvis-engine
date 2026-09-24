@@ -1940,10 +1940,13 @@ async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<strin
 }
 
 /**
- * `jarvis regie [--extern <pad,pad>] [--uit <bestand>] [--schrijf] [--json]`
+ * `jarvis regie [--extern <pad,pad>] [--uit <bestand>] [--schrijf] [--json] [--door <uitvoerder>]`
  * De Task Controller: per open taak de toestand, de verantwoordelijke rol,
  * waarom, laatste activiteit, volgende stap en wie die uitvoert; per rol wat
- * hij doet; en het uitvoerbare werk in prioriteitsvolgorde. Met --schrijf
+ * hij doet; en het uitvoerbare werk in prioriteitsvolgorde. `--door` zegt welke
+ * uitvoerder deze ronde draait (standaard de uitvoerder van deze omgeving);
+ * een stap die aan een ándere uitvoerder is toegewezen telt dan niet als
+ * uitvoerbaar werk. Met --schrijf
  * gaat het als document regie/huidig naar de database en meldt de controller
  * zijn ronde als activiteit.
  */
@@ -1966,7 +1969,10 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   // het of is het onleesbaar, dan gaat de regie door met `onbekend` — dat is
   // een toestand, geen leegte, en telt zonder vers teken als blokkade.
   const uitvoerders = await leesUitvoerdersregister(wortel, vlaggen.get("uitvoerders") ?? null);
-  const regie = bepaalRegie(overzicht, activiteit, new Date(), uitvoerders);
+  // Twee verschillende dingen, allebei nodig: het register zegt of een
+  // uitvoerder nog leeft, `door` zegt wie deze ronde draait — dat laatste
+  // bepaalt of een aan één uitvoerder toegewezen stap hier telt als werk.
+  const regie = bepaalRegie(overzicht, activiteit, new Date(), uitvoerders, vlaggen.get("door") ?? dezeUitvoerder());
   const json = `${JSON.stringify(regie, null, 2)}\n`;
 
   const allowlist = await refNamenAlsAllowlist(wortels, await laadAllowlistVanSchijf(wortel));
