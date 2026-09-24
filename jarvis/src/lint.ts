@@ -58,6 +58,20 @@ export type LintInvoer = {
   readonly statusCommitsSinds?: number;
   /** Staat er een expliciete "Current-State-Impact"-verklaring in de PR-tekst? */
   readonly statusImpactVerklaard?: boolean;
+  /**
+   * Is er een pull-requestcontext waarin die verklaring überhaupt te lezen is?
+   *
+   * Bij een `push`-gebeurtenis bestaat `github.event.pull_request` niet, dus
+   * `PR_TITEL` en `PR_BODY` zijn leeg en de verklaring is daar principieel
+   * onvindbaar — ook als de pull request hem wél draagt. De statusdrift-controle
+   * hieronder meet dan niets en zou elke push op een status-dragend pad rood
+   * maken. Zonder context slaat zij daarom over; op `pull_request` en
+   * `pull_request_review`, waar de tekst er wél is, geldt zij onverkort.
+   *
+   * Niet meegegeven betekent "context aanwezig", zodat bestaande aanroepers
+   * ongewijzigd blijven werken.
+   */
+  readonly prContext?: boolean;
   /** Aantal nieuwe DEC-records in deze wijziging. */
   readonly nieuweDecs?: number;
   /** Commits op deze branch, met hun rol-trailer en gewijzigde bestanden. */
@@ -443,7 +457,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   const statusBijgewerkt = invoer.gewijzigdeBestanden.some(
     (p) => normaliseerPad(p) === normaliseerPad(config.current_state),
   );
-  if (raaktStatus && !statusBijgewerkt && !invoer.statusImpactVerklaard) {
+  if (raaktStatus && !statusBijgewerkt && invoer.prContext !== false && !invoer.statusImpactVerklaard) {
     bevindingen.push(
       bevinding(
         "status_impact_ontbreekt",

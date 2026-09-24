@@ -229,6 +229,52 @@ describe("lint", () => {
     expect(resultaat.bevindingen.some((b) => b.code === "status_impact_ontbreekt")).toBe(false);
   });
 
+  // De drie gebeurtenissen waarop de poort draait, op dezelfde wijziging.
+  // `push` heeft geen `github.event.pull_request`, dus daar zijn PR_TITEL en
+  // PR_BODY leeg en is de verklaring principieel onvindbaar; `pull_request` en
+  // `pull_request_review` dragen de tekst wél.
+  it("slaat de statusverklaring over bij een push-gebeurtenis, die geen PR-tekst heeft", async () => {
+    const l = await lading();
+    const resultaat = lint({
+      ...basis(l),
+      gewijzigdeBestanden: ["supabase/migrations/0012_iets.sql"],
+      prContext: false,
+      statusImpactVerklaard: false,
+    });
+    expect(resultaat.bevindingen.some((b) => b.code === "status_impact_ontbreekt")).toBe(false);
+  });
+
+  it("eist de statusverklaring wél bij een pull_request-gebeurtenis zonder verklaring", async () => {
+    const l = await lading();
+    const resultaat = lint({
+      ...basis(l),
+      gewijzigdeBestanden: ["supabase/migrations/0012_iets.sql"],
+      prContext: true,
+      statusImpactVerklaard: false,
+    });
+    expect(resultaat.bevindingen.some((b) => b.code === "status_impact_ontbreekt")).toBe(true);
+  });
+
+  it("accepteert de verklaring bij een pull_request_review-gebeurtenis, die de PR-tekst meedraagt", async () => {
+    const l = await lading();
+    const resultaat = lint({
+      ...basis(l),
+      gewijzigdeBestanden: ["supabase/migrations/0012_iets.sql"],
+      prContext: true,
+      statusImpactVerklaard: true,
+    });
+    expect(resultaat.bevindingen.some((b) => b.code === "status_impact_ontbreekt")).toBe(false);
+  });
+
+  it("houdt de controle aan als de aanroeper geen context meegeeft", async () => {
+    const l = await lading();
+    const resultaat = lint({
+      ...basis(l),
+      gewijzigdeBestanden: ["supabase/migrations/0012_iets.sql"],
+    });
+    expect(resultaat.bevindingen.some((b) => b.code === "status_impact_ontbreekt")).toBe(true);
+  });
+
   it("vraagt geen statusverklaring voor werk buiten status-dragende paden", async () => {
     const l = await lading();
     const resultaat = lint({ ...basis(l), gewijzigdeBestanden: ["tests/iets.test.ts", "app/(dashboard)/knop.tsx"] });
