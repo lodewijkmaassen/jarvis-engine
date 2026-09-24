@@ -6,13 +6,13 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-21._
+_Gegenereerd op 2026-09-24._
 
 | Feit | Waarde |
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 33 |
+| Testbestanden | 36 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -26,12 +26,25 @@ _Gegenereerd op 2026-09-21._
 | T-20260913-akkoord-geven | actief | Autorisatie van de eigenaar via de Jarvis-interface, niet via handelingen op GitHub |
 | T-20260914-agent-operations | actief | Jarvis als observeerbaar en autonoom digitaal team — Operations-view en Task Controller |
 | T-20260914-eigen-laag | actief | De eigen Jarvis-laag (app en database) leidend; de artifact-database en sessiegebonden bestanden geen afhankelijkheid meer |
+| T-20260917-chatgpt-review | actief | Een tweede model als onafhankelijke reviewer in de keten, en eigenaarstaal in de app |
 
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
 
-De regie herkent sinds deze wijziging een uitvoerder die stilvalt. Een claim
+Een run laat sinds deze wijziging één spoor na: `jarvis db run start` schrijft
+bij het begin een regel met startmoment, oorzaak (rooster, signaal,
+vervolgbeurt of handmatig) en uitvoerder, en `jarvis db run klaar` vult
+diezelfde regel aan met het einde en de uitkomst. Dat maakt meetbaar wat tot
+nu toe alleen indirect af te leiden was — of een push naar een `jarvis/`-branch
+nog een run start — want een run die niets te doen had, liet voorheen niets
+achter. Het register is bewust géén eigen tabel maar een document langs
+`DOCUMENT_SQL`: dat statement staat al in `toegestaneSql()`, dus er is geen
+migratie en geen nieuwe uitrol van de Edge Function voor nodig. Omdat
+`toegestaneSql()` geen leesweg voor documenten kent, bewaart de lopende run
+zijn startregel in een bestand buiten elke repository.
+
+De regie herkent sinds een eerdere wijziging een uitvoerder die stilvalt. Een claim
 waarvan de heartbeat verliep zonder fout, klaar of vrijgave viel terug op
 `QUEUED`: de taak werd opnieuw aangeboden, maar de blokkade zelf stond nergens
 — ze telde niet als afwijking en de rol bleef "beschikbaar" heten. Een
@@ -58,6 +71,32 @@ is. Een gemelde fout krijgt `blokkade: "fout"` en telt niet als afwijking: die
 staat al luid in de regie. Het herstel is nooit werk voor de eigenaar — een
 vastgelopen sessie is een ontbrekende capability of een interne
 toolgoedkeuring, en die zijn van Jarvis.
+
+Een stille claim was echter niet het hele geval. Een uitvoerder kan
+springlevend lijken — zojuist nog een stap gemeld — en toch geen letter meer
+verzetten, omdat hij op een goedkeuringsvraag staat. De heartbeat van de claim
+zegt daar niets over. Daarom is de blokkade sinds deze wijziging losgemaakt van
+de claim: naast de werkactiviteit leest de regie een tweede bron, het
+uitvoerdersregister `uitvoerders/huidig`, dat zegt welke uitvoerders er bestaan
+en in welke platformtoestand ze staan — ook de uitvoerder die nooit aan
+schrijven toekwam. De engine bevraagt de platformlaag niet zelf: ze kent geen
+tokens en mag die niet leren kennen, dus komt het register als bestand binnen
+(`jarvis regie --uitvoerders <pad>`, standaard `jarvis/uitvoerders.json`), en
+is de parameter optioneel zodat elke bestaande aanroep blijft werken.
+
+`requires_action`, `blocked` en `failed` blokkeren ongeacht het teken;
+`working` met een verlopen teken ook. Ontbreken is een toestand en geen leegte:
+een uitvoerder die in geen enkele bron een teken binnen `UITVOERDER_TERMIJN_MINUTEN`
+geeft, heet `onbekend` en telt als blokkade — een register dat stilvalt mag niet
+hetzelfde effect hebben als een register dat "alles in orde" meldt. Zo'n taak
+krijgt `blokkade: "uitvoerder_geblokkeerd"` met de reden in `wacht_op`, telt als
+afwijking, en de slotregel van `jarvis regie` draagt een eigen blokkadeteller
+naast de afwijkingsteller. Anders dan bij een gemelde fout gaat deze taak niet
+vóór op gewoon werk maar zakt ze naar achteren: aan de taak zelf valt niets te
+repareren en ander werk moet doorgaan. Ze blijft wel uitvoerbaar, zodat een
+andere uitvoerder hem kan overnemen. Hervatten is afleiding en geen actie —
+meldt het register de uitvoerder weer als actief, dan loopt de taak vanzelf. Er
+komt geen scheduler, wekker of wachtrij bij; een test bewaakt dat.
 
 De engine is afgesplitst uit het project waarin hij is gebouwd, met de
 commitgeschiedenis van `jarvis/`. Deze repository is de bron; consumers nemen
@@ -136,6 +175,46 @@ de uitvoerder in de cloud draait, want daar zegt dat veld niets (gemeten
 `false`: een dispatch ís de handeling, dus vooraf niet te meten zonder
 bijwerking; de regel verwijst naar waar het wél blijkt, en in de cloud naar de
 vastgelegde weigering van het sessietype.
+De regie leest sinds deze wijziging ook een toewijzing aan een uitvoerder. Ze
+kende drie wachtredenen in de tekst van de eerste open stap — een akkoord van
+de eigenaar, een andere taak, een pull request — en een stap die per ontwerp
+bij één uitvoerder hoort viel daardoor door naar `QUEUED`, `uitvoerbaar: true`.
+Werk dat de cloud niet kán doen stond zo bovenaan elke cloud-dispatchlijst.
+`**Uitvoerder: <naam>.**` in de steptekst maakt de stap nu uitvoerbaar voor die
+uitvoerder en `WAITING_FOR_DEPENDENCY` voor elke andere; `jarvis regie` zegt
+met `--door` wie de ronde draait, en zonder dat wacht een toegewezen stap.
+Dat dossier verdwijnt inmiddels niet meer stil. Wélke taken als open tellen is
+onveranderd — `OPEN_STATUSSEN` blijft `actief` en `review` — maar wat buiten
+die tweedeling valt wordt nu gemeld: `dossiersZonderBekendeStatus` leidt het
+af en `jarvis state` waarschuwt met het dossier bij naam en de status die er
+staat. Een waarschuwing, geen fout: het blok blijft kloppend voor wat het wél
+noemt, en één slordig dossier hoort geen repository de poort uit te werken. De
+vraag of `gepland` een open taak hóórt te zijn blijft dus openstaan voor die
+eigen ronde; hij is alleen niet meer onzichtbaar zolang niemand hem stelt.
+**`jarvis pr attesteren` start geen run meer die vooraf al zou weigeren.** Op
+2026-09-17 telde de audit 305 runs van `jarvis-attestatie`; een groot deel
+daarvan startte terwijl het taakakkoord, de toetsing op de huidige kop of een
+groene poort er nog niet was. De opdracht doet die beoordeling nu vooraf, met
+dezelfde `beoordeelAttestatie` en dezelfde feiten als de run zelf — geen tweede
+regelset, geen versoepeling, geen nieuwe bron of extra recht. Is er ten minste
+één reden, dan blijft de dispatch uit, staat die reden in één regel op stderr en
+is de exitcode **3**: nog niet rijp, niets gestart, en nadrukkelijk geen fout.
+De voorcontrole is fail open: kan ze haar bron niet lezen — geen
+databaseverbinding, een leesfout op GitHub, een onleesbare configuratie — dan
+volgt één waarschuwing en gaat de dispatch gewoon door. Ze mag alleen minder
+starten, nooit strenger zijn dan de run, die elke controle onveranderd zelf
+blijft doen.
+Sinds `jarvis review` (DEC-0046 in ToVas Flow) heeft de engine een rol
+`reviewer`: een tweede model leest een pull request met alleen de relevante
+context — de PR, het taakdossier en het contextpakket van de kennislaag — en
+oordeelt op aannames, risico's en samenhang; hoogstens één ronde per pull
+request (het document `review/<repo>#<n>` in de eigen database is de grendel),
+daarna hoogstens één correctie. De aanroep gaat via de database
+(`jarvis.vraag_review`/`jarvis.lees_review`, pg_net), zodat de API-sleutel in
+de Vault blijft; de engine kent geen leveranciersnaam en spreekt het gangbare
+chat-completions-formaat. Tegelijk bewaakt `jarvis db bericht` de
+eigenaarstaal: een bericht met technische namen wordt geweigerd, de
+technische bron gaat mee in `--technisch` en de app toont hem ingeklapt.
 
 ## Volgende stap
 

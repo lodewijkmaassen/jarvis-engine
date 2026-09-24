@@ -17,5 +17,8 @@
   "select id, pr_repo, pr_nummer, commit_sha, oordeel, rapport, door, op from jarvis.toetsingen where id = $1",
   "select id, soort, project, taak, scope_hash, pr_repo, pr_nummer, commit_sha, op from jarvis.autorisaties where op > $1 order by op",
   "insert into jarvis.activiteit (uitvoerder, rol, taak, project, soort, tekst, verwijzing) values ($1, $2, $3, $4, $5, $6, $7) returning id, op",
-  "select op, uitvoerder, rol, taak, project, soort, tekst, verwijzing from jarvis.activiteit where op > now() - interval '3 days' order by op desc limit 1000"
+  "select op, uitvoerder, rol, taak, project, soort, tekst, verwijzing from jarvis.activiteit where op > now() - interval '3 days' order by op desc limit 1000",
+  "select jarvis.vraag_review($1::text::jsonb) as id",
+  "select status_code, content, error_msg, timed_out from jarvis.lees_review($1)",
+  "select inhoud, bijgewerkt from jarvis.documenten where id = $1"
 ]

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Overzicht, TaakItem } from "@/jarvis/src/overzicht";
-import { HEARTBEAT_MINUTEN, bepaalRegie, rolVoorStap, type Activiteit } from "@/jarvis/src/regie";
+import { readFileSync } from "node:fs";
+import { HEARTBEAT_MINUTEN, UITVOERDER_TERMIJN_MINUTEN, bepaalRegie, rolVoorStap, uitvoerderToestand, type Activiteit, type UitvoerderItem, type Uitvoerders } from "@/jarvis/src/regie";
 
 const NU = new Date("2026-09-14T22:00:00Z");
 const iso = (minutenGeleden: number) => new Date(NU.getTime() - minutenGeleden * 60_000).toISOString();
@@ -59,6 +60,33 @@ describe("regie — toestand per open taak", () => {
   it("AFWIJKING als de taak waarop gewacht wordt in geen enkel project bestaat", () => {
     const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: "Inrichten — wacht op T-20260101-spook", gedaan: false }] })]), [], NU);
     expect(r.taken[0]).toMatchObject({ toestand: "AFWIJKING", uitvoerbaar: true, wacht_op: "T-20260101-spook" });
+  });
+  it("een stap die aan een uitvoerder is toegewezen is alleen werk voor die uitvoerder", () => {
+    const stap = "Stap 1 — repository `ideeen` aanleggen. **Uitvoerder: laptop.** De cloud kan dit niet.";
+    const t = taak("T-1", { stappen: [{ tekst: stap, gedaan: false }], wacht_op: stap });
+    const cloud = bepaalRegie(overzicht([t]), [], NU, null, "cloud");
+    expect(cloud.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", wacht_op: "laptop", uitvoerder: "laptop", uitvoerbaar: false });
+    expect(cloud.taken[0].waarom).toMatch(/toegewezen aan uitvoerder laptop, niet aan cloud/);
+    expect(cloud.uitvoerbaar).toEqual([]);
+    const laptop = bepaalRegie(overzicht([t]), [], NU, null, "laptop");
+    expect(laptop.taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerder: "laptop", uitvoerbaar: true });
+    expect(laptop.uitvoerbaar.map((x) => x.id)).toEqual(["T-1"]);
+  });
+  it("zonder bekende uitvoerder wacht een toegewezen stap, in plaats van aan iedereen te worden aangeboden", () => {
+    const stap = "De app uitrollen. **Uitvoerder: laptop.**";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", wacht_op: "laptop", uitvoerbaar: false });
+    expect(r.taken[0].waarom).toMatch(/weet niet welke uitvoerder ze draait/);
+  });
+  it("de toewijzing geldt alleen bij de markering, niet bij het woord uitvoerder in lopende tekst", () => {
+    const stap = "Meten of de cloud-uitvoerder de branches kan opruimen";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU, null, "cloud");
+    expect(r.taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerbaar: true });
+  });
+  it("een lopende uitvoering en een wachtende dependency gaan vóór de toewijzing", () => {
+    const stap = "Herpinnen — wacht op PR #26. **Uitvoerder: cloud.**";
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen: [{ tekst: stap, gedaan: false }] })]), [], NU, null, "cloud");
+    expect(r.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", wacht_op: "PR #26" });
   });
   it("WAITING_FOR_DEPENDENCY op een pull request tot die is samengevoegd (merge-activiteit of mergecommit)", () => {
     const wacht = taak("T-1", { stappen: [{ tekst: "Herpinnen — wacht op PR #26", gedaan: false }], wacht_op: "Herpinnen — wacht op PR #26" });
@@ -258,5 +286,171 @@ describe("rolVoorStap", () => {
     expect(rolVoorStap("Onderzoek: welke rollen volgen uit de architectuur")).toBe("architect");
     expect(rolVoorStap("Dossier afronden en DEC-0045 vastleggen")).toBe("knowledge-manager");
     expect(rolVoorStap("Bouw: de Team-view in de app")).toBe("developer");
+  });
+});
+
+describe("regie — de hervattingsregel: onderbroken werk vóór nieuw werk", () => {
+  // T-1 is halverwege teruggegeven, T-2 is nog nooit aangeraakt en heeft de
+  // óúdste beweging. Zonder de hervattingsregel zou T-2 vóór T-1 staan, want
+  // binnen één klasse sorteert de regie oplopend op laatste_activiteit en de
+  // vrijgave van T-1 is juist de jongste activiteit.
+  const vrijgegeven = [
+    act({ soort: "claim", taak: "T-1", op: iso(120), tekst: "opgepakt" }),
+    act({ soort: "stap", taak: "T-1", op: iso(100), tekst: "helft gebouwd" }),
+    act({ soort: "vrijgave", taak: "T-1", op: iso(90), tekst: "helft af, tests nog niet" }),
+  ];
+  const nieuw = taak("T-2", { laatste_beweging: iso(5000) });
+
+  it("markeert een taak die is teruggegeven zonder af te ronden als onderbroken", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), vrijgegeven, NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerbaar: true, onderbroken: true });
+    expect(r.taken[0].waarom).toMatch(/onderbroken werk, te hervatten vóór nieuw werk/);
+    expect(r.taken[0].waarom).toMatch(/helft af, tests nog niet/);
+  });
+
+  it("zet dat onderbroken werk vóór werk dat nog nooit is begonnen", () => {
+    const r = bepaalRegie(overzicht([taak("T-1"), nieuw]), vrijgegeven, NU);
+    expect(r.uitvoerbaar.map((t) => t.id)).toEqual(["T-1", "T-2"]);
+    expect(r.taken.find((t) => t.id === "T-2")?.onderbroken).toBe(false);
+  });
+
+  it("dringt niet vóór herstel, afwijking of afronding", () => {
+    const geblokkeerd = taak("T-3");
+    const blokkade = [
+      act({ soort: "claim", taak: "T-3", op: iso(HEARTBEAT_MINUTEN.developer + 30), tekst: "opgepakt" }),
+      act({ soort: "fout", taak: "T-3", op: iso(HEARTBEAT_MINUTEN.developer + 10), tekst: "tests rood" }),
+    ];
+    const af = taak("T-4", { stappen: [{ tekst: "Gedaan", gedaan: true }] });
+    const geen = taak("T-5", { stappen: [] });
+    const r = bepaalRegie(overzicht([taak("T-1"), nieuw, geblokkeerd, af, geen]), [...vrijgegeven, ...blokkade], NU);
+    const volgorde = r.uitvoerbaar.map((t) => t.id);
+    expect(volgorde.indexOf("T-3")).toBeLessThan(volgorde.indexOf("T-1")); // BLOCKED eerst
+    expect(volgorde.indexOf("T-5")).toBeLessThan(volgorde.indexOf("T-1")); // AFWIJKING daarna
+    expect(volgorde.indexOf("T-4")).toBeLessThan(volgorde.indexOf("T-1")); // DONE-afronding daarna
+    expect(volgorde.indexOf("T-1")).toBeLessThan(volgorde.indexOf("T-2")); // en dan pas nieuw werk
+  });
+
+  it("telt afgerond werk niet als onderbroken", () => {
+    const klaar = [
+      act({ soort: "claim", taak: "T-1", op: iso(120), tekst: "opgepakt" }),
+      act({ soort: "klaar", taak: "T-1", op: iso(90), tekst: "stap af" }),
+    ];
+    const r = bepaalRegie(overzicht([taak("T-1"), nieuw]), klaar, NU);
+    expect(r.taken.find((t) => t.id === "T-1")?.onderbroken).toBe(false);
+    expect(r.uitvoerbaar.map((t) => t.id)).toEqual(["T-2", "T-1"]); // weer gewoon op ouderdom
+  });
+
+  it("maakt geen tweede uitvoerder wakker op werk dat loopt", () => {
+    const hervat = [...vrijgegeven,
+      act({ soort: "claim", taak: "T-1", op: iso(20), tekst: "hervat" }),
+      act({ soort: "stap", taak: "T-1", op: iso(2), tekst: "verder" })];
+    const r = bepaalRegie(overzicht([taak("T-1")]), hervat, NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "RUNNING", uitvoerbaar: false, onderbroken: false });
+    expect(r.uitvoerbaar).toHaveLength(0);
+  });
+});
+
+// T-20260917-uitvoerderbewaking, AC-1 t/m AC-9. De invariant: er bestaat geen
+// regie-uitkomst waarin een uitvoerder geblokkeerd is en `afwijkingen` leeg.
+// Elk criterium faalt aantoonbaar op de code van vóór deze wijziging, waar
+// alleen een dóde claim BLOCKED kon opleveren.
+describe("regie — het uitvoerdersregister bewaakt de uitvoerder zelf", () => {
+  const register = (over: Partial<UitvoerderItem> = {}): Uitvoerders => ({
+    gegenereerd_op: iso(1),
+    uitvoerders: [{ naam: "cloud", soort: "routine", platformtoestand: "working", laatste_teken: iso(1), ...over }],
+  });
+  // Een springlevende claim: vijf minuten oud, ruim binnen de heartbeat van developer.
+  const levendeClaim = [act({ soort: "claim", op: iso(20) }), act({ soort: "stap", op: iso(5), tekst: "bezig" })];
+
+  it("AC-1: een uitvoerder op requires_action blokkeert zijn taak, ook met een levende heartbeat", () => {
+    const zonder = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU);
+    expect(zonder.taken[0].toestand).toBe("RUNNING"); // het oude gedrag, zonder register
+
+    const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, register({ platformtoestand: "requires_action", toelichting: "wacht op een goedkeuringsvraag" }));
+    expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd", uitvoerder: "cloud" });
+    expect(r.taken[0].waarom).toMatch(/requires_action/);
+  });
+
+  it("AC-2: platformtoestand working maar een teken ouder dan de houdbaarheid telt óók als blokkade", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU,
+      register({ platformtoestand: "working", laatste_teken: iso(UITVOERDER_TERMIJN_MINUTEN + 60), houdbaar_tot: iso(60) }));
+    expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+  });
+
+  it("AC-3: een uitvoerder die in geen enkele bron een teken geeft, is onbekend en daarmee geblokkeerd", () => {
+    // Geen register, en de enige activiteit van deze uitvoerder is ouder dan de houdbaarheid.
+    const oud = [act({ soort: "claim", op: iso(UITVOERDER_TERMIJN_MINUTEN + 120) }), act({ soort: "stap", op: iso(UITVOERDER_TERMIJN_MINUTEN + 30) })];
+    const r = bepaalRegie(overzicht([taak("T-1")]), oud, NU, null);
+    expect(r.taken[0].toestand).toBe("BLOCKED");
+    expect(r.taken[0].toestand).not.toBe("QUEUED");
+    expect(r.afwijkingen).toHaveLength(1);
+  });
+
+  it("AC-4: in elk van die gevallen is afwijkingen niet leeg en meldt de controller geen 0 afwijking(en)", () => {
+    for (const reg of [register({ platformtoestand: "requires_action" }), register({ platformtoestand: "blocked" }), register({ platformtoestand: "failed" })]) {
+      const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, reg);
+      expect(r.afwijkingen.length).toBeGreaterThan(0);
+      const controller = r.rollen.find((x) => x.rol === "task-controller");
+      expect(controller?.wat).not.toMatch(/0 afwijking\(en\)/);
+      expect(controller?.wat).toMatch(/1 geblokkeerd/);
+    }
+  });
+
+  it("AC-5: de geblokkeerde taak draagt een mensleesbare blokkadereden en staat niet op RUNNING", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, register({ platformtoestand: "blocked", toelichting: "sessie afgebroken" }));
+    expect(r.taken[0].toestand).not.toBe("RUNNING");
+    expect(r.taken[0].wacht_op).toBeTruthy();
+    expect(r.taken[0].wacht_op).toMatch(/cloud/);
+    expect(r.taken[0].wacht_op).toMatch(/sessie afgebroken/);
+  });
+
+  it("AC-6: ander uitvoerbaar werk blijft dispatchbaar en de geblokkeerde taak staat er niet bovenaan", () => {
+    const r = bepaalRegie(overzicht([taak("T-1"), taak("T-2")]), levendeClaim, NU, register({ platformtoestand: "requires_action" }));
+    expect(r.uitvoerbaar.map((t) => t.id)).toContain("T-2");
+    expect(r.uitvoerbaar[0]?.id).toBe("T-2");
+  });
+
+  it("AC-7: een vers teken en platformtoestand working laten de taak vanzelf weer lopen, zonder extra aanroep", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, register({ platformtoestand: "working", laatste_teken: iso(2) }));
+    expect(r.taken[0].toestand).toBe("RUNNING");
+    expect(r.afwijkingen).toHaveLength(0);
+  });
+
+  it("AC-8: een geblokkeerde uitvoerder is werk voor Jarvis, nooit een handeling van de eigenaar", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, register({ platformtoestand: "requires_action" }));
+    expect(r.taken[0].verantwoordelijke).toBe("task-controller");
+    expect(r.taken[0].verantwoordelijke).not.toBe("eigenaar");
+    expect(r.taken[0].uitvoerbaar).toBe(true);
+    expect(r.taken[0].waarom).toMatch(/werk voor Jarvis, niet voor de eigenaar/);
+  });
+
+  it("AC-9: de regie voegt geen tweede scheduler, wekker of achtergrondproces toe", () => {
+    const bron = readFileSync(new URL("../../jarvis/src/regie.ts", import.meta.url), "utf8");
+    for (const verboden of [/\bsetInterval\s*\(/, /\bsetTimeout\s*\(/, /create_trigger/, /\bcron\b/i]) {
+      expect(bron).not.toMatch(verboden);
+    }
+  });
+
+  it("de rol van een geblokkeerde uitvoerder heet nooit beschikbaar", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, register({ platformtoestand: "requires_action" }));
+    expect(r.rollen.find((x) => x.rol === "developer")?.status).not.toBe("beschikbaar");
+  });
+});
+
+describe("uitvoerderToestand", () => {
+  it("requires_action, blocked en failed blokkeren ongeacht het teken", () => {
+    for (const t of ["requires_action", "blocked", "failed"] as const) {
+      expect(uitvoerderToestand({ naam: "cloud", platformtoestand: t, laatste_teken: iso(0) }, iso(0), NU)).toBe("GEBLOKKEERD");
+    }
+  });
+  it("completed en review_ready zijn geen blokkade: er is gewoon geen werk toegewezen", () => {
+    for (const t of ["completed", "review_ready"] as const) {
+      expect(uitvoerderToestand({ naam: "cloud", platformtoestand: t, laatste_teken: iso(99999) }, null, NU)).toBe("ACTIEF");
+    }
+  });
+  it("onbekend zonder enig teken is een blokkade, geen leegte", () => {
+    expect(uitvoerderToestand(null, null, NU)).toBe("GEBLOKKEERD");
+    expect(uitvoerderToestand(null, iso(5), NU)).toBe("ACTIEF");
+    expect(uitvoerderToestand(null, iso(UITVOERDER_TERMIJN_MINUTEN + 1), NU)).toBe("GEBLOKKEERD");
   });
 });

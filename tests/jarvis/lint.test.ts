@@ -72,6 +72,18 @@ function basis(l: KennisLading) {
   };
 }
 
+describe("eigenaarslijst_technisch — de eigenaar leest gewone taal (DEC-0045)", () => {
+  it("waarschuwt bij technische namen in een eigenaarspunt en laat gewone taal met rust", async () => {
+    const l = await lading();
+    const technisch = lint({ ...basis(l), eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Kies of DEC-0043 regel 66 letterlijk geldt; de engine op pin fe24676 handhaaft anders (attestatie.ts)." }] });
+    const b = technisch.bevindingen.find((x) => x.code === "eigenaarslijst_technisch");
+    expect(b?.severity).toBe("waarschuwing");
+    expect(b?.boodschap).toMatch(/gewone taal/);
+    const gewoon = lint({ ...basis(l), eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Kies in de Jarvis-app of een samenvoeging ook een taaknummer moet dragen; het advies is nee." }] });
+    expect(gewoon.bevindingen.some((x) => x.code === "eigenaarslijst_technisch")).toBe(false);
+  });
+});
+
 describe("eigenaarslijst_administratief — documentatie bevestigt Jarvis zelf (CON-0016)", () => {
   it("herkent een documentatie- of statusbevestiging en laat echte eigenaarshandelingen staan", () => {
     expect(isAdministratieveBevestiging("Het bijgewerkte narratief in `docs/CURRENT_STATE.md` bevestigen.")).toBe(true);

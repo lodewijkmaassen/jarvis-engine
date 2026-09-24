@@ -35,6 +35,7 @@ import { ALLOWLIST_BESTANDSNAAM, ENTROPIE_MINIMUM_LENGTE, LEGE_ALLOWLIST, laadAl
 import {
   RECENT_DAGEN,
   bouwOverzicht,
+  dossiersZonderBekendeStatus,
   leesItemsOnder,
   openTakenUitDossiers,
   type Overzicht,
@@ -44,8 +45,9 @@ import {
   type TaakDossier,
 } from "./overzicht";
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
-import { ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol } from "./regie";
+import { ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
+import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
   ACTIEVE_ATTESTATIE,
   ACTIEVE_WORKFLOW,
@@ -81,24 +83,33 @@ import {
   ACTIVITEIT_SQL,
   BERICHT_VAN_JARVIS_SQL,
   claimSql,
+  DOCUMENT_LEES_SQL,
   DOCUMENT_SQL,
   isOordeel,
+  isRunOorzaak,
+  isRunRegel,
   isTabel,
   NIEUWE_ANTWOORDEN_SQL,
   NIEUWE_BERICHTEN_SQL,
   restPadAutorisatiePr,
   restPadAutorisatieTaak,
   restPadToetsingKop,
+  RUN_OORZAKEN,
+  runKlaarRegel,
+  runStandBestand,
+  runStartRegel,
   TOETSING_ID_SQL,
   TOETSING_KOP_SQL,
   TOETSING_SQL,
   verbindingsBron,
   verwerktSql,
+  VRAAG_REVIEW_SQL,
+  LEES_REVIEW_SQL,
   WIE_SQL,
 } from "./db";
 import { randomBytes } from "node:crypto";
 import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, duidRechten, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 const uitvoeren = promisify(execFile);
 
@@ -1113,6 +1124,21 @@ async function verzamelFeiten(
     tellingen[type] = lading.records.filter((r) => r.type === type).length;
   }
 
+  // Een dossier met kapotte front-matter of een statuswoord dat de engine niet
+  // kent, valt stil uit het feitenblok: de filter laat het weg en `state`
+  // eindigt met 0. Het blok blijft kloppend voor wat het noemt, dus dit is een
+  // waarschuwing en geen fout — maar niemand hoort het pas te ontdekken
+  // doordat een taak nergens meer staat.
+  const dossiers = await leesTaakDossiers(wortel, config.taken_map);
+  const zonderStatus = dossiersZonderBekendeStatus(dossiers);
+  if (zonderStatus.length > 0) {
+    const genoemd = zonderStatus.map((t) => `${t.id} (${t.status})`).join(", ");
+    console.warn(
+      `jarvis state: ${zonderStatus.length} taakdossier(s) zonder bekende status, buiten het feitenblok ` +
+        `gelaten: ${genoemd}. Verwacht \`actief\`, \`review\` of \`afgerond\` in de front-matter van opdracht.md.`,
+    );
+  }
+
   return {
     gegenereerdOp: new Date().toISOString().slice(0, 10),
     hoofdbranch,
@@ -1125,7 +1151,7 @@ async function verzamelFeiten(
       .filter((r) => r.type === "CFL" && r.status === "open")
       .map((r) => r.id)
       .sort(),
-    openTaken: openTakenUitDossiers(await leesTaakDossiers(wortel, config.taken_map)),
+    openTaken: openTakenUitDossiers(dossiers),
     actieveBranches: branches
       .split("\n")
       .map((b) => b.replace(/^origin\//, ""))
@@ -1394,20 +1420,26 @@ function help(): number {
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
       "  rollen   [--schrijf]              Genereert de providerafgeleiden van de rolcontracten;",
       "                                    zonder --schrijf een driftcontrole (zit in de poort)",
-      "  db <nieuw|wachten|claim|verwerkt|bericht|document|toetsing|autorisaties|wie> [opties]",
+      "  db <nieuw|wachten|claim|verwerkt|bericht|document|run|toetsing|autorisaties|wie> [opties]",
       "                                    De eigen database van Jarvis (schema jarvis): nieuwe",
       "                                    antwoorden en berichten lezen, claimen, verwerken, documenten zetten,",
       "                                    een QA-toetsing vastleggen, akkoorden van de eigenaar lezen.",
       "  pr <wie|openen|status|attesteren|mergen|uitnodigingen> [opties]",
       "                                    Pull requests als de bot: openen, volgen, de attestatie starten",
       "                                    en samenvoegen na akkoord van de eigenaar (DEC-0043).",
+      "                                    attesteren toetst vooraf en start de workflow niet als die",
+      "                                    toch zou weigeren: exitcode 3 = nog niet rijp, niets gestart.",
+      "  review <nummer> --repo <slug> [--model <m>]",
+      "                                    Onafhankelijke review van een pull request door een tweede model",
+      "                                    (DEC-0046): hoogstens één per pull request; exit 4 = correctie nodig.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
       "",
-      "Exitcodes: 0 ok · 1 bevindingen · 2 gebruiksfout · 3 uitgeschakeld",
+      "Exitcodes: 0 ok · 1 bevindingen · 2 gebruiksfout · 3 uitgeschakeld,",
+      "           of bij pr attesteren: nog niet rijp, niets gestart",
     ].join("\n"),
   );
   return 0;
@@ -1661,6 +1693,19 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
   const eigenaar = eigenaarVan(slug);
 
   if (wat === "attesteren") {
+    // Eerst dezelfde beoordeling die de run zelf zou doen. Weigert die al, dan
+    // heeft starten geen zin: geen checkout, geen npm ci, geen twee API-rondes
+    // om te horen wat hier ook te lezen was. Kan de voorcontrole niet
+    // oordelen, dan start de workflow gewoon (zie voorcontroleAttestatie).
+    const voor = await voorcontroleAttestatie(token, slug, nummer, feiten);
+    if (voor.waarschuwing !== null) {
+      console.error(`jarvis pr attesteren: voorcontrole overgeslagen (${voor.waarschuwing}); de workflow beoordeelt zelf.`);
+    } else if (voor.redenen.length > 0) {
+      console.error(`jarvis pr attesteren: nog niet rijp: ${voor.redenen[0]}`);
+      // Exitcode 3: niets gestart, en geen fout. Een routine slaat deze pull
+      // request over en gaat door; alleen een 1 is een echte fout.
+      return 3;
+    }
     // Start de attestatieworkflow op main; die beoordeelt zelf en keurt goed
     // of niet. De bot kan hier niets afdwingen: hij vraagt alleen om de toets.
     const start = await github(token, "POST", `/repos/${slug}/actions/workflows/${ATTESTATIE_WORKFLOW}/dispatches`, {
@@ -1807,8 +1852,11 @@ async function verbindDb(): Promise<{ readonly sql: DbClient; readonly bron: str
  *   nieuw                                  Nieuwe antwoorden en berichten van de eigenaar, als JSON.
  *   claim <tabel> <id> --door <naam>       Zet een item op "in behandeling"; slaagt alleen als het nog nieuw was.
  *   verwerkt <tabel> <id> --verwerking <t> Zet een item op "verwerkt" met de toelichting.
- *   bericht --tekst <t> [--context <json>] Schrijft een bericht van Jarvis.
+ *   bericht --tekst <t> [--context <json>] [--technisch <t>]
+ *                                          Schrijft een bericht van Jarvis in eigenaarstaal; de technische bron in context.technisch.
  *   document <id> --bestand <json>         Zet een document (overzicht/huidig, jarvis/status).
+ *   run start --oorzaak <x> --door <naam>  Schrijft de startregel van deze run in het runregister.
+ *   run klaar --uitkomst <tekst>           Vult diezelfde regel aan met het einde en de uitkomst.
  *   wachten [--max <seconden>]             Wacht tot er een nieuw antwoord, bericht of akkoord is; geeft dat als JSON.
  *   wie                                    Toont waar de verbinding vandaan komt en of ze werkt; nooit de reeks zelf.
  */
@@ -1940,10 +1988,13 @@ async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<strin
 }
 
 /**
- * `jarvis regie [--extern <pad,pad>] [--uit <bestand>] [--schrijf] [--json]`
+ * `jarvis regie [--extern <pad,pad>] [--uit <bestand>] [--schrijf] [--json] [--door <uitvoerder>]`
  * De Task Controller: per open taak de toestand, de verantwoordelijke rol,
  * waarom, laatste activiteit, volgende stap en wie die uitvoert; per rol wat
- * hij doet; en het uitvoerbare werk in prioriteitsvolgorde. Met --schrijf
+ * hij doet; en het uitvoerbare werk in prioriteitsvolgorde. `--door` zegt welke
+ * uitvoerder deze ronde draait (standaard de uitvoerder van deze omgeving);
+ * een stap die aan een ándere uitvoerder is toegewezen telt dan niet als
+ * uitvoerbaar werk. Met --schrijf
  * gaat het als document regie/huidig naar de database en meldt de controller
  * zijn ronde als activiteit.
  */
@@ -1961,7 +2012,15 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
       await verbinding.sql.end({ timeout: 2 });
     }
   }
-  const regie = bepaalRegie(overzicht, activiteit, new Date());
+  // Het uitvoerdersregister komt als bestand binnen, nooit uit de platformlaag
+  // zelf: de engine kent geen tokens en mag die niet leren kennen. Ontbreekt
+  // het of is het onleesbaar, dan gaat de regie door met `onbekend` — dat is
+  // een toestand, geen leegte, en telt zonder vers teken als blokkade.
+  const uitvoerders = await leesUitvoerdersregister(wortel, vlaggen.get("uitvoerders") ?? null);
+  // Twee verschillende dingen, allebei nodig: het register zegt of een
+  // uitvoerder nog leeft, `door` zegt wie deze ronde draait — dat laatste
+  // bepaalt of een aan één uitvoerder toegewezen stap hier telt als werk.
+  const regie = bepaalRegie(overzicht, activiteit, new Date(), uitvoerders, vlaggen.get("door") ?? dezeUitvoerder());
   const json = `${JSON.stringify(regie, null, 2)}\n`;
 
   const allowlist = await refNamenAlsAllowlist(wortels, await laadAllowlistVanSchijf(wortel));
@@ -2003,8 +2062,35 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   for (const t of regie.taken) {
     console.log(`${t.toestand.padEnd(22)} ${t.id.padEnd(36)} ${t.verantwoordelijke.padEnd(18)} ${t.waarom}`);
   }
-  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig gezet" : ""}.`);
+  const geblokkeerd = regie.taken.filter((t) => t.toestand === "BLOCKED").length;
+  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig gezet" : ""}.`);
   return 0;
+}
+
+/**
+ * Het uitvoerdersregister van schijf: `--uitvoerders <pad>`, anders
+ * `jarvis/uitvoerders.json` in de werkmap. Een ontbrekend of kapot bestand is
+ * geen fout — de regie leidt dan `onbekend` af — maar een kapot bestand meldt
+ * zich wel, want stille degradatie is precies wat deze taak wegneemt.
+ */
+async function leesUitvoerdersregister(wortel: string, pad: string | null): Promise<Uitvoerders | null> {
+  const bestand = path.resolve(wortel, pad ?? "jarvis/uitvoerders.json");
+  let ruw: string;
+  try {
+    ruw = await readFile(bestand, "utf8");
+  } catch {
+    if (pad !== null) console.error(`jarvis regie: uitvoerdersregister ${pad} niet gevonden; toestand onbekend.`);
+    return null;
+  }
+  try {
+    const gelezen = JSON.parse(ruw) as Uitvoerders;
+    if (!Array.isArray(gelezen?.uitvoerders)) throw new Error("geen lijst uitvoerders");
+    return gelezen;
+  } catch (fout) {
+    const tekst = fout instanceof Error ? fout.message : String(fout);
+    console.error(`jarvis regie: uitvoerdersregister onleesbaar (${tekst.slice(0, 80)}); toestand onbekend.`);
+    return null;
+  }
 }
 
 async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
@@ -2098,8 +2184,18 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
         console.error("jarvis db bericht: --tekst <tekst> is verplicht.");
         return 2;
       }
-      const context = vlaggen.get("context") ?? "{}";
-      JSON.parse(context);
+      // Eigenaarstaal (DEC-0046): wat de eigenaar leest is kort en zonder
+      // technische namen; de technische bron gaat mee in context.technisch.
+      const bezwaar = eigenaarstaalBezwaar(tekst);
+      if (bezwaar !== null) {
+        console.error(`jarvis db bericht: geweigerd — ${bezwaar}`);
+        return 2;
+      }
+      const contextRuw = JSON.parse(vlaggen.get("context") ?? "{}") as unknown;
+      const contextObj: Record<string, unknown> = contextRuw !== null && typeof contextRuw === "object" && !Array.isArray(contextRuw) ? { ...(contextRuw as Record<string, unknown>) } : {};
+      const technisch = (vlaggen.get("technisch") ?? "").trim();
+      if (technisch) contextObj.technisch = technisch.slice(0, 4_000);
+      const context = JSON.stringify(contextObj);
       const id = berichtId(new Date(), randomBytes(4).toString("hex"));
       await sql.unsafe(BERICHT_VAN_JARVIS_SQL, [id, tekst, context]);
       console.log(`jarvis db: bericht ${id} geschreven.`);
@@ -2129,6 +2225,46 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       console.log(JSON.stringify(rijen, null, 2));
       return 0;
     }
+    if (wat === "run") {
+      // jarvis db run start --oorzaak <rooster|signaal|vervolgbeurt|handmatig> --door <naam> [--aanleiding <tekst>]
+      // jarvis db run klaar --uitkomst <tekst>
+      const deel = losse[1] ?? "";
+      const stand = runStandBestand(process.env["JARVIS_RUN_BESTAND"], tmpdir());
+      if (deel === "start") {
+        const oorzaak = vlaggen.get("oorzaak") ?? "";
+        const door = vlaggen.get("door") ?? "";
+        if (!isRunOorzaak(oorzaak) || !door) {
+          console.error(`jarvis db run start: gebruik: jarvis db run start --oorzaak <${RUN_OORZAKEN.join("|")}> --door <naam> [--aanleiding <tekst>]`);
+          return 2;
+        }
+        const regel = runStartRegel(new Date(), oorzaak, door, vlaggen.get("aanleiding") ?? null);
+        await sql.unsafe(DOCUMENT_SQL, [regel.id, JSON.stringify(regel)]);
+        await writeFile(stand, JSON.stringify(regel), "utf8");
+        console.log(`jarvis db: run ${regel.id} begonnen (oorzaak ${regel.oorzaak}).`);
+        return 0;
+      }
+      if (deel === "klaar") {
+        const uitkomst = vlaggen.get("uitkomst") ?? "";
+        if (!uitkomst) {
+          console.error("jarvis db run klaar: --uitkomst <tekst> is verplicht.");
+          return 2;
+        }
+        const rauw = await readFile(stand, "utf8").catch(() => "");
+        const begin: unknown = rauw ? JSON.parse(rauw) : null;
+        if (!isRunRegel(begin)) {
+          // Geen startregel: de run is zonder `run start` begonnen. Dat is
+          // een gat in het register, geen reden om de run te laten vallen.
+          console.error("jarvis db run klaar: geen startregel van deze run gevonden; draai `jarvis db run start` aan het begin.");
+          return 1;
+        }
+        const regel = runKlaarRegel(begin, new Date(), uitkomst);
+        await sql.unsafe(DOCUMENT_SQL, [regel.id, JSON.stringify(regel)]);
+        console.log(`jarvis db: run ${regel.id} afgerond.`);
+        return 0;
+      }
+      console.error("jarvis db run: gebruik start of klaar.");
+      return 2;
+    }
     if (wat === "document") {
       const id = losse[1] ?? "";
       const bestand = vlaggen.get("bestand") ?? "";
@@ -2142,12 +2278,205 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       console.log(`jarvis db: document ${id} gezet.`);
       return 0;
     }
-    console.error(`jarvis db: onbekende deelopdracht "${wat}". Gebruik nieuw, claim, verwerkt, bericht, document, toetsing, autorisaties of wie.`);
+    console.error(`jarvis db: onbekende deelopdracht "${wat}". Gebruik nieuw, claim, verwerkt, bericht, document, run, toetsing, autorisaties of wie.`);
     return 2;
   } catch (fout) {
     // Nooit de verbindingsreeks of het wachtwoord in een foutmelding.
     const tekst = fout instanceof Error ? fout.message : String(fout);
     console.error(`jarvis db: mislukt: ${tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
+    return 1;
+  } finally {
+    await sql.end({ timeout: 2 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Review door een tweede model (DEC-0046). Claude bouwt; een ander model
+// leest de pull request met alleen de relevante context en zegt of het
+// klopt. Hoogstens één review per pull request, hoogstens één correctieronde
+// — de engine bewaakt dat: bestaat het reviewdocument al, dan stopt de
+// opdracht met exit 3. Het geheim van de leverancier staat in de Vault en
+// wordt door jarvis.vraag_review in de database bij het verzoek gezet; de
+// engine ziet alleen het verzoeknummer en het antwoord.
+// ---------------------------------------------------------------------------
+
+/** Hoe lang de engine op het antwoord van de reviewer wacht, en hoe vaak hij peilt. */
+const REVIEW_WACHT_SECONDEN = 240;
+const REVIEW_PEIL_MS = 5_000;
+const REVIEW_MODEL_STANDAARD = "gpt-5.1";
+
+type ReviewDocument = {
+  readonly repo: string;
+  readonly nummer: number;
+  readonly kop: string;
+  readonly model: string;
+  readonly op: string;
+  readonly door: string;
+  readonly review: ModelReview;
+  readonly verzoek_id: number | null;
+};
+
+/**
+ * `jarvis review <nummer> --repo <slug> [--model <m>] [--taak <T-…>]`
+ * Exit 0 = akkoord, 4 = correctie nodig (één ronde), 3 = al beoordeeld, 1 = mislukt.
+ */
+async function opdrachtReview(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const nummer = Number.parseInt(losse[0] ?? "", 10);
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  const slug = vlaggen.get("repo") ?? (await slugUitOrigin(wortel));
+  if (!Number.isInteger(nummer) || nummer <= 0 || !slug || !/^[^/\s]+\/[^/\s]+$/.test(slug)) {
+    console.error("jarvis review: gebruik: jarvis review <nummer> --repo <eigenaar/naam> [--model <m>] [--taak <T-…>]");
+    return 2;
+  }
+  const model = (vlaggen.get("model") ?? process.env.JARVIS_REVIEW_MODEL ?? REVIEW_MODEL_STANDAARD).trim();
+  const token = await leesBotToken();
+  if (token === null) {
+    console.error("jarvis review: geen bottoken gevonden (JARVIS_BOT_TOKEN of ~/.jarvis-bot-token).");
+    return 1;
+  }
+  const verbinding = await verbindDb();
+  if (verbinding === null) {
+    console.error("jarvis review: geen weg naar de eigen database (verbindingsreeks of Edge Function jarvis-db).");
+    return 1;
+  }
+  const { sql } = verbinding;
+  const docId = reviewDocumentId(slug, nummer);
+  try {
+    // Eén review per pull request: bestaat er al een, dan is dit de tweede ronde en die is er niet.
+    const bestaand = await sql.unsafe(DOCUMENT_LEES_SQL, [docId]);
+    if (bestaand.length > 0) {
+      const inhoud = bestaand[0]?.inhoud as ReviewDocument | undefined;
+      console.log(`jarvis review: ${slug}#${nummer} is al beoordeeld (${inhoud?.op ?? "?"}, kop ${String(inhoud?.kop ?? "").slice(0, 7)}, oordeel ${inhoud?.review?.oordeel ?? "?"}); hoogstens één reviewronde per pull request.`);
+      if (inhoud?.review) console.log(rendereerReview(inhoud.review, { repo: slug, nummer, kop: inhoud.kop, model: inhoud.model }));
+      return 3;
+    }
+
+    const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
+    if (pr.status !== 200) {
+      console.error(`jarvis review: pull request niet te lezen (${foutTekst(pr)}).`);
+      return 1;
+    }
+    const p = pr.lading as { title: string; body: string | null; head: { sha: string }; state: string };
+    const bestanden = await github(token, "GET", `/repos/${slug}/pulls/${nummer}/files?per_page=100`);
+    if (bestanden.status !== 200) {
+      console.error(`jarvis review: bestanden niet te lezen (${foutTekst(bestanden)}).`);
+      return 1;
+    }
+    const diff = (bestanden.lading as { filename: string; status: string; patch?: string }[]).map((b) => ({
+      bestand: b.filename,
+      status: b.status,
+      patch: b.patch ?? "(geen patch: binair of te groot)",
+    }));
+
+    // De opdracht en acceptatiecriteria: het dossier van de taak die de PR noemt
+    // (--taak, of "Taak: T-…" in de PR-tekst), gelezen uit de werkmap als het er staat.
+    const beschrijving = p.body ?? "";
+    const taakVlag = vlaggen.get("taak") ?? "";
+    const taakUitTekst = /\b(T-\d{8}-[a-z0-9-]+)\b/i.exec(beschrijving)?.[1] ?? null;
+    const taak = /^T-\d{8}-[a-z0-9-]+$/i.test(taakVlag) ? taakVlag : taakUitTekst;
+    let dossier: string | null = null;
+    if (taak !== null) {
+      const config = await laadConfig(wortel);
+      const takenMap = config.ok ? config.config.taken_map : "tasks";
+      dossier = await leesOfNull(path.join(wortel, takenMap, taak, "opdracht.md"));
+      const analyse = await leesOfNull(path.join(wortel, takenMap, taak, "analysis.md"));
+      if (dossier !== null && analyse !== null) {
+        const criteria = /##\s*Acceptatiecriteria[\s\S]*?(?=\n##\s|$)/i.exec(analyse)?.[0];
+        if (criteria) dossier = `${dossier}\n\n${criteria}`;
+      }
+    }
+
+    // Relevante kennis: het contextpakket van de kennislaag, klein (klasse S),
+    // gestuurd door de titel en de opdracht — geen handmatige selectie.
+    let context = "";
+    try {
+      const { config, lading } = await laadAlles();
+      const pakket = await bouwContextPakket({
+        taak: `${p.title} ${beschrijving.slice(0, 600)}`,
+        klasse: "S",
+        config,
+        records: lading.records,
+        bestanden: diff.map((d) => d.bestand),
+        readSource: createFileReader(wortel),
+        gegenereerdOp: new Date().toISOString(),
+      });
+      context = rendereerPakket(pakket);
+    } catch (fout) {
+      context = `(geen contextpakket: ${fout instanceof Error ? fout.message : String(fout)})`;
+    }
+
+    const vraag = bouwReviewVraag({ repo: slug, nummer, kop: p.head.sha, titel: p.title, beschrijving, diff, dossier, context });
+    const aanroep = bouwAanroep(model, vraag);
+    const gevraagd = await sql.unsafe(VRAAG_REVIEW_SQL, [JSON.stringify(aanroep)]);
+    const verzoekId = Number(gevraagd[0]?.id);
+    if (!Number.isInteger(verzoekId) || verzoekId <= 0) {
+      console.error("jarvis review: de database heeft het verzoek niet verstuurd (jarvis.vraag_review gaf geen nummer; staat de API-sleutel in de Vault en de url in de instellingen?).");
+      return 1;
+    }
+    console.error(`jarvis review: verzoek ${verzoekId} verstuurd (${model}, ${vraag.length} tekens); wacht op het antwoord…`);
+
+    const start = Date.now();
+    let antwoord: { status_code: number | null; content: string | null; error_msg: string | null; timed_out: boolean | null } | null = null;
+    while (Date.now() - start < REVIEW_WACHT_SECONDEN * 1000) {
+      await new Promise((klaar) => setTimeout(klaar, REVIEW_PEIL_MS));
+      const rijen = await sql.unsafe(LEES_REVIEW_SQL, [verzoekId]);
+      const r = rijen[0];
+      if (r && (r.status_code !== null || r.error_msg !== null || r.timed_out === true)) {
+        antwoord = {
+          status_code: r.status_code === null ? null : Number(r.status_code),
+          content: r.content === null || r.content === undefined ? null : String(r.content),
+          error_msg: r.error_msg === null || r.error_msg === undefined ? null : String(r.error_msg),
+          timed_out: r.timed_out === true,
+        };
+        break;
+      }
+    }
+    if (antwoord === null) {
+      console.error(`jarvis review: geen antwoord binnen ${REVIEW_WACHT_SECONDEN} seconden (verzoek ${verzoekId}).`);
+      return 1;
+    }
+    if (antwoord.timed_out || antwoord.error_msg) {
+      console.error(`jarvis review: het verzoek is mislukt (${antwoord.timed_out ? "time-out" : antwoord.error_msg}).`);
+      return 1;
+    }
+    let lading: unknown = null;
+    try {
+      lading = antwoord.content === null ? null : JSON.parse(antwoord.content);
+    } catch {
+      lading = null;
+    }
+    if (antwoord.status_code !== 200) {
+      console.error(`jarvis review: de leverancier antwoordde HTTP ${antwoord.status_code}${leverancierFout(lading) ? ` — ${leverancierFout(lading)}` : ""}.`);
+      return 1;
+    }
+    const tekst = antwoordTekst(lading);
+    if (tekst === null) {
+      console.error("jarvis review: het antwoord bevat geen tekst.");
+      return 1;
+    }
+    const review = parseerReview(tekst);
+    if (typeof review === "string") {
+      console.error(`jarvis review: het oordeel is onleesbaar (${review}).`);
+      return 1;
+    }
+
+    const door = dezeUitvoerder();
+    const document: ReviewDocument = { repo: slug, nummer, kop: p.head.sha, model, op: new Date().toISOString(), door, review, verzoek_id: verzoekId };
+    await sql.unsafe(DOCUMENT_SQL, [docId, JSON.stringify(document)]);
+    await schrijfActiviteit({
+      uitvoerder: door,
+      rol: "reviewer",
+      taak,
+      project: null,
+      soort: "review",
+      tekst: `review ${review.oordeel} op ${slug}#${nummer} (${p.head.sha.slice(0, 7)}): ${review.punten.filter((x) => x.ernst === "hoog").length} hoog, ${review.punten.length} punt(en)`,
+      verwijzing: `${slug}#${nummer}`,
+    });
+    console.log(rendereerReview(review, { repo: slug, nummer, kop: p.head.sha, model }));
+    return review.oordeel === "correctie" ? 4 : 0;
+  } catch (fout) {
+    const tekstFout = fout instanceof Error ? fout.message : String(fout);
+    console.error(`jarvis review: mislukt: ${tekstFout.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
     return 1;
   } finally {
     await sql.end({ timeout: 2 });
@@ -2361,6 +2690,52 @@ async function verzamelAttestatieFeiten(
 }
 
 /**
+ * Wat de voorcontrole van `jarvis pr attesteren` oplevert. `redenen` leeg en
+ * `waarschuwing` null: rijp, de workflow mag starten. `redenen` gevuld: de run
+ * zou weigeren, dus we starten hem niet. `waarschuwing` gevuld: de
+ * voorcontrole kon haar bron niet lezen en oordeelt dus niet — dan start de
+ * workflow gewoon, want een onbereikbare bron mag geen attestatie tegenhouden.
+ */
+type Voorcontrole = { readonly redenen: readonly string[]; readonly waarschuwing: string | null };
+
+/**
+ * Dezelfde beoordeling die de attestatierun zelf doet, maar vooraf en zonder
+ * iets te schrijven: één lezing van de configuratie, de bron en de PR-feiten,
+ * en dan `beoordeelAttestatie` — dezelfde functie, geen tweede regelset. Zo
+ * kost een pull request die toch zou worden afgewezen geen volledige run meer
+ * (T-20260917-attestatie-vooraf: 305 runs op 2026-09-17, een groot deel
+ * daarvan vooraf al kansloos).
+ *
+ * Fail open, niet fail closed: alles wat de voorcontrole níét met zekerheid
+ * kan vaststellen — geen databaseverbinding, een leesfout op GitHub, een
+ * configuratie die niet te lezen is — levert een waarschuwing op en laat de
+ * dispatch doorgaan. De run blijft de enige plek waar werkelijk wordt
+ * geweigerd; dit filter mag alleen maar minder starten, nooit minder streng
+ * zijn.
+ */
+async function voorcontroleAttestatie(token: string, slug: string, nummer: number, feiten: PullRequestFeiten): Promise<Voorcontrole> {
+  const config = await leesConfigVanRepo(token, slug);
+  if (typeof config === "string") return { redenen: [], waarschuwing: config };
+
+  const verbinding = await verbindDb();
+  const rest = config.attestatie;
+  if (verbinding === null && (!rest.url || !rest.sleutel)) {
+    return { redenen: [], waarschuwing: "geen databaseverbinding en geen attestatie.url in de configuratie" };
+  }
+  const bron = verbinding === null ? restBron(rest.url, rest.sleutel) : sqlBron(verbinding.sql);
+  try {
+    const f = await verzamelAttestatieFeiten(token, slug, nummer, feiten, config, bron);
+    if (typeof f === "string") return { redenen: [], waarschuwing: f };
+    return { redenen: beoordeelAttestatie(f), waarschuwing: null };
+  } catch (fout) {
+    const tekst = fout instanceof Error ? fout.message : String(fout);
+    return { redenen: [], waarschuwing: tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>") };
+  } finally {
+    if (verbinding !== null) await verbinding.sql.end({ timeout: 2 });
+  }
+}
+
+/**
  * Welke goedkeuringen van github-actions[bot] op deze PR een geldige
  * attestatie dragen. Twee lagen: de tekst moet kloppen met de rijen in de
  * eigen database (rol jarvis_werker), én de volledige beoordeling moet met
@@ -2558,6 +2933,8 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
     case "db":
       code = await opdrachtDb(losse, vlaggen);
       break;
+    case "review":
+      return opdrachtReview(losse, vlaggen);
     case "attestatie":
       code = await opdrachtAttestatie(vlaggen);
       break;

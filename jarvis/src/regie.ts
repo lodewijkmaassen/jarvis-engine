@@ -14,7 +14,7 @@
 
 import type { Overzicht, TaakItem } from "./overzicht";
 
-export const ROLLEN = ["orchestrator", "task-controller", "architect", "developer", "qa", "knowledge-manager"] as const;
+export const ROLLEN = ["orchestrator", "task-controller", "architect", "developer", "reviewer", "qa", "knowledge-manager"] as const;
 export type Rol = (typeof ROLLEN)[number];
 
 export const TOESTANDEN = ["QUEUED", "RUNNING", "BLOCKED", "WAITING_FOR_USER", "WAITING_FOR_DEPENDENCY", "WAITING_FOR_EVENT", "DONE", "AFWIJKING"] as const;
@@ -54,12 +54,21 @@ export type TaakRegie = {
    * Aard van de blokkade bij BLOCKED. `fout`: de uitvoerder meldde zelf een
    * fout. `uitvoerder_stil`: hij houdt de claim vast maar meldt niets meer —
    * de handtekening van een sessie die op een goedkeuringsvraag staat of
-   * anderszins is weggevallen. Dat tweede geval telt als afwijking, want het
-   * meldt zichzelf per definitie niet.
+   * anderszins is weggevallen. `uitvoerder_geblokkeerd`: het
+   * uitvoerdersregister meldt hem als geblokkeerd, ook als zijn heartbeat nog
+   * leeft. De laatste twee tellen als afwijking, want ze melden zichzelf per
+   * definitie niet.
    */
-  readonly blokkade: "fout" | "uitvoerder_stil" | null;
+  readonly blokkade: "fout" | "uitvoerder_stil" | "uitvoerder_geblokkeerd" | null;
   /** Bij een blokkade: de rol wiens uitvoering vastliep (niet wie herstelt). */
   readonly blokkade_rol: Rol | null;
+  /**
+   * Aantoonbaar onderbroken werk: een uitvoerder is aan deze taak begonnen en
+   * heeft hem teruggegeven zonder af te ronden (`jarvis werk vrijgave`), en er
+   * staat geen nieuwe claim achter. Zulk werk gaat vóór werk dat nog nooit is
+   * begonnen — zie `prioriteit`.
+   */
+  readonly onderbroken: boolean;
 };
 
 export type RolRegie = {
@@ -79,7 +88,7 @@ export type Regie = {
   readonly gegenereerd_op: string;
   readonly taken: readonly TaakRegie[];
   readonly rollen: readonly RolRegie[];
-  /** Uitvoerbaar werk in prioriteitsvolgorde: eerst herstel, dan afronding, dan bouw. */
+  /** Uitvoerbaar werk in prioriteitsvolgorde: eerst herstel, dan afronding, dan onderbroken werk, dan nieuw werk. */
   readonly uitvoerbaar: readonly TaakRegie[];
   readonly afwijkingen: readonly TaakRegie[];
 };
@@ -90,11 +99,89 @@ export const HEARTBEAT_MINUTEN: Readonly<Record<Rol, number>> = {
   "task-controller": 30,
   architect: 45,
   developer: 90,
+  reviewer: 10,
   qa: 45,
   "knowledge-manager": 20,
 };
 
+/**
+ * Het uitvoerdersregister (`uitvoerders/huidig`): de tweede bron naast de
+ * werkactiviteit. De werkactiviteit kent alleen uitvoerders die al schreven,
+ * en dat is per definitie niet de uitvoerder die op een goedkeuringsvraag
+ * blijft staan. De engine bevraagt de platformlaag nooit zelf — ze kent geen
+ * tokens en mag die niet leren kennen — dus komt de platformtoestand als
+ * document binnen, geschreven door de uitvoerder die de platformlaag wél mag
+ * bevragen.
+ */
+export const PLATFORMTOESTANDEN = ["working", "blocked", "requires_action", "review_ready", "completed", "failed", "onbekend"] as const;
+export type Platformtoestand = (typeof PLATFORMTOESTANDEN)[number];
+
+export type UitvoerderItem = {
+  /** Dezelfde naam als `--door` bij `jarvis werk`. */
+  readonly naam: string;
+  readonly soort?: "routine" | "sessie" | "laptop";
+  readonly verwijzing?: string | null;
+  readonly platformtoestand: Platformtoestand;
+  /** Laatste run of heartbeat volgens de platformlaag. */
+  readonly laatste_teken?: string | null;
+  /** `laatste_teken` + twee roosterintervallen. Ontbreekt hij, dan geldt UITVOERDER_TERMIJN_MINUTEN. */
+  readonly houdbaar_tot?: string | null;
+  readonly toelichting?: string | null;
+};
+
+export type Uitvoerders = {
+  readonly gegenereerd_op: string;
+  readonly uitvoerders: readonly UitvoerderItem[];
+};
+
+/**
+ * Houdbaarheid van een teken van een uitvoerder, als het register er geen
+ * geeft: tweemaal het roosterinterval van de cloud-uitvoerder (`0 5,17 * * *`,
+ * dus twaalf uur). Dit is bewust niet de taak-heartbeat uit
+ * HEARTBEAT_MINUTEN — een uitvoerder mag tussen twee taken door legitiem stil
+ * zijn, een claim niet.
+ */
+export const UITVOERDER_TERMIJN_MINUTEN = 24 * 60;
+
+export type UitvoerderToestand = "ACTIEF" | "GEBLOKKEERD";
+
+/** Een platformtoestand die op zichzelf al een blokkade is, ongeacht de heartbeat. */
+const BLOKKERENDE_TOESTANDEN: readonly Platformtoestand[] = ["requires_action", "blocked", "failed"];
+
 const ms = (iso: string): number => new Date(iso).getTime();
+
+/**
+ * De toestand van één uitvoerder volgens het register (ontwerp §2.4). Een
+ * ontbrekend of verlopen register is geen leegte maar de toestand `onbekend`;
+ * `onbekend` zonder vers teken telt als blokkade, want een register dat
+ * stilvalt mag niet hetzelfde effect hebben als een register dat "alles in
+ * orde" meldt.
+ */
+export function uitvoerderToestand(item: UitvoerderItem | null, laatsteTeken: string | null, nu: Date): UitvoerderToestand {
+  const toestand: Platformtoestand = item?.platformtoestand ?? "onbekend";
+  if (BLOKKERENDE_TOESTANDEN.includes(toestand)) return "GEBLOKKEERD";
+  if (toestand === "completed" || toestand === "review_ready") return "ACTIEF";
+  const teken = item?.laatste_teken ?? laatsteTeken;
+  if (teken === null || teken === undefined) return "GEBLOKKEERD";
+  const grens = item?.houdbaar_tot != null ? ms(item.houdbaar_tot) : ms(teken) + UITVOERDER_TERMIJN_MINUTEN * 60_000;
+  return nu.getTime() <= grens ? "ACTIEF" : "GEBLOKKEERD";
+}
+
+/** Waarom een uitvoerder geblokkeerd heet, in één mensleesbare regel zonder secrets. */
+function blokkadeReden(naam: string, item: UitvoerderItem | null, laatsteTeken: string | null, nu: Date): string {
+  const toestand: Platformtoestand = item?.platformtoestand ?? "onbekend";
+  if (BLOKKERENDE_TOESTANDEN.includes(toestand)) {
+    const toelichting = item?.toelichting != null && item.toelichting !== "" ? `: ${item.toelichting}` : "";
+    return `uitvoerder ${naam} staat volgens het uitvoerdersregister op ${toestand}${toelichting}`;
+  }
+  const teken = item?.laatste_teken ?? laatsteTeken;
+  if (teken === null || teken === undefined) {
+    return `uitvoerder ${naam} komt niet in het uitvoerdersregister voor en gaf geen enkel teken; zijn toestand is onbekend en telt daarom als blokkade`;
+  }
+  const stil = Math.round((nu.getTime() - ms(teken)) / 60_000);
+  const bron = item === null ? "geen register" : `register meldt ${toestand}`;
+  return `uitvoerder ${naam} gaf ${stil} min geen teken meer (${bron}, houdbaarheid ${UITVOERDER_TERMIJN_MINUTEN} min verstreken)`;
+}
 
 function isRol(x: string): x is Rol {
   return (ROLLEN as readonly string[]).includes(x);
@@ -126,6 +213,10 @@ const AKKOORD_STAP = /\bakkoord\b.*\beigenaar\b|\beigenaar\b.*\bakkoord\b/i;
 // gevraagd, er is alleen niets te doen tot de gebeurtenis zich voordoet
 // (CON-0016). Daarom blijft de verantwoordelijke de task-controller.
 const WACHT_OP_GEBEURTENIS = /^\s*wacht(?:en)?\s+op\s+gebeurtenis\s*:\s*(.+?)\s*$/i;
+// "**Uitvoerder: laptop.**" — een stap die per ontwerp bij één uitvoerder hoort.
+// Zonder deze markering valt zo'n stap door naar QUEUED en biedt de regie hem
+// aan elke uitvoerder aan, ook aan de uitvoerder die hem niet kán doen.
+const UITVOERDER_STAP = /\bUitvoerder:\s*\*{0,2}\s*([a-z][a-z0-9_-]*)/i;
 
 export type Uitvoering = {
   readonly claim: Activiteit;
@@ -152,6 +243,31 @@ export function uitvoeringVan(taak: string, activiteit: readonly Activiteit[], n
   const rol = isRol(claim.rol) ? claim.rol : "developer";
   const levend = nu.getTime() - ms(laatste.op) <= HEARTBEAT_MINUTEN[rol] * 60_000;
   return { claim, laatste, fout, levend };
+}
+
+/**
+ * Aantoonbaar onderbroken werk: de laatste werkgang van deze taak eindigde in
+ * een `vrijgave` — "ik ben gewoon niet klaar" — en er staat geen nieuwe claim
+ * achter. Dat is het enige signaal dat een uitvoerder achterlaat wanneer hij
+ * halverwege stopt zonder vast te lopen; een `klaar` telt niet, want dan is de
+ * stap af, en een openstaande claim telt niet, want die is RUNNING of BLOCKED.
+ *
+ * Zonder dit signaal valt zulk werk terug in de gewone wachtrij en sorteert het
+ * daar zelfs achteraan: de vrijgave is de jóngste activiteit, en `bepaalRegie`
+ * sorteert binnen een klasse oplopend op `laatste_activiteit`. Werk dat
+ * halverwege is afgebroken kwam zo achter werk dat nog nooit is begonnen.
+ */
+export function onderbrokenVan(taak: string, activiteit: readonly Activiteit[]): Activiteit | null {
+  const rijen = activiteit.filter((a) => a.taak === taak).sort((a, b) => ms(a.op) - ms(b.op));
+  let claim: Activiteit | null = null;
+  let vrijgave: Activiteit | null = null;
+  for (const a of rijen) {
+    if (a.soort === "claim") { claim = a; vrijgave = null; continue; }
+    if (!claim) continue;
+    if (a.soort === "vrijgave") { claim = null; vrijgave = a; continue; }
+    if (a.soort === "klaar") { claim = null; vrijgave = null; continue; }
+  }
+  return claim === null ? vrijgave : null;
 }
 
 function laatsteActiviteit(taak: string, activiteit: readonly Activiteit[]): string | null {
@@ -183,13 +299,17 @@ export function prGemerged(overzicht: Overzicht, activiteit: readonly Activiteit
     p.recent.some((r) => r.soort === "merge" && onderwerp.test(r.onderwerp)));
 }
 
-function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date): TaakRegie {
+/** Oordeel over één uitvoerder, zoals `bepaalTaak` het nodig heeft. */
+type UitvoerderOordeel = (naam: string) => { readonly toestand: UitvoerderToestand; readonly reden: string };
+
+function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date, oordeel: UitvoerderOordeel, uitvoerder: string | null): TaakRegie {
   const stappen = t.stappen ?? [];
   const open = stappen.filter((s) => !s.gedaan);
   const volgende = open[0]?.tekst ?? null;
   const laatste = laatsteActiviteit(t.id, activiteit) ?? t.laatste_beweging;
   const basis = { id: t.id, project, titel: t.titel, laatste_activiteit: laatste, volgende_stap: volgende, wacht_op: null as string | null,
-    blokkade: null as TaakRegie["blokkade"], blokkade_rol: null as Rol | null };
+    blokkade: null as TaakRegie["blokkade"], blokkade_rol: null as Rol | null,
+    onderbroken: onderbrokenVan(t.id, activiteit) !== null };
 
   const uitvoering = uitvoeringVan(t.id, activiteit, nu);
   if (uitvoering && uitvoering.fout && uitvoering.levend) {
@@ -197,6 +317,23 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
     return { ...basis, toestand: "BLOCKED", verantwoordelijke: rol, uitvoerder: uitvoering.claim.uitvoerder, sinds: uitvoering.fout.op, uitvoerbaar: true,
       blokkade: "fout", blokkade_rol: rol,
       waarom: `de uitvoering door ${rol} (${uitvoering.claim.uitvoerder}) meldde een fout: ${uitvoering.fout.tekst}` };
+  }
+  // De blokkade van een uitvoerder staat los van zijn heartbeat. Een sessie op
+  // *Needs permissions* kan zojuist nog een stap hebben gemeld en dus springlevend
+  // lijken, terwijl ze geen letter meer verzet. Tot 2026-09-21 kon alleen een
+  // dóde claim BLOCKED opleveren (de tak hieronder), en bleef precies de
+  // productiecasus van 2026-09-17 buiten beeld: `RUNNING`, nul afwijkingen. Het
+  // register is daarom de eerste vraag, niet de laatste.
+  if (uitvoering) {
+    const rol = isRol(uitvoering.claim.rol) ? uitvoering.claim.rol : "developer";
+    const over = oordeel(uitvoering.claim.uitvoerder);
+    if (over.toestand === "GEBLOKKEERD") {
+      return { ...basis, toestand: "BLOCKED", verantwoordelijke: "task-controller", uitvoerder: uitvoering.claim.uitvoerder,
+        sinds: uitvoering.laatste.op, uitvoerbaar: true, wacht_op: over.reden,
+        blokkade: "uitvoerder_geblokkeerd", blokkade_rol: rol,
+        volgende_stap: `De claim van ${rol} (${uitvoering.claim.uitvoerder}) op ${t.id} vrijgeven en opnieuw dispatchen zodra de uitvoerder weer een teken geeft`,
+        waarom: `${over.reden}; de claim van ${rol} op deze taak is daarmee geen lopende uitvoering meer. Een geblokkeerde uitvoerder is werk voor Jarvis, niet voor de eigenaar` };
+    }
   }
   if (uitvoering && uitvoering.levend) {
     const rol = isRol(uitvoering.claim.rol) ? uitvoering.claim.rol : "developer";
@@ -254,6 +391,23 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
       return { ...basis, toestand: "WAITING_FOR_EVENT", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: false, wacht_op: gebeurtenis[1],
         waarom: `wacht op een gebeurtenis buiten Jarvis: ${gebeurtenis[1]}; er is niets te dispatchen tot die zich voordoet, en er wordt niets van de eigenaar gevraagd` };
     }
+
+    // Een stap die aan één uitvoerder is toegewezen is alleen werk voor die
+    // uitvoerder. Voor elke andere — en voor een regieronde die niet weet wie
+    // ze draait — is het een wachttoestand, geen wachtrij.
+    const toegewezen = UITVOERDER_STAP.exec(volgende);
+    if (toegewezen) {
+      const naam = toegewezen[1].toLowerCase();
+      if (uitvoerder === null || uitvoerder.toLowerCase() !== naam) {
+        return { ...basis, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: naam, sinds: laatste, uitvoerbaar: false, wacht_op: naam,
+          waarom: uitvoerder === null
+            ? `de stap is toegewezen aan uitvoerder ${naam}; deze regieronde weet niet welke uitvoerder ze draait`
+            : `de stap is toegewezen aan uitvoerder ${naam}, niet aan ${uitvoerder}` };
+      }
+      const rolToegewezen = rolVoorStap(volgende);
+      return { ...basis, toestand: "QUEUED", verantwoordelijke: rolToegewezen, uitvoerder: naam, sinds: laatste, uitvoerbaar: true,
+        waarom: `uitvoerbaar, aan ${naam} toegewezen en niemand werkt eraan` };
+    }
   }
   // Niets anders houdt de taak tegen: dan ís de vastgelopen uitvoerder de
   // blokkade. Het herstel ligt bij de task-controller — een vastgelopen sessie
@@ -283,19 +437,61 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
   // BLOCKED, een dode claim werd BLOCKED of ging op in een wachttoestand. Wat
   // overblijft is vrij werk.
   const rol = rolVoorStap(volgende);
-  return { ...basis, toestand: "QUEUED", verantwoordelijke: rol, uitvoerder: null, sinds: laatste, uitvoerbaar: true,
-    waarom: "uitvoerbaar, niemand werkt eraan" };
+  const onderbroken = onderbrokenVan(t.id, activiteit);
+  return { ...basis, toestand: "QUEUED", verantwoordelijke: rol, uitvoerder: null, sinds: onderbroken?.op ?? laatste, uitvoerbaar: true,
+    waarom: onderbroken !== null
+      ? `onderbroken werk, te hervatten vóór nieuw werk: ${onderbroken.rol} (${onderbroken.uitvoerder}) gaf de taak terug zonder af te ronden — ${onderbroken.tekst}`
+      : "uitvoerbaar, niemand werkt eraan" };
 }
 
+/**
+ * De volgorde van uitvoerbaar werk. Herstel eerst, dan de afwijking, dan de
+ * administratieve afronding, dan aantoonbaar onderbroken werk, en pas daarna
+ * werk dat nog nooit is begonnen. Onderbroken werk dringt dus niet vóór een
+ * blokkade, maar wel vóór nieuw werk: een halve levering afmaken gaat voor een
+ * tweede halve levering beginnen.
+ */
 function prioriteit(t: TaakRegie): number {
+  // Een taak waarvan de úítvoerder geblokkeerd is, is geen herstelwerk dat
+  // voorgaat: er valt aan de taak zelf niets te repareren, en zolang de
+  // blokkade duurt is elke andere taak nuttiger werk. Ze blijft uitvoerbaar —
+  // een andere uitvoerder mag hem overnemen — maar zakt naar achteren, zodat
+  // "ander uitvoerbaar werk gaat door" ook in de volgorde waar is (eis 6).
+  if (t.blokkade === "uitvoerder_geblokkeerd") return 4;
   if (t.toestand === "BLOCKED") return 0;
   if (t.toestand === "AFWIJKING") return 1;
   if (t.toestand === "DONE") return 2;
-  return 3;
+  if (t.onderbroken) return 3;
+  return 4;
 }
 
-/** De regie over alle open taken en alle rollen. */
-export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date = new Date()): Regie {
+/**
+ * De regie over alle open taken en alle rollen.
+ *
+ * `uitvoerders` is het uitvoerdersregister: het bepaalt of een uitvoerder nog
+ * leeft. `uitvoerder` is de uitvoerder die déze ronde draait (`laptop`,
+ * `cloud`, …); stappen die aan een ándere uitvoerder zijn toegewezen tellen
+ * dan niet als uitvoerbaar werk. Zonder uitvoerder telt geen enkele
+ * toegewezen stap mee. Beide zijn optioneel, zodat bestaande aanroepen blijven
+ * werken.
+ */
+export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date = new Date(), uitvoerders: Uitvoerders | null = null, uitvoerder: string | null = null): Regie {
+  // Het register is optioneel, zodat bestaande aanroepen blijven werken.
+  // Ontbreekt het, dan geldt `onbekend` — en `onbekend` is een toestand, geen
+  // leegte: zonder vers teken telt hij als blokkade.
+  const register = new Map<string, UitvoerderItem>();
+  for (const u of uitvoerders?.uitvoerders ?? []) register.set(u.naam, u);
+  const tekenVan = (naam: string): string | null => {
+    let best: string | null = null;
+    for (const a of activiteit) if (a.uitvoerder === naam && (best === null || ms(a.op) > ms(best))) best = a.op;
+    return best;
+  };
+  const oordeel: UitvoerderOordeel = (naam) => {
+    const item = register.get(naam) ?? null;
+    const teken = tekenVan(naam);
+    return { toestand: uitvoerderToestand(item, teken, nu), reden: blokkadeReden(naam, item, teken, nu) };
+  };
+
   const taken: TaakRegie[] = [];
   const gezien = new Set<string>();
   for (const p of overzicht.projecten) {
@@ -303,16 +499,20 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
       if (t.status !== "actief" && t.status !== "review") continue;
       if (gezien.has(t.id)) continue; // een dossierspiegel in een ander project telt niet als tweede taak
       gezien.add(t.id);
-      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu));
+      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu, oordeel, uitvoerder));
     }
   }
   const uitvoerbaar = taken
     .filter((t) => t.uitvoerbaar)
     .sort((a, b) => prioriteit(a) - prioriteit(b) || (a.laatste_activiteit ?? "").localeCompare(b.laatste_activiteit ?? ""));
-  // Een stilgevallen uitvoerder telt als afwijking: hij meldt zichzelf per
-  // definitie niet, dus zonder deze regel blijft hij buiten elke rapportage.
-  // Een gemelde fout hoeft dat niet — die staat al luid in de regie.
-  const afwijkingen = taken.filter((t) => t.toestand === "AFWIJKING" || t.blokkade === "uitvoerder_stil");
+  // Een stilgevallen of volgens het register geblokkeerde uitvoerder telt als
+  // afwijking: hij meldt zichzelf per definitie niet, dus zonder deze regel
+  // blijft hij buiten elke rapportage. Een gemelde fout hoeft dat niet — die
+  // staat al luid in de regie. Dit is de directe toets op de invariant: er
+  // bestaat geen regie-uitkomst met een geblokkeerde uitvoerder én
+  // `afwijkingen.length === 0`.
+  const afwijkingen = taken.filter((t) => t.toestand === "AFWIJKING" || t.blokkade === "uitvoerder_stil" || t.blokkade === "uitvoerder_geblokkeerd");
+  const aantalGeblokkeerd = taken.filter((t) => t.toestand === "BLOCKED").length;
 
   const rollen: RolRegie[] = ROLLEN.map((rol) => {
     const eigen = activiteit.filter((a) => a.rol === rol).sort((a, b) => ms(b.op) - ms(a.op));
@@ -336,7 +536,7 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
       const regie = eigen.find((a) => a.soort === "regie") ?? null;
       const bezig = regie !== null && nu.getTime() - ms(regie.op) <= HEARTBEAT_MINUTEN[rol] * 60_000;
       return { rol, status: bezig ? "bezig" : "beschikbaar", taak: null, project: null,
-        wat: `bewaakt ${taken.length} open ${taken.length === 1 ? "taak" : "taken"}: ${uitvoerbaar.length} uitvoerbaar, ${taken.filter((t) => t.toestand === "WAITING_FOR_USER").length} bij de eigenaar, ${afwijkingen.length} afwijking(en)`,
+        wat: `bewaakt ${taken.length} open ${taken.length === 1 ? "taak" : "taken"}: ${uitvoerbaar.length} uitvoerbaar, ${taken.filter((t) => t.toestand === "WAITING_FOR_USER").length} bij de eigenaar, ${aantalGeblokkeerd} geblokkeerd, ${afwijkingen.length} afwijking(en)`,
         sinds: regie?.op ?? null, laatste_activiteit: laatste?.op ?? null, volgende_stap: uitvoerbaar[0] ? `${uitvoerbaar[0].id}: ${uitvoerbaar[0].volgende_stap ?? ""}` : null, wachtrij: uitvoerbaar.length, uitvoerder: regie?.uitvoerder ?? null };
     }
     if (lopend) {

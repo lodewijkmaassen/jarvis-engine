@@ -20,6 +20,7 @@ import {
   leesStandSecties,
   leesTaken,
   leesVoortgang,
+  dossiersZonderBekendeStatus,
   openTakenUitDossiers,
   sleutelVan,
   type GitRegel,
@@ -707,5 +708,33 @@ describe("de invariant van de eigenaarslijst", () => {
   it("houdt een echte eigenaarskeuze staan: die vereist hem nog steeds", () => {
     const doc = eigenaarslijst("- Stap 1: kies tussen (a) een vercel.json met een ignoreCommand, of (b) niets doen.\n");
     expect(leesAandacht(project({ taken: [met(doc)] })).map((i) => i.soort)).toEqual(["actie"]);
+  });
+});
+
+describe("dossiersZonderBekendeStatus", () => {
+  const d = (id: string, status: string, titel?: string): TaakDossier => ({
+    id,
+    opdracht: titel === undefined ? { status } : { status, titel },
+    resultaat: null,
+  });
+
+  it("noemt de dossiers die stil uit het feitenblok vallen, op id gesorteerd", () => {
+    const uit = dossiersZonderBekendeStatus([
+      d("T-b", "gepland", "Later"),
+      d("T-a", "open", "Onbekend woord"),
+      { id: "T-c", opdracht: {}, resultaat: null },
+    ]);
+    expect(uit).toEqual([
+      { id: "T-a", titel: "Onbekend woord", status: "open" },
+      { id: "T-b", titel: "Later", status: "gepland" },
+      { id: "T-c", titel: "T-c", status: "onbekend" },
+    ]);
+  });
+
+  it("zwijgt over de statussen die de engine wél kent", () => {
+    expect(
+      dossiersZonderBekendeStatus([d("T-a", "actief"), d("T-b", "review"), d("T-c", "afgerond")]),
+    ).toEqual([]);
+
   });
 });

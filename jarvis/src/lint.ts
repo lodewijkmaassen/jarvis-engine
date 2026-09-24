@@ -10,6 +10,7 @@
 //   fout          — blokkeert; de build faalt
 //   waarschuwing  — zichtbaar, blokkeert niet
 import { matchtGlob, normaliseerPad } from "./classify";
+import { technischeMarkers } from "./review";
 import type { JarvisConfig } from "./config";
 import { isActiefRecord, type KnowledgeRecord } from "./records";
 import { formatteerBevinding, formatteerLaadFout, type KennisLading } from "./store";
@@ -33,6 +34,7 @@ export const LINT_CODES = [
   "commitlog_onleesbaar",
   "ack_bron_onbetrouwbaar",
   "eigenaarslijst_administratief",
+  "eigenaarslijst_technisch",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -375,6 +377,23 @@ export function lint(invoer: LintInvoer): LintResultaat {
         punt.bestand,
         `"${punt.tekst.slice(0, 90)}${punt.tekst.length > 90 ? "…" : ""}" is een documentatie- of statusbevestiging; ` +
           `die doet Jarvis zelf (kennisbeheer of QA) en hoort niet in "Wat de eigenaar nog moet doen" (CON-0016).`,
+      ),
+    );
+  }
+
+  // Wat bij de eigenaar ligt leest hij op zijn telefoon: kort en zonder
+  // technische namen (DEC-0046). Een technisch punt blijft staan — het kan
+  // een echte handeling zijn — maar de poort zegt dat het herschreven hoort.
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    const markers = technischeMarkers(punt.tekst);
+    if (markers.length === 0) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_technisch",
+        "waarschuwing",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" bevat technische namen (${markers.slice(0, 3).join(", ")}); ` +
+          `schrijf voor de eigenaar wat hij moet doen en waarom in gewone taal, en houd de techniek voor het team (DEC-0046).`,
       ),
     );
   }
