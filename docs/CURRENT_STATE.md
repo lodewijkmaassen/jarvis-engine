@@ -6,15 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 _Gegenereerd op 2026-09-21._
-=======
-_Gegenereerd op 2026-09-16._
->>>>>>> origin/jarvis/regie-uitvoerdersmarkering
-=======
-_Gegenereerd op 2026-09-16._
->>>>>>> origin/jarvis/feitenblok-celopmaak
 
 | Feit | Waarde |
 |---|---|
@@ -127,8 +119,6 @@ verdwijnt stil uit het blok met exit 0 — pre-existent gedrag van
 `leesTaakDossiers`, en het verandert wélke taken als open tellen, dus een
 eigen ronde.
 
-<<<<<<< HEAD
-<<<<<<< HEAD
 `jarvis pr attesteren` noemt zijn eigen terugval. Een geweigerde
 workflow-dispatch gaf een kale 403, waarna de uitvoerder per run opnieuw moest
 uitzoeken dat dezelfde workflow langs een andere weg wél op gang komt. De
@@ -172,7 +162,6 @@ de uitvoerder in de cloud draait, want daar zegt dat veld niets (gemeten
 `false`: een dispatch ís de handeling, dus vooraf niet te meten zonder
 bijwerking; de regel verwijst naar waar het wél blijkt, en in de cloud naar de
 vastgelegde weigering van het sessietype.
-=======
 De regie leest sinds deze wijziging ook een toewijzing aan een uitvoerder. Ze
 kende drie wachtredenen in de tekst van de eerste open stap — een akkoord van
 de eigenaar, een andere taak, een pull request — en een stap die per ontwerp
@@ -181,8 +170,6 @@ Werk dat de cloud niet kán doen stond zo bovenaan elke cloud-dispatchlijst.
 `**Uitvoerder: <naam>.**` in de steptekst maakt de stap nu uitvoerbaar voor die
 uitvoerder en `WAITING_FOR_DEPENDENCY` voor elke andere; `jarvis regie` zegt
 met `--door` wie de ronde draait, en zonder dat wacht een toegewezen stap.
->>>>>>> origin/jarvis/regie-uitvoerdersmarkering
-=======
 Dat dossier verdwijnt inmiddels niet meer stil. Wélke taken als open tellen is
 onveranderd — `OPEN_STATUSSEN` blijft `actief` en `review` — maar wat buiten
 die tweedeling valt wordt nu gemeld: `dossiersZonderBekendeStatus` leidt het
@@ -191,7 +178,19 @@ staat. Een waarschuwing, geen fout: het blok blijft kloppend voor wat het wél
 noemt, en één slordig dossier hoort geen repository de poort uit te werken. De
 vraag of `gepland` een open taak hóórt te zijn blijft dus openstaan voor die
 eigen ronde; hij is alleen niet meer onzichtbaar zolang niemand hem stelt.
->>>>>>> origin/jarvis/feitenblok-celopmaak
+**`jarvis pr attesteren` start geen run meer die vooraf al zou weigeren.** Op
+2026-09-17 telde de audit 305 runs van `jarvis-attestatie`; een groot deel
+daarvan startte terwijl het taakakkoord, de toetsing op de huidige kop of een
+groene poort er nog niet was. De opdracht doet die beoordeling nu vooraf, met
+dezelfde `beoordeelAttestatie` en dezelfde feiten als de run zelf — geen tweede
+regelset, geen versoepeling, geen nieuwe bron of extra recht. Is er ten minste
+één reden, dan blijft de dispatch uit, staat die reden in één regel op stderr en
+is de exitcode **3**: nog niet rijp, niets gestart, en nadrukkelijk geen fout.
+De voorcontrole is fail open: kan ze haar bron niet lezen — geen
+databaseverbinding, een leesfout op GitHub, een onleesbare configuratie — dan
+volgt één waarschuwing en gaat de dispatch gewoon door. Ze mag alleen minder
+starten, nooit strenger zijn dan de run, die elke controle onveranderd zelf
+blijft doen.
 
 ## Volgende stap
 
