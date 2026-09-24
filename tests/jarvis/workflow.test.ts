@@ -24,7 +24,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   ACTIEVE_ATTESTATIE,
   ACTIEVE_WORKFLOW,
@@ -349,7 +349,7 @@ describe("de paden liggen in code vast", () => {
 describe("de poort roept de workflowcontrole werkelijk aan", () => {
   // Zonder deze twee tests is de controle wel getest maar niet ingebouwd: QA
   // schrapte de aanroep en de hele suite bleef groen.
-  const waarden = { basis: "origin/main", tekst: "", ackTekst: "", ackActor: "", ackRelatie: "" };
+  const waarden = { basis: "origin/main", tekst: "", ackTekst: "", ackActor: "", ackRelatie: "", gebeurtenis: "" };
 
   it("heeft workflow als eerste stap", () => {
     const namen = poortStappen("/repo", waarden).map((s) => s.naam);
@@ -491,6 +491,52 @@ describe("prContextVanGebeurtenis", () => {
     expect(prContextVanGebeurtenis("workflow_dispatch")).toBe(true);
     expect(prContextVanGebeurtenis("schedule")).toBe(true);
   });
+
+  // De koppeling zelf, en niet alleen de afleiding. Zonder deze test is het
+  // defect onbewaakt: de vijf hierboven geven de gebeurtenis expliciet mee en
+  // blijven dus groen ook als de aanroeper zijn signaal ergens anders vandaan
+  // haalt — precies de regressie waarvoor dit herstel is geschreven. QA mat dat
+  // met één teruggedraaide regel: 865 tests groen, regressie volledig terug.
+  // De koppeling zelf, en niet alleen de afleiding. Dit is waar het defect zat:
+  // niet in `gebeurtenis !== "push"`, maar in wélk signaal de poort binnenkrijgt.
+  // Een test die alleen de pure functie aanroept, blijft groen terwijl de
+  // aanroeper zijn signaal ergens anders vandaan haalt — QA mat dat: 865 tests
+  // groen met de regressie volledig terug. Daarom toetst dit `opdrachtPoort`,
+  // die de omgeving leest, en niet de functie los.
+  describe("opdrachtPoort geeft de gebeurtenis uit de omgeving door", () => {
+    const origineel = process.env.GITHUB_EVENT_NAME;
+    afterEach(() => {
+      if (origineel === undefined) delete process.env.GITHUB_EVENT_NAME;
+      else process.env.GITHUB_EVENT_NAME = origineel;
+    });
+
+    const vangInvoer = async (): Promise<string | undefined> => {
+      let gezien: string | undefined;
+      await opdrachtPoort((_wortel, invoer) => {
+        gezien = invoer.gebeurtenis;
+        return [];
+      });
+      return gezien;
+    };
+
+    it("geeft een push door, zodat de controle daar overslaat", async () => {
+      process.env.GITHUB_EVENT_NAME = "push";
+      expect(await vangInvoer()).toBe("push");
+      expect(prContextVanGebeurtenis((await vangInvoer()) ?? "")).toBe(false);
+    });
+
+    it("geeft een pull_request door, zodat de controle daar geldt", async () => {
+      process.env.GITHUB_EVENT_NAME = "pull_request";
+      expect(await vangInvoer()).toBe("pull_request");
+      expect(prContextVanGebeurtenis((await vangInvoer()) ?? "")).toBe(true);
+    });
+
+    it("geeft leeg door wanneer de variabele ontbreekt, zoals lokaal", async () => {
+      delete process.env.GITHUB_EVENT_NAME;
+      expect(await vangInvoer()).toBe("");
+      expect(prContextVanGebeurtenis((await vangInvoer()) ?? "")).toBe(true);
+    });
+  });
 });
 
 describe("opdrachtPoort draait de stappen werkelijk", () => {
@@ -530,6 +576,7 @@ describe("opdrachtPoort draait de stappen werkelijk", () => {
       ackTekst: "",
       ackActor: "",
       ackRelatie: "",
+      gebeurtenis: "",
     }).map((s) => s.naam);
     expect(namen[0]).toBe("workflow");
     expect(namen).toEqual(["workflow", "engine", "rollen", "index", "state", "sanitize", "lint"]);
@@ -545,6 +592,7 @@ describe("opdrachtPoort draait de stappen werkelijk", () => {
       ackTekst: "",
       ackActor: "",
       ackRelatie: "",
+      gebeurtenis: "",
     })[0];
     await expect(eerste.draai()).resolves.not.toBe(0);
   });
