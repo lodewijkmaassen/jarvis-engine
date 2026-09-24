@@ -260,3 +260,64 @@ describe("rolVoorStap", () => {
     expect(rolVoorStap("Bouw: de Team-view in de app")).toBe("developer");
   });
 });
+
+describe("regie — de hervattingsregel: onderbroken werk vóór nieuw werk", () => {
+  // T-1 is halverwege teruggegeven, T-2 is nog nooit aangeraakt en heeft de
+  // óúdste beweging. Zonder de hervattingsregel zou T-2 vóór T-1 staan, want
+  // binnen één klasse sorteert de regie oplopend op laatste_activiteit en de
+  // vrijgave van T-1 is juist de jongste activiteit.
+  const vrijgegeven = [
+    act({ soort: "claim", taak: "T-1", op: iso(120), tekst: "opgepakt" }),
+    act({ soort: "stap", taak: "T-1", op: iso(100), tekst: "helft gebouwd" }),
+    act({ soort: "vrijgave", taak: "T-1", op: iso(90), tekst: "helft af, tests nog niet" }),
+  ];
+  const nieuw = taak("T-2", { laatste_beweging: iso(5000) });
+
+  it("markeert een taak die is teruggegeven zonder af te ronden als onderbroken", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), vrijgegeven, NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerbaar: true, onderbroken: true });
+    expect(r.taken[0].waarom).toMatch(/onderbroken werk, te hervatten vóór nieuw werk/);
+    expect(r.taken[0].waarom).toMatch(/helft af, tests nog niet/);
+  });
+
+  it("zet dat onderbroken werk vóór werk dat nog nooit is begonnen", () => {
+    const r = bepaalRegie(overzicht([taak("T-1"), nieuw]), vrijgegeven, NU);
+    expect(r.uitvoerbaar.map((t) => t.id)).toEqual(["T-1", "T-2"]);
+    expect(r.taken.find((t) => t.id === "T-2")?.onderbroken).toBe(false);
+  });
+
+  it("dringt niet vóór herstel, afwijking of afronding", () => {
+    const geblokkeerd = taak("T-3");
+    const blokkade = [
+      act({ soort: "claim", taak: "T-3", op: iso(HEARTBEAT_MINUTEN.developer + 30), tekst: "opgepakt" }),
+      act({ soort: "fout", taak: "T-3", op: iso(HEARTBEAT_MINUTEN.developer + 10), tekst: "tests rood" }),
+    ];
+    const af = taak("T-4", { stappen: [{ tekst: "Gedaan", gedaan: true }] });
+    const geen = taak("T-5", { stappen: [] });
+    const r = bepaalRegie(overzicht([taak("T-1"), nieuw, geblokkeerd, af, geen]), [...vrijgegeven, ...blokkade], NU);
+    const volgorde = r.uitvoerbaar.map((t) => t.id);
+    expect(volgorde.indexOf("T-3")).toBeLessThan(volgorde.indexOf("T-1")); // BLOCKED eerst
+    expect(volgorde.indexOf("T-5")).toBeLessThan(volgorde.indexOf("T-1")); // AFWIJKING daarna
+    expect(volgorde.indexOf("T-4")).toBeLessThan(volgorde.indexOf("T-1")); // DONE-afronding daarna
+    expect(volgorde.indexOf("T-1")).toBeLessThan(volgorde.indexOf("T-2")); // en dan pas nieuw werk
+  });
+
+  it("telt afgerond werk niet als onderbroken", () => {
+    const klaar = [
+      act({ soort: "claim", taak: "T-1", op: iso(120), tekst: "opgepakt" }),
+      act({ soort: "klaar", taak: "T-1", op: iso(90), tekst: "stap af" }),
+    ];
+    const r = bepaalRegie(overzicht([taak("T-1"), nieuw]), klaar, NU);
+    expect(r.taken.find((t) => t.id === "T-1")?.onderbroken).toBe(false);
+    expect(r.uitvoerbaar.map((t) => t.id)).toEqual(["T-2", "T-1"]); // weer gewoon op ouderdom
+  });
+
+  it("maakt geen tweede uitvoerder wakker op werk dat loopt", () => {
+    const hervat = [...vrijgegeven,
+      act({ soort: "claim", taak: "T-1", op: iso(20), tekst: "hervat" }),
+      act({ soort: "stap", taak: "T-1", op: iso(2), tekst: "verder" })];
+    const r = bepaalRegie(overzicht([taak("T-1")]), hervat, NU);
+    expect(r.taken[0]).toMatchObject({ toestand: "RUNNING", uitvoerbaar: false, onderbroken: false });
+    expect(r.uitvoerbaar).toHaveLength(0);
+  });
+});

@@ -60,6 +60,13 @@ export type TaakRegie = {
   readonly blokkade: "fout" | "uitvoerder_stil" | null;
   /** Bij een blokkade: de rol wiens uitvoering vastliep (niet wie herstelt). */
   readonly blokkade_rol: Rol | null;
+  /**
+   * Aantoonbaar onderbroken werk: een uitvoerder is aan deze taak begonnen en
+   * heeft hem teruggegeven zonder af te ronden (`jarvis werk vrijgave`), en er
+   * staat geen nieuwe claim achter. Zulk werk gaat vóór werk dat nog nooit is
+   * begonnen — zie `prioriteit`.
+   */
+  readonly onderbroken: boolean;
 };
 
 export type RolRegie = {
@@ -79,7 +86,7 @@ export type Regie = {
   readonly gegenereerd_op: string;
   readonly taken: readonly TaakRegie[];
   readonly rollen: readonly RolRegie[];
-  /** Uitvoerbaar werk in prioriteitsvolgorde: eerst herstel, dan afronding, dan bouw. */
+  /** Uitvoerbaar werk in prioriteitsvolgorde: eerst herstel, dan afronding, dan onderbroken werk, dan nieuw werk. */
   readonly uitvoerbaar: readonly TaakRegie[];
   readonly afwijkingen: readonly TaakRegie[];
 };
@@ -154,6 +161,31 @@ export function uitvoeringVan(taak: string, activiteit: readonly Activiteit[], n
   return { claim, laatste, fout, levend };
 }
 
+/**
+ * Aantoonbaar onderbroken werk: de laatste werkgang van deze taak eindigde in
+ * een `vrijgave` — "ik ben gewoon niet klaar" — en er staat geen nieuwe claim
+ * achter. Dat is het enige signaal dat een uitvoerder achterlaat wanneer hij
+ * halverwege stopt zonder vast te lopen; een `klaar` telt niet, want dan is de
+ * stap af, en een openstaande claim telt niet, want die is RUNNING of BLOCKED.
+ *
+ * Zonder dit signaal valt zulk werk terug in de gewone wachtrij en sorteert het
+ * daar zelfs achteraan: de vrijgave is de jóngste activiteit, en `bepaalRegie`
+ * sorteert binnen een klasse oplopend op `laatste_activiteit`. Werk dat
+ * halverwege is afgebroken kwam zo achter werk dat nog nooit is begonnen.
+ */
+export function onderbrokenVan(taak: string, activiteit: readonly Activiteit[]): Activiteit | null {
+  const rijen = activiteit.filter((a) => a.taak === taak).sort((a, b) => ms(a.op) - ms(b.op));
+  let claim: Activiteit | null = null;
+  let vrijgave: Activiteit | null = null;
+  for (const a of rijen) {
+    if (a.soort === "claim") { claim = a; vrijgave = null; continue; }
+    if (!claim) continue;
+    if (a.soort === "vrijgave") { claim = null; vrijgave = a; continue; }
+    if (a.soort === "klaar") { claim = null; vrijgave = null; continue; }
+  }
+  return claim === null ? vrijgave : null;
+}
+
 function laatsteActiviteit(taak: string, activiteit: readonly Activiteit[]): string | null {
   let best: string | null = null;
   for (const a of activiteit) if (a.taak === taak && (best === null || ms(a.op) > ms(best))) best = a.op;
@@ -189,7 +221,8 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
   const volgende = open[0]?.tekst ?? null;
   const laatste = laatsteActiviteit(t.id, activiteit) ?? t.laatste_beweging;
   const basis = { id: t.id, project, titel: t.titel, laatste_activiteit: laatste, volgende_stap: volgende, wacht_op: null as string | null,
-    blokkade: null as TaakRegie["blokkade"], blokkade_rol: null as Rol | null };
+    blokkade: null as TaakRegie["blokkade"], blokkade_rol: null as Rol | null,
+    onderbroken: onderbrokenVan(t.id, activiteit) !== null };
 
   const uitvoering = uitvoeringVan(t.id, activiteit, nu);
   if (uitvoering && uitvoering.fout && uitvoering.levend) {
@@ -283,15 +316,26 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
   // BLOCKED, een dode claim werd BLOCKED of ging op in een wachttoestand. Wat
   // overblijft is vrij werk.
   const rol = rolVoorStap(volgende);
-  return { ...basis, toestand: "QUEUED", verantwoordelijke: rol, uitvoerder: null, sinds: laatste, uitvoerbaar: true,
-    waarom: "uitvoerbaar, niemand werkt eraan" };
+  const onderbroken = onderbrokenVan(t.id, activiteit);
+  return { ...basis, toestand: "QUEUED", verantwoordelijke: rol, uitvoerder: null, sinds: onderbroken?.op ?? laatste, uitvoerbaar: true,
+    waarom: onderbroken !== null
+      ? `onderbroken werk, te hervatten vóór nieuw werk: ${onderbroken.rol} (${onderbroken.uitvoerder}) gaf de taak terug zonder af te ronden — ${onderbroken.tekst}`
+      : "uitvoerbaar, niemand werkt eraan" };
 }
 
+/**
+ * De volgorde van uitvoerbaar werk. Herstel eerst, dan de afwijking, dan de
+ * administratieve afronding, dan aantoonbaar onderbroken werk, en pas daarna
+ * werk dat nog nooit is begonnen. Onderbroken werk dringt dus niet vóór een
+ * blokkade, maar wel vóór nieuw werk: een halve levering afmaken gaat voor een
+ * tweede halve levering beginnen.
+ */
 function prioriteit(t: TaakRegie): number {
   if (t.toestand === "BLOCKED") return 0;
   if (t.toestand === "AFWIJKING") return 1;
   if (t.toestand === "DONE") return 2;
-  return 3;
+  if (t.onderbroken) return 3;
+  return 4;
 }
 
 /** De regie over alle open taken en alle rollen. */
