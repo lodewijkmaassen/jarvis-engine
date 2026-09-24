@@ -1020,16 +1020,31 @@ export function bouwProjectOverzicht(invoer: ProjectInvoer, nu: Date): ProjectOv
  */
 function herverdeel(projecten: readonly ProjectOverzicht[]): readonly ProjectOverzicht[] {
   const ids = new Set(projecten.map((p) => p.id));
+  // Waar een taak heen gaat: het project dat zij zegt te zijn, als dat bestaat;
+  // anders blijft zij bij de repository die het dossier draagt.
+  const doelVan = (bronId: string, t: TaakItem): string => (ids.has(t.project) ? t.project : bronId);
+
+  // Eerst globaal ontdubbelen, dan pas verdelen. Andersom — per doelproject,
+  // zoals het eerst was — grijpt de dedup alleen wanneer de kopieën toevallig
+  // in hetzelfde doelproject belanden. Noemt het dossier een `project:` dat
+  // geen bestaand project-id is, dan blijft elke kopie in haar eigen bron en
+  // komen ze elkaar nooit tegen: het overzicht toonde dan nog steeds één
+  // dossier als twee of drie taakregels.
+  const gekozen = eenTaakregelPerDossier(projecten.flatMap((bron) => bron.taken.map((t) => ({ bronId: bron.id, t }))));
+
   return projecten.map((doel) => ({
     ...doel,
     aandacht: sorteerAandacht(
-      projecten.flatMap((bron) =>
-        bron.aandacht.filter((a) => (ids.has(a.project) ? a.project === doel.id : bron.id === doel.id)),
+      eenAandachtPerBron(
+        projecten.flatMap((bron) =>
+          bron.aandacht.filter((a) => (ids.has(a.project) ? a.project === doel.id : bron.id === doel.id)),
+        ),
       ),
     ),
-    taken: eenTaakregelPerDossier(
-      projecten.flatMap((bron) => bron.taken.filter((t) => (ids.has(t.project) ? t.project === doel.id : bron.id === doel.id))),
-    ).sort((a, b) => a.id.localeCompare(b.id)),
+    taken: gekozen
+      .filter(({ bronId, t }) => doelVan(bronId, t) === doel.id)
+      .map(({ t }) => t)
+      .sort((a, b) => a.id.localeCompare(b.id)),
   }));
 }
 
@@ -1045,13 +1060,48 @@ function herverdeel(projecten: readonly ProjectOverzicht[]): readonly ProjectOve
  * en waar het dossier dus het verst is. Is die er niet, dan de eerste — de
  * bronvolgorde is vast, dus de uitkomst is dat ook.
  */
-function eenTaakregelPerDossier(taken: readonly TaakItem[]): TaakItem[] {
-  const perId = new Map<string, TaakItem>();
-  for (const t of taken) {
-    const bestaand = perId.get(t.id);
-    if (bestaand === undefined || (bestaand.gastheer !== bestaand.project && t.gastheer === t.project)) perId.set(t.id, t);
+/**
+ * Eén aandachtpunt per bron en titel. Een gespiegeld dossier leverde hetzelfde
+ * eigenaarspunt twee keer, met alleen een ander project-voorvoegsel in het id.
+ * De eigenaar zag dan één handeling als twee, en de teller "X voor jou" telde
+ * te hoog — precies het soort verschil dat de lijst onbetrouwbaar maakt.
+ */
+function eenAandachtPerBron(items: readonly AandachtItem[]): AandachtItem[] {
+  const gezien = new Map<string, AandachtItem>();
+  for (const a of items) {
+    const sleutel = `${a.bron}\u0000${a.titel}`;
+    if (!gezien.has(sleutel)) gezien.set(sleutel, a);
+  }
+  return [...gezien.values()];
+}
+
+function eenTaakregelPerDossier<T extends { readonly t: TaakItem }>(rijen: readonly T[]): T[] {
+  const perId = new Map<string, T>();
+  for (const rij of rijen) {
+    const bestaand = perId.get(rij.t.id);
+    if (bestaand === undefined || beterDossier(rij.t, bestaand.t)) perId.set(rij.t.id, rij);
   }
   return [...perId.values()];
+}
+
+/**
+ * Welke kopie van een gespiegeld dossier het beeld bepaalt. Dit moet een
+ * inhoudelijke keuze zijn, geen toevallige: twee kopieën van hetzelfde dossier
+ * lopen in de praktijk uiteen — de ene repository is verder dan de andere — en
+ * wie dan "de eerste" neemt, laat de uitkomst afhangen van de volgorde waarin
+ * de projecten toevallig zijn meegegeven. Dezelfde taak kreeg zo een andere
+ * `aan_zet` naar gelang welke repository de ronde draaide.
+ *
+ * Wint, in deze volgorde: de kopie in de repository die de taak zegt te zijn;
+ * anders de kopie die het verst is (de meeste afgevinkte stappen); anders de
+ * kopie met de meeste stappen; anders de eerste, en dan is het ook echt gelijk.
+ */
+function beterDossier(nieuw: TaakItem, oud: TaakItem): boolean {
+  const eigen = (t: TaakItem): number => (t.gastheer === t.project ? 1 : 0);
+  if (eigen(nieuw) !== eigen(oud)) return eigen(nieuw) > eigen(oud);
+  const gedaan = (t: TaakItem): number => t.stappen.filter((s) => s.gedaan).length;
+  if (gedaan(nieuw) !== gedaan(oud)) return gedaan(nieuw) > gedaan(oud);
+  return nieuw.stappen.length > oud.stappen.length;
 }
 
 /**
@@ -1072,7 +1122,19 @@ export function verbindAfhankelijkheden(projecten: readonly ProjectOverzicht[]):
     const uit: TaakItem = dep
       ? (() => {
           const d = los(dep, diepte + 1);
-          return { ...t, aan_zet: d.aan_zet === "eigenaar" ? "eigenaar" : "jarvis", wacht_op: `${d.id}: ${d.wacht_op ?? d.titel}`, stil: false };
+          // Wachten op een andere taak is wachten, ook wanneer die taak zelf
+          // wel loopt. Dit zette de uitkomst van `leesTaken` eerder terug op
+          // "jarvis", zodat de kaart "JARVIS AAN ZET" toonde over een taak die
+          // de regie WAITING_FOR_DEPENDENCY noemt — precies de tweespalt die
+          // `wacht` moest opheffen. De eigenaar gaat nog steeds voor: wacht de
+          // andere taak op hém, dan is dat hier ook de eerlijke weergave.
+          return {
+            ...t,
+            aan_zet: d.aan_zet === "eigenaar" ? "eigenaar" : "wacht",
+            wacht_soort: d.aan_zet === "eigenaar" ? null : "taak",
+            wacht_op: `${d.id}: ${d.wacht_op ?? d.titel}`,
+            stil: false,
+          };
         })()
       : t;
     opgelost.set(t.id, uit);

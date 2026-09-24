@@ -187,11 +187,111 @@ describe("AC-6 — de interface kent elke waarde van aan_zet", () => {
     }
   });
 
-  it("toont de nulstand pas als niemand aan zet is", () => {
-    const fn = /function nulstand\(o, acties\) \{([\s\S]*?)\n\}/.exec(html)?.[1] ?? "";
-    expect(fn).not.toBe("");
-    // De twee voorwaarden moeten allebei in de wacht staan.
-    expect(fn).toContain("acties.nu.length");
-    expect(fn).toContain('"jarvis"');
+  // Hieronder wordt de echte functie uit de pagina uitgevoerd, niet haar
+  // brontekst bekeken. Een eerdere versie van deze test las alleen of de bron
+  // bepaalde woorden bevatte; QA toonde met een sabotage aan dat `nulstand`
+  // dan volledig uitgeschakeld kon worden zonder dat één test protesteerde.
+  function uitPagina<T>(naam: string): T {
+    const m = new RegExp(`(?:const WACHT_WOORD = \\{[^}]*\\};\\s*)?function ${naam}\\(([^)]*)\\) \\{([\\s\\S]*?)\\n\\}`).exec(html);
+    if (!m) throw new Error(`${naam} is niet gevonden in jarvis.html`);
+    const woorden = /const WACHT_WOORD = \{[^}]*\};/.exec(html)?.[0] ?? "";
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    return new Function(`${woorden}\nreturn function ${naam}(${m[1]}) {${m[2]}\n};`)() as T;
+  }
+
+  it("geeft elke wachtsoort een eigen woord, ook in de uitvoer", () => {
+    const zetTekst = uitPagina<(t: unknown) => string>("zetTekst");
+    const gezien = new Set<string>();
+    for (const soort of ["gebeurtenis", "uitvoerder", "taak", "pull-request"]) {
+      const tekst = zetTekst({ aan_zet: "wacht", wacht_soort: soort });
+      expect(tekst, `soort ${soort} heeft geen eigen woord`).not.toBe("WACHT");
+      expect(gezien.has(tekst), `soort ${soort} deelt zijn woord met een andere`).toBe(false);
+      gezien.add(tekst);
+    }
+    expect(zetTekst({ aan_zet: "jarvis" })).toBe("JARVIS AAN ZET");
+    expect(zetTekst({ aan_zet: "eigenaar" })).toBe("WACHT OP JOU");
   });
+
+  it("toont de nulstand alleen als niemand aan zet is — uitgevoerd, niet gelezen", () => {
+    const nulstand = uitPagina<(o: unknown, a: unknown) => string | null>("nulstand");
+    const geen = { nu: [] as unknown[] };
+    const o = (taken: readonly { aan_zet: string }[]) => ({ projecten: [{ taken }] });
+
+    // Niemand aan zet: de bevestiging verschijnt.
+    expect(nulstand(o([{ aan_zet: "niemand" }]), geen)).toMatch(/^nulstand/);
+    // Jarvis heeft werk: geen nulstand.
+    expect(nulstand(o([{ aan_zet: "jarvis" }]), geen)).toBeNull();
+    // De eigenaar heeft werk: geen nulstand.
+    expect(nulstand(o([{ aan_zet: "niemand" }]), { nu: [{}] })).toBeNull();
+    // Alleen wachtend werk is wel een nulstand, maar wordt genoemd.
+    const w = nulstand(o([{ aan_zet: "wacht" }, { aan_zet: "wacht" }]), geen);
+    expect(w).toMatch(/^nulstand/);
+    expect(w).toContain("2 wachtend");
+  });
+});
+
+/**
+ * De criteria door de volledige keten, niet alleen door `leesTaken`. QA vond
+ * dat `verbindAfhankelijkheden` ná `herverdeel` de uitkomst overschreef, en
+ * dat de dedup alleen greep wanneer het dossier een bestaand project-id noemt.
+ * Beide gaten zaten precies tussen de losse functie en `bouwOverzicht` in.
+ */
+describe("door de hele keten — bouwOverzicht, niet alleen leesTaken", () => {
+  it("laat een taak die op een bestaande taak wacht niet op Jarvis staan", () => {
+    const o = bouwOverzicht(
+      [project("jarvis", [dossier("T-20260101-wachter", "wacht op T-20260101-doel, dat eerst af moet"), dossier("T-20260101-doel", "Bouw de knop")])],
+      NU,
+      "jarvis",
+    );
+    const wachter = o.projecten[0].taken.find((t) => t.id === "T-20260101-wachter");
+    expect(wachter?.aan_zet).toBe("wacht");
+    expect(wachter?.wacht_soort).toBe("taak");
+    expect(wachter?.stil).toBe(false);
+  });
+
+  it("stemt ook dan overeen met de regie", () => {
+    const o = bouwOverzicht(
+      [project("jarvis", [dossier("T-20260101-wachter", "wacht op T-20260101-doel, dat eerst af moet"), dossier("T-20260101-doel", "Bouw de knop")])],
+      NU,
+      "jarvis",
+    );
+    const regie = bepaalRegie(o, [], NU, null, "cloud");
+    for (const t of o.projecten[0].taken) {
+      const rt = regie.taken.find((x) => x.id === t.id);
+      expect(t.aan_zet === "jarvis", `${t.id} loopt uiteen met de regie`).toBe(rt?.uitvoerbaar === true);
+    }
+  });
+
+  it("ontdubbelt ook wanneer het dossier een project noemt dat niet bestaat", () => {
+    // De echte opstelling: de dossiers zeggen `project: jarvis`, maar de
+    // aangesloten repository's heten anders. Per doelproject ontdubbelen
+    // greep dan niet, want elke kopie bleef in haar eigen bron.
+    const gespiegeld = dossier("T-gespiegeld", "Bouw de knop", "jarvis");
+    const o = bouwOverzicht(
+      [project("tovas-flow", [gespiegeld]), project("kasboek", [gespiegeld]), project("engine", [gespiegeld])],
+      NU,
+      "tovas-flow",
+    );
+    const alle = o.projecten.flatMap((p) => p.taken);
+    expect(alle.filter((t) => t.id === "T-gespiegeld")).toHaveLength(1);
+  });
+});
+
+describe("AC-5 — elke wachtsoort levert een echte reden op", () => {
+  // Sabotage S7 van QA: `wachtredenTekst` mocht voor sommige soorten leeg
+  // worden zonder dat iets omviel.
+  const gevallen: readonly [string, string][] = [
+    ["wacht op gebeurtenis: het venster verstrijkt", "gebeurtenis"],
+    ["Sluitstuk. **Uitvoerder: laptop.**", "uitvoerder"],
+    ["wacht op PR #196", "pull-request"],
+    ["wacht op T-20260101-iets", "taak"],
+  ];
+  for (const [stap, soort] of gevallen) {
+    it(`noemt een reden bij soort ${soort}`, () => {
+      const [t] = leesTaken([dossier("T-1", stap)], "jarvis", [], [], NU);
+      expect(t.wacht_soort).toBe(soort);
+      expect(t.wacht_op, `soort ${soort} levert geen reden`).toBeTruthy();
+      expect((t.wacht_op ?? "").length).toBeGreaterThan(5);
+    });
+  }
 });
