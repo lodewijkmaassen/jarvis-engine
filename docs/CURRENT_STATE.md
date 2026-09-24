@@ -59,6 +59,32 @@ staat al luid in de regie. Het herstel is nooit werk voor de eigenaar — een
 vastgelopen sessie is een ontbrekende capability of een interne
 toolgoedkeuring, en die zijn van Jarvis.
 
+Een stille claim was echter niet het hele geval. Een uitvoerder kan
+springlevend lijken — zojuist nog een stap gemeld — en toch geen letter meer
+verzetten, omdat hij op een goedkeuringsvraag staat. De heartbeat van de claim
+zegt daar niets over. Daarom is de blokkade sinds deze wijziging losgemaakt van
+de claim: naast de werkactiviteit leest de regie een tweede bron, het
+uitvoerdersregister `uitvoerders/huidig`, dat zegt welke uitvoerders er bestaan
+en in welke platformtoestand ze staan — ook de uitvoerder die nooit aan
+schrijven toekwam. De engine bevraagt de platformlaag niet zelf: ze kent geen
+tokens en mag die niet leren kennen, dus komt het register als bestand binnen
+(`jarvis regie --uitvoerders <pad>`, standaard `jarvis/uitvoerders.json`), en
+is de parameter optioneel zodat elke bestaande aanroep blijft werken.
+
+`requires_action`, `blocked` en `failed` blokkeren ongeacht het teken;
+`working` met een verlopen teken ook. Ontbreken is een toestand en geen leegte:
+een uitvoerder die in geen enkele bron een teken binnen `UITVOERDER_TERMIJN_MINUTEN`
+geeft, heet `onbekend` en telt als blokkade — een register dat stilvalt mag niet
+hetzelfde effect hebben als een register dat "alles in orde" meldt. Zo'n taak
+krijgt `blokkade: "uitvoerder_geblokkeerd"` met de reden in `wacht_op`, telt als
+afwijking, en de slotregel van `jarvis regie` draagt een eigen blokkadeteller
+naast de afwijkingsteller. Anders dan bij een gemelde fout gaat deze taak niet
+vóór op gewoon werk maar zakt ze naar achteren: aan de taak zelf valt niets te
+repareren en ander werk moet doorgaan. Ze blijft wel uitvoerbaar, zodat een
+andere uitvoerder hem kan overnemen. Hervatten is afleiding en geen actie —
+meldt het register de uitvoerder weer als actief, dan loopt de taak vanzelf. Er
+komt geen scheduler, wekker of wachtrij bij; een test bewaakt dat.
+
 De engine is afgesplitst uit het project waarin hij is gebouwd, met de
 commitgeschiedenis van `jarvis/`. Deze repository is de bron; consumers nemen
 hem op als git-afhankelijkheid op een vastgepinde commit en roepen
