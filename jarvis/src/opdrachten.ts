@@ -84,12 +84,18 @@ import {
   claimSql,
   DOCUMENT_SQL,
   isOordeel,
+  isRunOorzaak,
+  isRunRegel,
   isTabel,
   NIEUWE_ANTWOORDEN_SQL,
   NIEUWE_BERICHTEN_SQL,
   restPadAutorisatiePr,
   restPadAutorisatieTaak,
   restPadToetsingKop,
+  RUN_OORZAKEN,
+  runKlaarRegel,
+  runStandBestand,
+  runStartRegel,
   TOETSING_ID_SQL,
   TOETSING_KOP_SQL,
   TOETSING_SQL,
@@ -99,7 +105,7 @@ import {
 } from "./db";
 import { randomBytes } from "node:crypto";
 import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, duidRechten, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 const uitvoeren = promisify(execFile);
 
@@ -1410,7 +1416,7 @@ function help(): number {
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
       "  rollen   [--schrijf]              Genereert de providerafgeleiden van de rolcontracten;",
       "                                    zonder --schrijf een driftcontrole (zit in de poort)",
-      "  db <nieuw|wachten|claim|verwerkt|bericht|document|toetsing|autorisaties|wie> [opties]",
+      "  db <nieuw|wachten|claim|verwerkt|bericht|document|run|toetsing|autorisaties|wie> [opties]",
       "                                    De eigen database van Jarvis (schema jarvis): nieuwe",
       "                                    antwoorden en berichten lezen, claimen, verwerken, documenten zetten,",
       "                                    een QA-toetsing vastleggen, akkoorden van de eigenaar lezen.",
@@ -1841,6 +1847,8 @@ async function verbindDb(): Promise<{ readonly sql: DbClient; readonly bron: str
  *   verwerkt <tabel> <id> --verwerking <t> Zet een item op "verwerkt" met de toelichting.
  *   bericht --tekst <t> [--context <json>] Schrijft een bericht van Jarvis.
  *   document <id> --bestand <json>         Zet een document (overzicht/huidig, jarvis/status).
+ *   run start --oorzaak <x> --door <naam>  Schrijft de startregel van deze run in het runregister.
+ *   run klaar --uitkomst <tekst>           Vult diezelfde regel aan met het einde en de uitkomst.
  *   wachten [--max <seconden>]             Wacht tot er een nieuw antwoord, bericht of akkoord is; geeft dat als JSON.
  *   wie                                    Toont waar de verbinding vandaan komt en of ze werkt; nooit de reeks zelf.
  */
@@ -2199,6 +2207,46 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       console.log(JSON.stringify(rijen, null, 2));
       return 0;
     }
+    if (wat === "run") {
+      // jarvis db run start --oorzaak <rooster|signaal|vervolgbeurt|handmatig> --door <naam> [--aanleiding <tekst>]
+      // jarvis db run klaar --uitkomst <tekst>
+      const deel = losse[1] ?? "";
+      const stand = runStandBestand(process.env["JARVIS_RUN_BESTAND"], tmpdir());
+      if (deel === "start") {
+        const oorzaak = vlaggen.get("oorzaak") ?? "";
+        const door = vlaggen.get("door") ?? "";
+        if (!isRunOorzaak(oorzaak) || !door) {
+          console.error(`jarvis db run start: gebruik: jarvis db run start --oorzaak <${RUN_OORZAKEN.join("|")}> --door <naam> [--aanleiding <tekst>]`);
+          return 2;
+        }
+        const regel = runStartRegel(new Date(), oorzaak, door, vlaggen.get("aanleiding") ?? null);
+        await sql.unsafe(DOCUMENT_SQL, [regel.id, JSON.stringify(regel)]);
+        await writeFile(stand, JSON.stringify(regel), "utf8");
+        console.log(`jarvis db: run ${regel.id} begonnen (oorzaak ${regel.oorzaak}).`);
+        return 0;
+      }
+      if (deel === "klaar") {
+        const uitkomst = vlaggen.get("uitkomst") ?? "";
+        if (!uitkomst) {
+          console.error("jarvis db run klaar: --uitkomst <tekst> is verplicht.");
+          return 2;
+        }
+        const rauw = await readFile(stand, "utf8").catch(() => "");
+        const begin: unknown = rauw ? JSON.parse(rauw) : null;
+        if (!isRunRegel(begin)) {
+          // Geen startregel: de run is zonder `run start` begonnen. Dat is
+          // een gat in het register, geen reden om de run te laten vallen.
+          console.error("jarvis db run klaar: geen startregel van deze run gevonden; draai `jarvis db run start` aan het begin.");
+          return 1;
+        }
+        const regel = runKlaarRegel(begin, new Date(), uitkomst);
+        await sql.unsafe(DOCUMENT_SQL, [regel.id, JSON.stringify(regel)]);
+        console.log(`jarvis db: run ${regel.id} afgerond.`);
+        return 0;
+      }
+      console.error("jarvis db run: gebruik start of klaar.");
+      return 2;
+    }
     if (wat === "document") {
       const id = losse[1] ?? "";
       const bestand = vlaggen.get("bestand") ?? "";
@@ -2212,7 +2260,7 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       console.log(`jarvis db: document ${id} gezet.`);
       return 0;
     }
-    console.error(`jarvis db: onbekende deelopdracht "${wat}". Gebruik nieuw, claim, verwerkt, bericht, document, toetsing, autorisaties of wie.`);
+    console.error(`jarvis db: onbekende deelopdracht "${wat}". Gebruik nieuw, claim, verwerkt, bericht, document, run, toetsing, autorisaties of wie.`);
     return 2;
   } catch (fout) {
     // Nooit de verbindingsreeks of het wachtwoord in een foutmelding.

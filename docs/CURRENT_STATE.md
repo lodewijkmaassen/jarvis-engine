@@ -31,7 +31,19 @@ _Gegenereerd op 2026-09-21._
 
 ## Waar staan we
 
-De regie herkent sinds deze wijziging een uitvoerder die stilvalt. Een claim
+Een run laat sinds deze wijziging één spoor na: `jarvis db run start` schrijft
+bij het begin een regel met startmoment, oorzaak (rooster, signaal,
+vervolgbeurt of handmatig) en uitvoerder, en `jarvis db run klaar` vult
+diezelfde regel aan met het einde en de uitkomst. Dat maakt meetbaar wat tot
+nu toe alleen indirect af te leiden was — of een push naar een `jarvis/`-branch
+nog een run start — want een run die niets te doen had, liet voorheen niets
+achter. Het register is bewust géén eigen tabel maar een document langs
+`DOCUMENT_SQL`: dat statement staat al in `toegestaneSql()`, dus er is geen
+migratie en geen nieuwe uitrol van de Edge Function voor nodig. Omdat
+`toegestaneSql()` geen leesweg voor documenten kent, bewaart de lopende run
+zijn startregel in een bestand buiten elke repository.
+
+De regie herkent sinds een eerdere wijziging een uitvoerder die stilvalt. Een claim
 waarvan de heartbeat verliep zonder fout, klaar of vrijgave viel terug op
 `QUEUED`: de taak werd opnieuw aangeboden, maar de blokkade zelf stond nergens
 — ze telde niet als afwijking en de rol bleef "beschikbaar" heten. Een
