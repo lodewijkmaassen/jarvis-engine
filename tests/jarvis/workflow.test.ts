@@ -39,7 +39,7 @@ import {
   type BestandsFeiten,
   type GovernanceInvoer,
 } from "@/jarvis/src/workflow";
-import { controleerWorkflow, opdrachtPoort, poortStappen, poortUitkomst } from "@/jarvis/src/opdrachten";
+import { controleerWorkflow, opdrachtPoort, poortStappen, poortUitkomst, prContextVanGebeurtenis } from "@/jarvis/src/opdrachten";
 
 /** Ruwe bytes, zonder encoding: elke omzetting naar tekst is al een interpretatie. */
 const ACTIEF = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-lint.yml"));
@@ -458,6 +458,38 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
       await writeFile(path.join(m, "tests/jarvis/args.test.ts"), "");
     });
     await expect(controleerWorkflow(map)).resolves.not.toBe(0);
+  });
+});
+
+// De statusdrift-controle mag alleen overslaan waar de verklaring principieel
+// onleesbaar is. Dat is één geval: de `push`-gebeurtenis, waar
+// `github.event.pull_request` niet bestaat. Eerder werd dat afgeleid uit lege
+// PR-tekst, en dat sloeg de controle óók over bij elke lokale aanroep zonder
+// tekst — precies de pre-PR-poort die CLAUDE.md voorschrijft. Deze tests
+// leggen vast dat het signaal nu de gebeurtenis is.
+describe("prContextVanGebeurtenis", () => {
+  it("meldt geen pull-requestcontext bij een push", () => {
+    expect(prContextVanGebeurtenis("push")).toBe(false);
+  });
+
+  it("meldt wél context bij pull_request", () => {
+    expect(prContextVanGebeurtenis("pull_request")).toBe(true);
+  });
+
+  it("meldt wél context bij pull_request_review", () => {
+    expect(prContextVanGebeurtenis("pull_request_review")).toBe(true);
+  });
+
+  it("houdt de controle aan buiten GitHub Actions, waar de waarde leeg is", () => {
+    // De lokale poort en elk afnemend project draaien zonder deze variabele.
+    // Dit is de regressie die de vorige vorm veroorzaakte: daar viel de
+    // controle hier weg en gaf de laptop groen op wat de CI afwees.
+    expect(prContextVanGebeurtenis("")).toBe(true);
+  });
+
+  it("houdt de controle aan bij elke andere gebeurtenis", () => {
+    expect(prContextVanGebeurtenis("workflow_dispatch")).toBe(true);
+    expect(prContextVanGebeurtenis("schedule")).toBe(true);
   });
 });
 

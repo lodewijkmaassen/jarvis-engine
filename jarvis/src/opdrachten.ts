@@ -915,6 +915,28 @@ type PoortInvoer = {
  * Zowel `jarvis lint` (waarden uit vlaggen) als `jarvis poort` (waarden uit de
  * omgeving) komen hier uit. De bron verschilt; wat ermee gebeurt niet.
  */
+/**
+ * Is er een pull-requestcontext waarin een `Current-State-Impact`-verklaring te
+ * lezen valt? Afgeleid uit de gebeurtenis, niet uit de afwezigheid van tekst.
+ *
+ * Alleen bij `push` bestaat `github.event.pull_request` niet, dus zijn PR_TITEL
+ * en PR_BODY leeg en is de verklaring principieel onvindbaar. Daar meet de
+ * statusdrift-controle niets en slaat zij over.
+ *
+ * Waarom niet op lege tekst: die heeft een tweede, volkomen legitieme
+ * producent, namelijk elke aanroep van de opdrachtregel zonder PR-tekst —
+ * precies hoe `CLAUDE.md` de poort vóór een pull request voorschrijft en hoe
+ * elk afnemend project hem draait. Die twee gevallen kwamen daardoor op één
+ * hoop en de lokale poort raakte de controle kwijt: groen op een wijziging die
+ * de pull-requestrun daarna afwees.
+ *
+ * Buiten GitHub Actions is de waarde leeg en geldt de controle onverkort. Dat
+ * is de strengste stand, en het gedrag van vóór deze reparatie.
+ */
+export function prContextVanGebeurtenis(gebeurtenis: string): boolean {
+  return gebeurtenis !== "push";
+}
+
 async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   const { wortel, config, lading } = await laadAlles();
   const { basis, tekst, ackTekst, ackActor, ackRelatie } = invoer;
@@ -933,11 +955,7 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     ? `een review van ${ackActor} (${ackRelatie || "relatie onbekend"})`
     : "een bron zonder aanwijsbare menselijke auteur";
   const statusImpact = /Current-State-Impact:\s*(none|geen)/i.test(tekst);
-  // `tekst` is PR-titel plus PR-body. Bij een `push`-gebeurtenis levert de
-  // workflow beide leeg aan, want `github.event.pull_request` bestaat daar niet.
-  // Een pull request zonder titel én zonder body bestaat niet, dus lege tekst
-  // betekent hier: geen pull-requestcontext.
-  const prContext = tekst.trim() !== "";
+  const prContext = prContextVanGebeurtenis(process.env.GITHUB_EVENT_NAME ?? "");
   // Mapnamen komen uit de configuratie en de indeling eronder is vrij; tel dus
   // op de bestandsnaam, niet op een vast pad.
   const decPatroon = new RegExp(`^${config.knowledge_map}/.*DEC-\\d{4}\\.md$`);
