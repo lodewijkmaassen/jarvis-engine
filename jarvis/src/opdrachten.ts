@@ -444,7 +444,7 @@ ${tekstUitBestand}`,
     ackRelatie: vlaggen.get("ack-relatie") ?? "",
     // `jarvis lint` draait van de opdrachtregel; daar is geen gebeurtenis en
     // geldt de statusdrift-controle onverkort.
-    gebeurtenis: "",
+    prContext: true,
   });
 }
 
@@ -534,7 +534,7 @@ ${lees("PR_BODY")}`,
       ackTekst: lees("REVIEW_BODY"),
       ackActor: lees("REVIEW_ACTOR"),
       ackRelatie: lees("REVIEW_RELATIE"),
-      gebeurtenis: lees("GITHUB_EVENT_NAME"),
+      prContext: prContextVanGebeurtenis(lees("GITHUB_EVENT_NAME")),
     }),
   );
 }
@@ -912,14 +912,18 @@ type PoortInvoer = {
   readonly ackActor: string;
   readonly ackRelatie: string;
   /**
-   * De GitHub-gebeurtenis waaronder de poort draait, of leeg buiten Actions.
+   * Is er een pull-requestcontext waarin een `Current-State-Impact`-verklaring
+   * te lezen valt?
    *
-   * Komt als invoerwaarde binnen en wordt niet dieper in de poort uit de
-   * omgeving geplukt, net zoals `tekst`. Dat is hier dragend: het defect dat
-   * deze waarde herstelt zat niet in het afleiden maar in de kóppeling, en een
-   * koppeling die op één plek staat is toetsbaar.
+   * Komt als kant-en-klare invoerwaarde binnen en wordt niet dieper in de poort
+   * berekend, net zoals `tekst`. Dat is hier dragend. Het defect dat deze
+   * waarde herstelt zat niet in het afleiden maar in de kóppeling: wélk signaal
+   * de controle binnenkrijgt. Zolang die koppeling in `voerPoortUit` stond, kon
+   * zij stilzwijgend veranderen zonder dat één test omviel — QA mat dat twee
+   * keer. Nu staat zij op de twee ingangen zelf, waar de stub van
+   * `opdrachtPoort` haar afvangt.
    */
-  readonly gebeurtenis: string;
+  readonly prContext: boolean;
 };
 
 /**
@@ -952,7 +956,7 @@ export function prContextVanGebeurtenis(gebeurtenis: string): boolean {
  */
 async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   const { wortel, config, lading } = await laadAlles();
-  const { basis, tekst, ackTekst, ackActor, ackRelatie, gebeurtenis } = invoer;
+  const { basis, tekst, ackTekst, ackActor, ackRelatie, prContext } = invoer;
   const bestanden = await gewijzigdeBestanden(wortel, basis);
 
 
@@ -968,7 +972,6 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     ? `een review van ${ackActor} (${ackRelatie || "relatie onbekend"})`
     : "een bron zonder aanwijsbare menselijke auteur";
   const statusImpact = /Current-State-Impact:\s*(none|geen)/i.test(tekst);
-  const prContext = prContextVanGebeurtenis(gebeurtenis);
   // Mapnamen komen uit de configuratie en de indeling eronder is vrij; tel dus
   // op de bestandsnaam, niet op een vast pad.
   const decPatroon = new RegExp(`^${config.knowledge_map}/.*DEC-\\d{4}\\.md$`);

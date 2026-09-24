@@ -349,7 +349,7 @@ describe("de paden liggen in code vast", () => {
 describe("de poort roept de workflowcontrole werkelijk aan", () => {
   // Zonder deze twee tests is de controle wel getest maar niet ingebouwd: QA
   // schrapte de aanroep en de hele suite bleef groen.
-  const waarden = { basis: "origin/main", tekst: "", ackTekst: "", ackActor: "", ackRelatie: "", gebeurtenis: "" };
+  const waarden = { basis: "origin/main", tekst: "", ackTekst: "", ackActor: "", ackRelatie: "", prContext: true };
 
   it("heeft workflow als eerste stap", () => {
     const namen = poortStappen("/repo", waarden).map((s) => s.naam);
@@ -503,38 +503,46 @@ describe("prContextVanGebeurtenis", () => {
   // aanroeper zijn signaal ergens anders vandaan haalt — QA mat dat: 865 tests
   // groen met de regressie volledig terug. Daarom toetst dit `opdrachtPoort`,
   // die de omgeving leest, en niet de functie los.
-  describe("opdrachtPoort geeft de gebeurtenis uit de omgeving door", () => {
+  // De koppeling zelf, en niet alleen de afleiding. Daar zat het defect: niet
+  // in `gebeurtenis !== "push"`, maar in wélk signaal de controle binnenkrijgt.
+  // QA weerlegde twee eerdere pogingen — beide keren bleef de suite groen
+  // terwijl de regressie terug was, omdat de koppeling binnen `voerPoortUit`
+  // stond en geen test die functie uitvoert. Daarom is `prContext` nu een
+  // invoerwaarde die `opdrachtPoort` zet, en vangt de stub hem hier af.
+  describe("opdrachtPoort zet prContext uit de gebeurtenis in de omgeving", () => {
     const origineel = process.env.GITHUB_EVENT_NAME;
     afterEach(() => {
       if (origineel === undefined) delete process.env.GITHUB_EVENT_NAME;
       else process.env.GITHUB_EVENT_NAME = origineel;
     });
 
-    const vangInvoer = async (): Promise<string | undefined> => {
-      let gezien: string | undefined;
+    const vang = async (): Promise<boolean | undefined> => {
+      let gezien: boolean | undefined;
       await opdrachtPoort((_wortel, invoer) => {
-        gezien = invoer.gebeurtenis;
+        gezien = invoer.prContext;
         return [];
       });
       return gezien;
     };
 
-    it("geeft een push door, zodat de controle daar overslaat", async () => {
+    it("zet hem uit bij een push, want daar is geen PR-tekst", async () => {
       process.env.GITHUB_EVENT_NAME = "push";
-      expect(await vangInvoer()).toBe("push");
-      expect(prContextVanGebeurtenis((await vangInvoer()) ?? "")).toBe(false);
+      expect(await vang()).toBe(false);
     });
 
-    it("geeft een pull_request door, zodat de controle daar geldt", async () => {
+    it("zet hem aan bij een pull_request", async () => {
       process.env.GITHUB_EVENT_NAME = "pull_request";
-      expect(await vangInvoer()).toBe("pull_request");
-      expect(prContextVanGebeurtenis((await vangInvoer()) ?? "")).toBe(true);
+      expect(await vang()).toBe(true);
     });
 
-    it("geeft leeg door wanneer de variabele ontbreekt, zoals lokaal", async () => {
+    it("zet hem aan bij een pull_request_review", async () => {
+      process.env.GITHUB_EVENT_NAME = "pull_request_review";
+      expect(await vang()).toBe(true);
+    });
+
+    it("zet hem aan wanneer de variabele ontbreekt, zoals lokaal", async () => {
       delete process.env.GITHUB_EVENT_NAME;
-      expect(await vangInvoer()).toBe("");
-      expect(prContextVanGebeurtenis((await vangInvoer()) ?? "")).toBe(true);
+      expect(await vang()).toBe(true);
     });
   });
 });
@@ -576,7 +584,7 @@ describe("opdrachtPoort draait de stappen werkelijk", () => {
       ackTekst: "",
       ackActor: "",
       ackRelatie: "",
-      gebeurtenis: "",
+      prContext: true,
     }).map((s) => s.naam);
     expect(namen[0]).toBe("workflow");
     expect(namen).toEqual(["workflow", "engine", "rollen", "index", "state", "sanitize", "lint"]);
@@ -592,7 +600,7 @@ describe("opdrachtPoort draait de stappen werkelijk", () => {
       ackTekst: "",
       ackActor: "",
       ackRelatie: "",
-      gebeurtenis: "",
+      prContext: true,
     })[0];
     await expect(eerste.draai()).resolves.not.toBe(0);
   });
