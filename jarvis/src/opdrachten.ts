@@ -933,6 +933,11 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     ? `een review van ${ackActor} (${ackRelatie || "relatie onbekend"})`
     : "een bron zonder aanwijsbare menselijke auteur";
   const statusImpact = /Current-State-Impact:\s*(none|geen)/i.test(tekst);
+  // `tekst` is PR-titel plus PR-body. Bij een `push`-gebeurtenis levert de
+  // workflow beide leeg aan, want `github.event.pull_request` bestaat daar niet.
+  // Een pull request zonder titel én zonder body bestaat niet, dus lege tekst
+  // betekent hier: geen pull-requestcontext.
+  const prContext = tekst.trim() !== "";
   // Mapnamen komen uit de configuratie en de indeling eronder is vrij; tel dus
   // op de bestandsnaam, niet op een vast pad.
   const decPatroon = new RegExp(`^${config.knowledge_map}/.*DEC-\\d{4}\\.md$`);
@@ -1010,6 +1015,7 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     eigenaarsPunten,
     statusCommitsSinds: Number.parseInt(statusCommits || "0", 10) || 0,
     statusImpactVerklaard: statusImpact,
+    prContext,
     nieuweDecs,
     rolControleVanafBasis: basisStartpunt,
     commitsAfgekapt: alleCommits.length - gelezen.length,
