@@ -442,6 +442,9 @@ ${tekstUitBestand}`,
     ackTekst: await leesBestandOfLeeg(wortel, vlaggen.get("ack-bestand"), "ackbestand"),
     ackActor: vlaggen.get("ack-actor") ?? "",
     ackRelatie: vlaggen.get("ack-relatie") ?? "",
+    // `jarvis lint` draait van de opdrachtregel; daar is geen gebeurtenis en
+    // geldt de statusdrift-controle onverkort.
+    prContext: true,
   });
 }
 
@@ -531,6 +534,7 @@ ${lees("PR_BODY")}`,
       ackTekst: lees("REVIEW_BODY"),
       ackActor: lees("REVIEW_ACTOR"),
       ackRelatie: lees("REVIEW_RELATIE"),
+      prContext: prContextVanGebeurtenis(lees("GITHUB_EVENT_NAME")),
     }),
   );
 }
@@ -907,7 +911,42 @@ type PoortInvoer = {
   readonly ackTekst: string;
   readonly ackActor: string;
   readonly ackRelatie: string;
+  /**
+   * Is er een pull-requestcontext waarin een `Current-State-Impact`-verklaring
+   * te lezen valt?
+   *
+   * Komt als kant-en-klare invoerwaarde binnen en wordt niet dieper in de poort
+   * berekend, net zoals `tekst`. Dat is hier dragend. Het defect dat deze
+   * waarde herstelt zat niet in het afleiden maar in de kóppeling: wélk signaal
+   * de controle binnenkrijgt. Zolang die koppeling in `voerPoortUit` stond, kon
+   * zij stilzwijgend veranderen zonder dat één test omviel — QA mat dat twee
+   * keer. Nu staat zij op de twee ingangen zelf, waar de stub van
+   * `opdrachtPoort` haar afvangt.
+   */
+  readonly prContext: boolean;
 };
+
+/**
+ * Is er een pull-requestcontext waarin een `Current-State-Impact`-verklaring te
+ * lezen valt? Afgeleid uit de gebeurtenis, niet uit de afwezigheid van tekst.
+ *
+ * Alleen bij `push` bestaat `github.event.pull_request` niet, dus zijn PR_TITEL
+ * en PR_BODY leeg en is de verklaring principieel onvindbaar. Daar meet de
+ * statusdrift-controle niets en slaat zij over.
+ *
+ * Waarom niet op lege tekst: die heeft een tweede, volkomen legitieme
+ * producent, namelijk elke aanroep van de opdrachtregel zonder PR-tekst —
+ * precies hoe `CLAUDE.md` de poort vóór een pull request voorschrijft en hoe
+ * elk afnemend project hem draait. Die twee gevallen kwamen daardoor op één
+ * hoop en de lokale poort raakte de controle kwijt: groen op een wijziging die
+ * de pull-requestrun daarna afwees.
+ *
+ * Buiten GitHub Actions is de waarde leeg en geldt de controle onverkort. Dat
+ * is de strengste stand, en het gedrag van vóór deze reparatie.
+ */
+export function prContextVanGebeurtenis(gebeurtenis: string): boolean {
+  return gebeurtenis !== "push";
+}
 
 /**
  * De deterministische poort, met de waarden al opgelost.
@@ -917,7 +956,7 @@ type PoortInvoer = {
  */
 async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   const { wortel, config, lading } = await laadAlles();
-  const { basis, tekst, ackTekst, ackActor, ackRelatie } = invoer;
+  const { basis, tekst, ackTekst, ackActor, ackRelatie, prContext } = invoer;
   const bestanden = await gewijzigdeBestanden(wortel, basis);
 
 
@@ -933,11 +972,6 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     ? `een review van ${ackActor} (${ackRelatie || "relatie onbekend"})`
     : "een bron zonder aanwijsbare menselijke auteur";
   const statusImpact = /Current-State-Impact:\s*(none|geen)/i.test(tekst);
-  // `tekst` is PR-titel plus PR-body. Bij een `push`-gebeurtenis levert de
-  // workflow beide leeg aan, want `github.event.pull_request` bestaat daar niet.
-  // Een pull request zonder titel én zonder body bestaat niet, dus lege tekst
-  // betekent hier: geen pull-requestcontext.
-  const prContext = tekst.trim() !== "";
   // Mapnamen komen uit de configuratie en de indeling eronder is vrij; tel dus
   // op de bestandsnaam, niet op een vast pad.
   const decPatroon = new RegExp(`^${config.knowledge_map}/.*DEC-\\d{4}\\.md$`);

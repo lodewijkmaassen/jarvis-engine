@@ -24,7 +24,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import {
   ACTIEVE_ATTESTATIE,
   ACTIEVE_WORKFLOW,
@@ -39,7 +39,7 @@ import {
   type BestandsFeiten,
   type GovernanceInvoer,
 } from "@/jarvis/src/workflow";
-import { controleerWorkflow, opdrachtPoort, poortStappen, poortUitkomst } from "@/jarvis/src/opdrachten";
+import { controleerWorkflow, opdrachtPoort, poortStappen, poortUitkomst, prContextVanGebeurtenis } from "@/jarvis/src/opdrachten";
 
 /** Ruwe bytes, zonder encoding: elke omzetting naar tekst is al een interpretatie. */
 const ACTIEF = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-lint.yml"));
@@ -349,7 +349,7 @@ describe("de paden liggen in code vast", () => {
 describe("de poort roept de workflowcontrole werkelijk aan", () => {
   // Zonder deze twee tests is de controle wel getest maar niet ingebouwd: QA
   // schrapte de aanroep en de hele suite bleef groen.
-  const waarden = { basis: "origin/main", tekst: "", ackTekst: "", ackActor: "", ackRelatie: "" };
+  const waarden = { basis: "origin/main", tekst: "", ackTekst: "", ackActor: "", ackRelatie: "", prContext: true };
 
   it("heeft workflow als eerste stap", () => {
     const namen = poortStappen("/repo", waarden).map((s) => s.naam);
@@ -461,6 +461,92 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
   });
 });
 
+// De statusdrift-controle mag alleen overslaan waar de verklaring principieel
+// onleesbaar is. Dat is één geval: de `push`-gebeurtenis, waar
+// `github.event.pull_request` niet bestaat. Eerder werd dat afgeleid uit lege
+// PR-tekst, en dat sloeg de controle óók over bij elke lokale aanroep zonder
+// tekst — precies de pre-PR-poort die CLAUDE.md voorschrijft. Deze tests
+// leggen vast dat het signaal nu de gebeurtenis is.
+describe("prContextVanGebeurtenis", () => {
+  it("meldt geen pull-requestcontext bij een push", () => {
+    expect(prContextVanGebeurtenis("push")).toBe(false);
+  });
+
+  it("meldt wél context bij pull_request", () => {
+    expect(prContextVanGebeurtenis("pull_request")).toBe(true);
+  });
+
+  it("meldt wél context bij pull_request_review", () => {
+    expect(prContextVanGebeurtenis("pull_request_review")).toBe(true);
+  });
+
+  it("houdt de controle aan buiten GitHub Actions, waar de waarde leeg is", () => {
+    // De lokale poort en elk afnemend project draaien zonder deze variabele.
+    // Dit is de regressie die de vorige vorm veroorzaakte: daar viel de
+    // controle hier weg en gaf de laptop groen op wat de CI afwees.
+    expect(prContextVanGebeurtenis("")).toBe(true);
+  });
+
+  it("houdt de controle aan bij elke andere gebeurtenis", () => {
+    expect(prContextVanGebeurtenis("workflow_dispatch")).toBe(true);
+    expect(prContextVanGebeurtenis("schedule")).toBe(true);
+  });
+
+  // De koppeling zelf, en niet alleen de afleiding. Zonder deze test is het
+  // defect onbewaakt: de vijf hierboven geven de gebeurtenis expliciet mee en
+  // blijven dus groen ook als de aanroeper zijn signaal ergens anders vandaan
+  // haalt — precies de regressie waarvoor dit herstel is geschreven. QA mat dat
+  // met één teruggedraaide regel: 865 tests groen, regressie volledig terug.
+  // De koppeling zelf, en niet alleen de afleiding. Dit is waar het defect zat:
+  // niet in `gebeurtenis !== "push"`, maar in wélk signaal de poort binnenkrijgt.
+  // Een test die alleen de pure functie aanroept, blijft groen terwijl de
+  // aanroeper zijn signaal ergens anders vandaan haalt — QA mat dat: 865 tests
+  // groen met de regressie volledig terug. Daarom toetst dit `opdrachtPoort`,
+  // die de omgeving leest, en niet de functie los.
+  // De koppeling zelf, en niet alleen de afleiding. Daar zat het defect: niet
+  // in `gebeurtenis !== "push"`, maar in wélk signaal de controle binnenkrijgt.
+  // QA weerlegde twee eerdere pogingen — beide keren bleef de suite groen
+  // terwijl de regressie terug was, omdat de koppeling binnen `voerPoortUit`
+  // stond en geen test die functie uitvoert. Daarom is `prContext` nu een
+  // invoerwaarde die `opdrachtPoort` zet, en vangt de stub hem hier af.
+  describe("opdrachtPoort zet prContext uit de gebeurtenis in de omgeving", () => {
+    const origineel = process.env.GITHUB_EVENT_NAME;
+    afterEach(() => {
+      if (origineel === undefined) delete process.env.GITHUB_EVENT_NAME;
+      else process.env.GITHUB_EVENT_NAME = origineel;
+    });
+
+    const vang = async (): Promise<boolean | undefined> => {
+      let gezien: boolean | undefined;
+      await opdrachtPoort((_wortel, invoer) => {
+        gezien = invoer.prContext;
+        return [];
+      });
+      return gezien;
+    };
+
+    it("zet hem uit bij een push, want daar is geen PR-tekst", async () => {
+      process.env.GITHUB_EVENT_NAME = "push";
+      expect(await vang()).toBe(false);
+    });
+
+    it("zet hem aan bij een pull_request", async () => {
+      process.env.GITHUB_EVENT_NAME = "pull_request";
+      expect(await vang()).toBe(true);
+    });
+
+    it("zet hem aan bij een pull_request_review", async () => {
+      process.env.GITHUB_EVENT_NAME = "pull_request_review";
+      expect(await vang()).toBe(true);
+    });
+
+    it("zet hem aan wanneer de variabele ontbreekt, zoals lokaal", async () => {
+      delete process.env.GITHUB_EVENT_NAME;
+      expect(await vang()).toBe(true);
+    });
+  });
+});
+
 describe("opdrachtPoort draait de stappen werkelijk", () => {
   // Hier stond een test die opdrachtPoort op een lege map losliet. Die was
   // groen om de verkeerde reden: de wortelparameter bereikte alleen de
@@ -498,6 +584,7 @@ describe("opdrachtPoort draait de stappen werkelijk", () => {
       ackTekst: "",
       ackActor: "",
       ackRelatie: "",
+      prContext: true,
     }).map((s) => s.naam);
     expect(namen[0]).toBe("workflow");
     expect(namen).toEqual(["workflow", "engine", "rollen", "index", "state", "sanitize", "lint"]);
@@ -513,6 +600,7 @@ describe("opdrachtPoort draait de stappen werkelijk", () => {
       ackTekst: "",
       ackActor: "",
       ackRelatie: "",
+      prContext: true,
     })[0];
     await expect(eerste.draai()).resolves.not.toBe(0);
   });
