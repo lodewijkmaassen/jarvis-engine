@@ -47,6 +47,7 @@ import {
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
 import { ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
+import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
   ACTIEVE_ATTESTATIE,
   ACTIEVE_WORKFLOW,
@@ -82,6 +83,7 @@ import {
   ACTIVITEIT_SQL,
   BERICHT_VAN_JARVIS_SQL,
   claimSql,
+  DOCUMENT_LEES_SQL,
   DOCUMENT_SQL,
   isOordeel,
   isRunOorzaak,
@@ -101,6 +103,8 @@ import {
   TOETSING_SQL,
   verbindingsBron,
   verwerktSql,
+  VRAAG_REVIEW_SQL,
+  LEES_REVIEW_SQL,
   WIE_SQL,
 } from "./db";
 import { randomBytes } from "node:crypto";
@@ -1425,6 +1429,9 @@ function help(): number {
       "                                    en samenvoegen na akkoord van de eigenaar (DEC-0043).",
       "                                    attesteren toetst vooraf en start de workflow niet als die",
       "                                    toch zou weigeren: exitcode 3 = nog niet rijp, niets gestart.",
+      "  review <nummer> --repo <slug> [--model <m>]",
+      "                                    Onafhankelijke review van een pull request door een tweede model",
+      "                                    (DEC-0046): hoogstens één per pull request; exit 4 = correctie nodig.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
@@ -1845,7 +1852,8 @@ async function verbindDb(): Promise<{ readonly sql: DbClient; readonly bron: str
  *   nieuw                                  Nieuwe antwoorden en berichten van de eigenaar, als JSON.
  *   claim <tabel> <id> --door <naam>       Zet een item op "in behandeling"; slaagt alleen als het nog nieuw was.
  *   verwerkt <tabel> <id> --verwerking <t> Zet een item op "verwerkt" met de toelichting.
- *   bericht --tekst <t> [--context <json>] Schrijft een bericht van Jarvis.
+ *   bericht --tekst <t> [--context <json>] [--technisch <t>]
+ *                                          Schrijft een bericht van Jarvis in eigenaarstaal; de technische bron in context.technisch.
  *   document <id> --bestand <json>         Zet een document (overzicht/huidig, jarvis/status).
  *   run start --oorzaak <x> --door <naam>  Schrijft de startregel van deze run in het runregister.
  *   run klaar --uitkomst <tekst>           Vult diezelfde regel aan met het einde en de uitkomst.
@@ -2176,8 +2184,18 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
         console.error("jarvis db bericht: --tekst <tekst> is verplicht.");
         return 2;
       }
-      const context = vlaggen.get("context") ?? "{}";
-      JSON.parse(context);
+      // Eigenaarstaal (DEC-0046): wat de eigenaar leest is kort en zonder
+      // technische namen; de technische bron gaat mee in context.technisch.
+      const bezwaar = eigenaarstaalBezwaar(tekst);
+      if (bezwaar !== null) {
+        console.error(`jarvis db bericht: geweigerd — ${bezwaar}`);
+        return 2;
+      }
+      const contextRuw = JSON.parse(vlaggen.get("context") ?? "{}") as unknown;
+      const contextObj: Record<string, unknown> = contextRuw !== null && typeof contextRuw === "object" && !Array.isArray(contextRuw) ? { ...(contextRuw as Record<string, unknown>) } : {};
+      const technisch = (vlaggen.get("technisch") ?? "").trim();
+      if (technisch) contextObj.technisch = technisch.slice(0, 4_000);
+      const context = JSON.stringify(contextObj);
       const id = berichtId(new Date(), randomBytes(4).toString("hex"));
       await sql.unsafe(BERICHT_VAN_JARVIS_SQL, [id, tekst, context]);
       console.log(`jarvis db: bericht ${id} geschreven.`);
@@ -2266,6 +2284,199 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
     // Nooit de verbindingsreeks of het wachtwoord in een foutmelding.
     const tekst = fout instanceof Error ? fout.message : String(fout);
     console.error(`jarvis db: mislukt: ${tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
+    return 1;
+  } finally {
+    await sql.end({ timeout: 2 });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Review door een tweede model (DEC-0046). Claude bouwt; een ander model
+// leest de pull request met alleen de relevante context en zegt of het
+// klopt. Hoogstens één review per pull request, hoogstens één correctieronde
+// — de engine bewaakt dat: bestaat het reviewdocument al, dan stopt de
+// opdracht met exit 3. Het geheim van de leverancier staat in de Vault en
+// wordt door jarvis.vraag_review in de database bij het verzoek gezet; de
+// engine ziet alleen het verzoeknummer en het antwoord.
+// ---------------------------------------------------------------------------
+
+/** Hoe lang de engine op het antwoord van de reviewer wacht, en hoe vaak hij peilt. */
+const REVIEW_WACHT_SECONDEN = 240;
+const REVIEW_PEIL_MS = 5_000;
+const REVIEW_MODEL_STANDAARD = "gpt-5.1";
+
+type ReviewDocument = {
+  readonly repo: string;
+  readonly nummer: number;
+  readonly kop: string;
+  readonly model: string;
+  readonly op: string;
+  readonly door: string;
+  readonly review: ModelReview;
+  readonly verzoek_id: number | null;
+};
+
+/**
+ * `jarvis review <nummer> --repo <slug> [--model <m>] [--taak <T-…>]`
+ * Exit 0 = akkoord, 4 = correctie nodig (één ronde), 3 = al beoordeeld, 1 = mislukt.
+ */
+async function opdrachtReview(losse: readonly string[], vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const nummer = Number.parseInt(losse[0] ?? "", 10);
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  const slug = vlaggen.get("repo") ?? (await slugUitOrigin(wortel));
+  if (!Number.isInteger(nummer) || nummer <= 0 || !slug || !/^[^/\s]+\/[^/\s]+$/.test(slug)) {
+    console.error("jarvis review: gebruik: jarvis review <nummer> --repo <eigenaar/naam> [--model <m>] [--taak <T-…>]");
+    return 2;
+  }
+  const model = (vlaggen.get("model") ?? process.env.JARVIS_REVIEW_MODEL ?? REVIEW_MODEL_STANDAARD).trim();
+  const token = await leesBotToken();
+  if (token === null) {
+    console.error("jarvis review: geen bottoken gevonden (JARVIS_BOT_TOKEN of ~/.jarvis-bot-token).");
+    return 1;
+  }
+  const verbinding = await verbindDb();
+  if (verbinding === null) {
+    console.error("jarvis review: geen weg naar de eigen database (verbindingsreeks of Edge Function jarvis-db).");
+    return 1;
+  }
+  const { sql } = verbinding;
+  const docId = reviewDocumentId(slug, nummer);
+  try {
+    // Eén review per pull request: bestaat er al een, dan is dit de tweede ronde en die is er niet.
+    const bestaand = await sql.unsafe(DOCUMENT_LEES_SQL, [docId]);
+    if (bestaand.length > 0) {
+      const inhoud = bestaand[0]?.inhoud as ReviewDocument | undefined;
+      console.log(`jarvis review: ${slug}#${nummer} is al beoordeeld (${inhoud?.op ?? "?"}, kop ${String(inhoud?.kop ?? "").slice(0, 7)}, oordeel ${inhoud?.review?.oordeel ?? "?"}); hoogstens één reviewronde per pull request.`);
+      if (inhoud?.review) console.log(rendereerReview(inhoud.review, { repo: slug, nummer, kop: inhoud.kop, model: inhoud.model }));
+      return 3;
+    }
+
+    const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
+    if (pr.status !== 200) {
+      console.error(`jarvis review: pull request niet te lezen (${foutTekst(pr)}).`);
+      return 1;
+    }
+    const p = pr.lading as { title: string; body: string | null; head: { sha: string }; state: string };
+    const bestanden = await github(token, "GET", `/repos/${slug}/pulls/${nummer}/files?per_page=100`);
+    if (bestanden.status !== 200) {
+      console.error(`jarvis review: bestanden niet te lezen (${foutTekst(bestanden)}).`);
+      return 1;
+    }
+    const diff = (bestanden.lading as { filename: string; status: string; patch?: string }[]).map((b) => ({
+      bestand: b.filename,
+      status: b.status,
+      patch: b.patch ?? "(geen patch: binair of te groot)",
+    }));
+
+    // De opdracht en acceptatiecriteria: het dossier van de taak die de PR noemt
+    // (--taak, of "Taak: T-…" in de PR-tekst), gelezen uit de werkmap als het er staat.
+    const beschrijving = p.body ?? "";
+    const taakVlag = vlaggen.get("taak") ?? "";
+    const taakUitTekst = /\b(T-\d{8}-[a-z0-9-]+)\b/i.exec(beschrijving)?.[1] ?? null;
+    const taak = /^T-\d{8}-[a-z0-9-]+$/i.test(taakVlag) ? taakVlag : taakUitTekst;
+    let dossier: string | null = null;
+    if (taak !== null) {
+      const config = await laadConfig(wortel);
+      const takenMap = config.ok ? config.config.taken_map : "tasks";
+      dossier = await leesOfNull(path.join(wortel, takenMap, taak, "opdracht.md"));
+      const analyse = await leesOfNull(path.join(wortel, takenMap, taak, "analysis.md"));
+      if (dossier !== null && analyse !== null) {
+        const criteria = /##\s*Acceptatiecriteria[\s\S]*?(?=\n##\s|$)/i.exec(analyse)?.[0];
+        if (criteria) dossier = `${dossier}\n\n${criteria}`;
+      }
+    }
+
+    // Relevante kennis: het contextpakket van de kennislaag, klein (klasse S),
+    // gestuurd door de titel en de opdracht — geen handmatige selectie.
+    let context = "";
+    try {
+      const { config, lading } = await laadAlles();
+      const pakket = await bouwContextPakket({
+        taak: `${p.title} ${beschrijving.slice(0, 600)}`,
+        klasse: "S",
+        config,
+        records: lading.records,
+        bestanden: diff.map((d) => d.bestand),
+        readSource: createFileReader(wortel),
+        gegenereerdOp: new Date().toISOString(),
+      });
+      context = rendereerPakket(pakket);
+    } catch (fout) {
+      context = `(geen contextpakket: ${fout instanceof Error ? fout.message : String(fout)})`;
+    }
+
+    const vraag = bouwReviewVraag({ repo: slug, nummer, kop: p.head.sha, titel: p.title, beschrijving, diff, dossier, context });
+    const aanroep = bouwAanroep(model, vraag);
+    const gevraagd = await sql.unsafe(VRAAG_REVIEW_SQL, [JSON.stringify(aanroep)]);
+    const verzoekId = Number(gevraagd[0]?.id);
+    if (!Number.isInteger(verzoekId) || verzoekId <= 0) {
+      console.error("jarvis review: de database heeft het verzoek niet verstuurd (jarvis.vraag_review gaf geen nummer; staat de API-sleutel in de Vault en de url in de instellingen?).");
+      return 1;
+    }
+    console.error(`jarvis review: verzoek ${verzoekId} verstuurd (${model}, ${vraag.length} tekens); wacht op het antwoord…`);
+
+    const start = Date.now();
+    let antwoord: { status_code: number | null; content: string | null; error_msg: string | null; timed_out: boolean | null } | null = null;
+    while (Date.now() - start < REVIEW_WACHT_SECONDEN * 1000) {
+      await new Promise((klaar) => setTimeout(klaar, REVIEW_PEIL_MS));
+      const rijen = await sql.unsafe(LEES_REVIEW_SQL, [verzoekId]);
+      const r = rijen[0];
+      if (r && (r.status_code !== null || r.error_msg !== null || r.timed_out === true)) {
+        antwoord = {
+          status_code: r.status_code === null ? null : Number(r.status_code),
+          content: r.content === null || r.content === undefined ? null : String(r.content),
+          error_msg: r.error_msg === null || r.error_msg === undefined ? null : String(r.error_msg),
+          timed_out: r.timed_out === true,
+        };
+        break;
+      }
+    }
+    if (antwoord === null) {
+      console.error(`jarvis review: geen antwoord binnen ${REVIEW_WACHT_SECONDEN} seconden (verzoek ${verzoekId}).`);
+      return 1;
+    }
+    if (antwoord.timed_out || antwoord.error_msg) {
+      console.error(`jarvis review: het verzoek is mislukt (${antwoord.timed_out ? "time-out" : antwoord.error_msg}).`);
+      return 1;
+    }
+    let lading: unknown = null;
+    try {
+      lading = antwoord.content === null ? null : JSON.parse(antwoord.content);
+    } catch {
+      lading = null;
+    }
+    if (antwoord.status_code !== 200) {
+      console.error(`jarvis review: de leverancier antwoordde HTTP ${antwoord.status_code}${leverancierFout(lading) ? ` — ${leverancierFout(lading)}` : ""}.`);
+      return 1;
+    }
+    const tekst = antwoordTekst(lading);
+    if (tekst === null) {
+      console.error("jarvis review: het antwoord bevat geen tekst.");
+      return 1;
+    }
+    const review = parseerReview(tekst);
+    if (typeof review === "string") {
+      console.error(`jarvis review: het oordeel is onleesbaar (${review}).`);
+      return 1;
+    }
+
+    const door = dezeUitvoerder();
+    const document: ReviewDocument = { repo: slug, nummer, kop: p.head.sha, model, op: new Date().toISOString(), door, review, verzoek_id: verzoekId };
+    await sql.unsafe(DOCUMENT_SQL, [docId, JSON.stringify(document)]);
+    await schrijfActiviteit({
+      uitvoerder: door,
+      rol: "reviewer",
+      taak,
+      project: null,
+      soort: "review",
+      tekst: `review ${review.oordeel} op ${slug}#${nummer} (${p.head.sha.slice(0, 7)}): ${review.punten.filter((x) => x.ernst === "hoog").length} hoog, ${review.punten.length} punt(en)`,
+      verwijzing: `${slug}#${nummer}`,
+    });
+    console.log(rendereerReview(review, { repo: slug, nummer, kop: p.head.sha, model }));
+    return review.oordeel === "correctie" ? 4 : 0;
+  } catch (fout) {
+    const tekstFout = fout instanceof Error ? fout.message : String(fout);
+    console.error(`jarvis review: mislukt: ${tekstFout.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
     return 1;
   } finally {
     await sql.end({ timeout: 2 });
@@ -2722,6 +2933,8 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
     case "db":
       code = await opdrachtDb(losse, vlaggen);
       break;
+    case "review":
+      return opdrachtReview(losse, vlaggen);
     case "attestatie":
       code = await opdrachtAttestatie(vlaggen);
       break;

@@ -26,6 +26,7 @@ _Gegenereerd op 2026-09-21._
 | T-20260913-akkoord-geven | actief | Autorisatie van de eigenaar via de Jarvis-interface, niet via handelingen op GitHub |
 | T-20260914-agent-operations | actief | Jarvis als observeerbaar en autonoom digitaal team — Operations-view en Task Controller |
 | T-20260914-eigen-laag | actief | De eigen Jarvis-laag (app en database) leidend; de artifact-database en sessiegebonden bestanden geen afhankelijkheid meer |
+| T-20260917-chatgpt-review | actief | Een tweede model als onafhankelijke reviewer in de keten, en eigenaarstaal in de app |
 
 <!-- jarvis:feiten:eind -->
 
@@ -203,6 +204,17 @@ databaseverbinding, een leesfout op GitHub, een onleesbare configuratie — dan
 volgt één waarschuwing en gaat de dispatch gewoon door. Ze mag alleen minder
 starten, nooit strenger zijn dan de run, die elke controle onveranderd zelf
 blijft doen.
+Sinds `jarvis review` (DEC-0046 in ToVas Flow) heeft de engine een rol
+`reviewer`: een tweede model leest een pull request met alleen de relevante
+context — de PR, het taakdossier en het contextpakket van de kennislaag — en
+oordeelt op aannames, risico's en samenhang; hoogstens één ronde per pull
+request (het document `review/<repo>#<n>` in de eigen database is de grendel),
+daarna hoogstens één correctie. De aanroep gaat via de database
+(`jarvis.vraag_review`/`jarvis.lees_review`, pg_net), zodat de API-sleutel in
+de Vault blijft; de engine kent geen leveranciersnaam en spreekt het gangbare
+chat-completions-formaat. Tegelijk bewaakt `jarvis db bericht` de
+eigenaarstaal: een bericht met technische namen wordt geweigerd, de
+technische bron gaat mee in `--technisch` en de app toont hem ingeklapt.
 
 ## Volgende stap
 

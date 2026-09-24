@@ -14,7 +14,7 @@
 
 import type { Overzicht, TaakItem } from "./overzicht";
 
-export const ROLLEN = ["orchestrator", "task-controller", "architect", "developer", "qa", "knowledge-manager"] as const;
+export const ROLLEN = ["orchestrator", "task-controller", "architect", "developer", "reviewer", "qa", "knowledge-manager"] as const;
 export type Rol = (typeof ROLLEN)[number];
 
 export const TOESTANDEN = ["QUEUED", "RUNNING", "BLOCKED", "WAITING_FOR_USER", "WAITING_FOR_DEPENDENCY", "WAITING_FOR_EVENT", "DONE", "AFWIJKING"] as const;
@@ -99,6 +99,7 @@ export const HEARTBEAT_MINUTEN: Readonly<Record<Rol, number>> = {
   "task-controller": 30,
   architect: 45,
   developer: 90,
+  reviewer: 10,
   qa: 45,
   "knowledge-manager": 20,
 };

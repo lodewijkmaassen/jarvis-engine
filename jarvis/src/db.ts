@@ -152,6 +152,16 @@ export function restPadToetsingKop(repo: string, nummer: number, kop: string): s
   );
 }
 
+// De onafhankelijke review door een tweede model (DEC-0046). De engine geeft
+// de aanroep als JSON; jarvis.vraag_review zet er in de database de
+// API-sleutel uit de Vault bij en verstuurt hem (pg_net, asynchroon). Het
+// antwoord komt terug via jarvis.lees_review op het verzoeknummer. Zo komt
+// het geheim de engine nooit in — dezelfde lijn als de brug (RSK-0022).
+export const VRAAG_REVIEW_SQL = "select jarvis.vraag_review($1::text::jsonb) as id";
+export const LEES_REVIEW_SQL = "select status_code, content, error_msg, timed_out from jarvis.lees_review($1)";
+/** Eén document lezen: de engine kijkt of een pull request al een review heeft. */
+export const DOCUMENT_LEES_SQL = "select inhoud, bijgewerkt from jarvis.documenten where id = $1";
+
 /** Wat de verbinding meldt bij `jarvis db wie`; ook een toegestaan statement. */
 export const WIE_SQL = "select current_user as gebruiker, current_setting('server_version') as versie";
 
@@ -283,5 +293,8 @@ export function toegestaneSql(): readonly string[] {
     AUTORISATIES_SINDS_SQL,
     ACTIVITEIT_SQL,
     ACTIVITEIT_RECENT_SQL,
+    VRAAG_REVIEW_SQL,
+    LEES_REVIEW_SQL,
+    DOCUMENT_LEES_SQL,
   ];
 }

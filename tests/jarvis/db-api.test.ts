@@ -13,7 +13,7 @@ describe("de allowlist van de Edge Function jarvis-db", () => {
   it("bevat alleen statements op het schema jarvis, plus de wie-vraag", () => {
     for (const sql of bestand) {
       if (sql === WIE_SQL) continue;
-      expect(sql).toMatch(/\bjarvis\.(antwoorden|berichten|documenten|autorisaties|toetsingen|activiteit)\b/);
+      expect(sql).toMatch(/\bjarvis\.(antwoorden|berichten|documenten|autorisaties|toetsingen|activiteit|vraag_review|lees_review)\b/);
       expect(sql).not.toMatch(/\b(drop|truncate|alter|grant|revoke|delete)\b/i);
     }
   });
