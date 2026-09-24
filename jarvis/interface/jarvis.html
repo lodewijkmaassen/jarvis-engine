@@ -59,6 +59,8 @@ p{margin:0}
 .zet b{font-weight:500;color:var(--cyaan)}
 .zet.eigenaar b{color:var(--midden)}
 .zet.stil b{color:var(--hoog)}
+.zet.wacht b{color:var(--laag)}
+.nulstand{display:block;margin-top:6px;font-family:var(--mono);font-size:11.5px;color:var(--ok)}
 .scope{max-height:180px;overflow:auto;white-space:pre-wrap;font-family:var(--mono);font-size:11px;line-height:1.45;color:var(--gedempt);background:rgba(6,10,16,.5);border:1px solid var(--lijn);border-radius:8px;padding:8px 10px;margin:6px 0}
 .akkoord{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
 .knoop.beantwoord text{fill:var(--zacht)}
@@ -327,6 +329,23 @@ function dagLabel(iso) {
   if (verschil < 7) return d.toLocaleDateString("nl-NL", { weekday: "long" }).replace(/^./, (c) => c.toUpperCase());
   return `${d.getDate()} ${MAANDEN[d.getMonth()]}`;
 }
+// Wie is aan zet, in de woorden van de kaart. `wacht` is er sinds 2026-09-24:
+// een taak die op een gebeurtenis, een uitvoerder, een taak of een pull
+// request wacht las daarvoor als "Jarvis aan zet", waardoor de kaart werk
+// toonde dat niemand kon doen.
+const WACHT_WOORD = { gebeurtenis: "wacht op gebeurtenis", uitvoerder: "wacht op uitvoerder", taak: "wacht op taak", "pull-request": "wacht op pull request" };
+function zetKort(t) {
+  if (t.aan_zet === "eigenaar") return "wacht op jou";
+  if (t.aan_zet === "jarvis") return "Jarvis aan zet";
+  if (t.aan_zet === "wacht") return WACHT_WOORD[t.wacht_soort] ?? "wacht";
+  return "";
+}
+function zetTekst(t) {
+  if (t.aan_zet === "eigenaar") return "WACHT OP JOU";
+  if (t.aan_zet === "jarvis") return "JARVIS AAN ZET";
+  if (t.aan_zet === "wacht") return (WACHT_WOORD[t.wacht_soort] ?? "wacht").toUpperCase();
+  return "NIET ACTIEF";
+}
 function relatief(iso) {
   const ms = Date.now() - new Date(iso).getTime();
   const m = Math.round(ms / 6e4), u = Math.round(ms / 36e5), d = Math.round(ms / 864e5);
@@ -550,7 +569,7 @@ function knoopSvg(n) {
       <circle class="schijf" r="${r}"/>
       <text class="sub" y="4" text-anchor="middle" style="font-size:9px">${st.length ? `${gedaan}/${st.length}` : "taak"}</text>
       ${(() => { const L = labelPlek(n, r + 6); return `<text class="blad" x="${L.x}" y="${L.y1}" text-anchor="${L.anchor}" style="font-size:10.5px">${esc(kort(t.titel, 30))}</text>
-      <text class="sub" x="${L.x}" y="${L.y2}" text-anchor="${L.anchor}" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${t.aan_zet === "eigenaar" ? "wacht op jou" : t.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>`; })()}
+      <text class="sub" x="${L.x}" y="${L.y2}" text-anchor="${L.anchor}" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : t.aan_zet === "wacht" ? "var(--laag)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${zetKort(t)}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>`; })()}
       ${!uitgevouwen && n.kinderen.length ? `<text class="plus" x="${r}" y="${r + 4}">+${n.kinderen.length}</text>` : ""}
       ${draad ? `<circle class="praat" cx="${-r - 2}" cy="${-r - 2}" r="3.5"/>` : ""}
       ${open ? `<g class="badge"><circle cx="${r}" cy="${-r}" r="8"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9.5px">${open}</text></g>` : ""}
@@ -812,7 +831,7 @@ function projectHtml(n) {
   const p = n.project; const open = p.aandacht.filter(isOpen);
   let s = `<div class="itemmeta"><span class="chip project">${p.hoofdbranch ? esc(p.hoofdbranch.naam) + " @ " + esc(p.hoofdbranch.commit) : "geen hoofdbranch"}</span><span class="chip">${p.aangesloten ? "aangesloten" : "niet aangesloten"}</span></div>`;
   s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${open.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${p.recent.length}<small>/ ${RECENT_DAGEN} d</small></div></div><div class="tegel"><span class="eyebrow">Taken</span><div class="n">${p.taken.filter((t) => t.status !== "afgerond").length}</div></div></div>`;
-  if (n.kinderen.length) s += `<div class="blok"><span class="eyebrow">Takken</span>${n.kinderen.map((k) => k.soort === "item" ? lijstRegel(k.item) : `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" ? `<small>${k.taak.stappen?.length ? `${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen · ` : ""}${k.taak.stil ? "stil" : k.taak.aan_zet === "eigenaar" ? "wacht op jou" : k.taak.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${k.taak.laatste_beweging ? " · " + esc(relatief(k.taak.laatste_beweging)) : ""}</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : `${k.kinderen.length}`}</span></button>`).join("")}</div>`;
+  if (n.kinderen.length) s += `<div class="blok"><span class="eyebrow">Takken</span>${n.kinderen.map((k) => k.soort === "item" ? lijstRegel(k.item) : `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" ? `<small>${k.taak.stappen?.length ? `${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen · ` : ""}${k.taak.stil ? "stil" : zetKort(k.taak)}${k.taak.laatste_beweging ? " · " + esc(relatief(k.taak.laatste_beweging)) : ""}</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : `${k.kinderen.length}`}</span></button>`).join("")}</div>`;
   else s += `<div class="blok"><div class="leeg"><strong>Niets open</strong>${p.aangesloten ? "Geen taak en niets voor jou." : "Sluit dit project aan om hier meer te zien."}</div></div>`;
   if (p.stand?.length) s += `<div class="blok"><span class="eyebrow">Stand</span>${p.stand.map((st, i) => `<details class="stand" ${i === 0 ? "open" : ""}><summary>${esc(st.kop)}</summary><div class="md">${md(st.tekst)}</div></details>`).join("")}</div>`;
   if (p.recent.length) s += `<div class="blok"><span class="eyebrow">Recent</span>${p.recent.slice(0, 8).map((c) => `<div class="commit"><span class="hash">${esc(c.hash)}</span><span class="ond">${esc(c.onderwerp)} <span class="mono" style="font-size:10.5px;color:var(--zacht)">${esc(dagLabel(c.datum))}${c.rol ? " · " + esc(c.rol) : ""}</span></span></div>`).join("")}</div>`;
@@ -821,7 +840,7 @@ function projectHtml(n) {
 function taakHtml(n) {
   const t = n.taak; const st = t.stappen ?? []; const gedaan = st.filter((x) => x.gedaan).length; const eersteOpen = st.findIndex((x) => !x.gedaan);
   let s = `<div class="itemmeta"><span class="chip">${esc(t.status)}</span>${t.klasse ? `<span class="chip">klasse ${esc(t.klasse)}</span>` : ""}<span class="mono" style="font-size:11px;color:var(--zacht)">${esc(t.id)}</span></div>`;
-  s += `<div class="zet ${t.stil ? "stil" : esc(t.aan_zet)}"><b>${t.stil ? "STIL" : t.aan_zet === "eigenaar" ? "WACHT OP JOU" : t.aan_zet === "jarvis" ? "JARVIS AAN ZET" : "NIET ACTIEF"}</b>${t.wacht_op ? `<span>· ${esc(t.wacht_op)}</span>` : ""}</div><div class="zet"><span>laatste beweging: ${t.laatste_beweging ? esc(relatief(t.laatste_beweging)) + " (" + esc(datumKort(t.laatste_beweging)) + " " + esc(tijd(t.laatste_beweging)) + ")" : "geen commit in " + RECENT_DAGEN + " dagen"}</span></div>`;
+  s += `<div class="zet ${t.stil ? "stil" : esc(t.aan_zet)}"><b>${t.stil ? "STIL" : zetTekst(t)}</b>${t.wacht_op ? `<span>· ${esc(t.wacht_op)}</span>` : ""}</div><div class="zet"><span>laatste beweging: ${t.laatste_beweging ? esc(relatief(t.laatste_beweging)) + " (" + esc(datumKort(t.laatste_beweging)) + " " + esc(tijd(t.laatste_beweging)) + ")" : "geen commit in " + RECENT_DAGEN + " dagen"}</span></div>`;
   if (st.length) s += `<div class="blok"><span class="eyebrow">Voortgang · ${gedaan} van ${st.length}</span><div class="balk"><i style="width:${Math.round((gedaan / st.length) * 100)}%"></i></div>${st.map((x, i) => `<div class="stap ${x.gedaan ? "gedaan" : i === eersteOpen ? "nu" : "open"}"><span class="vink">${x.gedaan ? "■" : i === eersteOpen ? "▶" : "□"}</span><span>${inlineMd(x.tekst)}</span></div>`).join("")}</div>`;
   if (t.gastheer && t.gastheer !== n.project.id) s += `<div class="bron">dossier en commits in ${esc(t.gastheer)}</div>`;
   const rg = regieVan(t.id);
@@ -909,6 +928,25 @@ function spreek(tekst) {
   speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
 
+/**
+ * De nulstand: niets voor de eigenaar én geen actieve taak waar Jarvis aan
+ * zet is. Levert de regel die dat bevestigt, of null wanneer er wel werk is.
+ * Wachtend werk telt niet mee — daar is per definitie niets te doen — maar
+ * wordt wel genoemd, zodat "niemand aan zet" niet leest als "niets bestaat".
+ */
+function nulstand(o, acties) {
+  const taken = (o.projecten ?? []).flatMap((p) => p.taken ?? []);
+  const actief = taken.filter((t) => t.aan_zet !== "niemand");
+  if (acties.nu.length || actief.some((t) => t.aan_zet === "jarvis")) return null;
+  const wachtend = actief.filter((t) => t.aan_zet === "wacht").length;
+  const bijJou = actief.filter((t) => t.aan_zet === "eigenaar").length;
+  const rest = [
+    wachtend ? `${wachtend} wachtend` : null,
+    bijJou ? `${bijJou} bij jou, niet dringend` : null,
+  ].filter((x) => x !== null);
+  return `nulstand · niemand aan zet${rest.length ? ` · ${rest.join(" · ")}` : ""}`;
+}
+
 /* ---------- render ---------- */
 function render() {
   const o = staat.overzicht; if (!o) return;
@@ -919,6 +957,11 @@ function render() {
   $status.innerHTML = `<span class="dot ${live.bezig || wachten ? "bezig" : live.live ? "" : "uit"}"></span><b>${live.bezig ? esc(kort(live.tekst, 44)) : wachten ? `${wachten} bij Jarvis` : live.live ? "sessie actief" : "geen sessie"}</b><br><span class="${leeftijdDagen > 3 ? "oud" : ""}">stand ${esc(relatief(o.gegenereerd_op))}</span>${staat.signaal ? `<br>${esc(staat.signaal)}` : ""}`;
   const acties = verzamelActies();
   $status.innerHTML += `<button class="acties-knop ${acties.nu.length ? "" : "leeg"}" data-actie="kies" data-id="root" aria-label="Wat bij jou ligt">${acties.nu.length ? `${acties.nu.length} voor jou` : acties.later.length ? `niets dringend · ${acties.later.length} open` : "niets voor jou"}</button>`;
+  // De nulstand met zoveel woorden. Zonder deze regel moest de eigenaar uit
+  // het uitblijven van meldingen afleiden dat er niets liep — en dat is geen
+  // bevestiging maar een vermoeden. Nu staat er wat er is: niemand aan zet.
+  const n = nulstand(o, acties);
+  if (n) $status.innerHTML += `<span class="nulstand">${esc(n)}</span>`;
   document.getElementById("kop-versie").textContent = `v${o.versie ?? 1}`;
 }
 

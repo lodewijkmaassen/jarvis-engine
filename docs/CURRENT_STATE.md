@@ -216,6 +216,23 @@ chat-completions-formaat. Tegelijk bewaakt `jarvis db bericht` de
 eigenaarstaal: een bericht met technische namen wordt geweigerd, de
 technische bron gaat mee in `--technisch` en de app toont hem ingeklapt.
 
+Sinds 2026-09-24 kent het overzicht een vierde antwoord op "wie is aan zet":
+naast `jarvis`, `eigenaar` en `niemand` staat er nu `wacht`. Een open stap die
+op een gebeurtenis, een andere uitvoerder, een taak of een pull request wacht,
+viel daarvoor terug op `jarvis` — de interface meldde dan "JARVIS AAN ZET" over
+werk dat bewust geparkeerd was, en na een paar dagen zelfs "STIL", alsof er een
+storing was waar een keuze stond. De vier patronen die dat bepalen staan nu op
+één plaats in `overzicht.ts` en worden door `regie.ts` geïmporteerd, zodat de
+kaart en de wachtrij niet opnieuw uiteen kunnen lopen; een test vergelijkt de
+twee beelden per geval. In dezelfde ronde levert een dossier dat in meer dan
+één aangesloten repository staat nog maar één taakregel op — de regie had die
+wacht al, het overzicht niet — en kort `wacht_op` de reden af tot één regel in
+plaats van de volledige staptekst. `jarvis overzicht --schrijf` zet het
+overzicht ten slotte zelf in de database, net als `jarvis regie --schrijf`:
+publiceren was een losse tweede opdracht die alleen in de afsluitstap van een
+routine stond, en een ronde die anders eindigde liet de interface zonder
+melding op een oude wereld staan.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.

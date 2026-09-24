@@ -751,12 +751,15 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
 }
 
 /**
- * `jarvis overzicht [--extern <pad,pad>] [--uit <bestand>]`
+ * `jarvis overzicht [--extern <pad,pad>] [--uit <bestand>] [--schrijf]`
  *
  * Bouwt het overzicht dat de interface toont: deze repository als aangesloten
  * project, plus eventuele andere repositories als niet-aangesloten. De uitvoer
  * gaat door de sanitizer voordat hij ergens terechtkomt. Dit is persistente
  * Jarvis-data die de repository verlaat, en daar geldt CON-0008 dubbel.
+ *
+ * Met `--schrijf` gaat het resultaat als document `overzicht/huidig` naar de
+ * database, zodat de interface het toont zonder een tweede opdracht.
  */
 /** Het overzicht zoals `jarvis overzicht` het bouwt, voor hergebruik door `jarvis regie`. */
 async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
@@ -854,10 +857,34 @@ async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<
   if (uit) {
     await mkdir(path.dirname(path.resolve(wortel, uit)), { recursive: true });
     await writeFile(path.resolve(wortel, uit), json, "utf8");
+  }
+
+  // `--schrijf` zet het overzicht zelf in de database, net als `jarvis regie
+  // --schrijf`. Zonder deze vlag was publiceren een losse tweede opdracht
+  // (`jarvis db document overzicht/huidig --bestand …`) die alleen in stap 9
+  // van de routine stond: een ronde die anders eindigde liet de interface op
+  // een oude wereld staan, zonder dat iets dat meldde. De sanitizer hierboven
+  // gaat er nog steeds als eerste overheen — wat de repository verlaat, is
+  // gescand, ook langs deze weg.
+  if (vlaggen.has("schrijf")) {
+    const verbinding = await verbindDb();
+    if (verbinding === null) {
+      console.error("jarvis overzicht: geen database bereikbaar; overzicht/huidig niet geschreven.");
+      return 1;
+    }
+    try {
+      await verbinding.sql.unsafe(DOCUMENT_SQL, ["overzicht/huidig", json]);
+    } finally {
+      await verbinding.sql.end({ timeout: 2 });
+    }
+  }
+
+  if (uit || vlaggen.has("schrijf")) {
     const n = overzicht.voor_jou.length;
-    console.log(
-      `jarvis overzicht: ${overzicht.projecten.length} project(en), ${n} item(s) voor de eigenaar, geschreven naar ${uit}`,
-    );
+    const waar = [uit ? `geschreven naar ${uit}` : null, vlaggen.has("schrijf") ? "overzicht/huidig gezet" : null]
+      .filter((x) => x !== null)
+      .join(", ");
+    console.log(`jarvis overzicht: ${overzicht.projecten.length} project(en), ${n} item(s) voor de eigenaar, ${waar}`);
     return 0;
   }
   process.stdout.write(json);
@@ -1474,7 +1501,7 @@ function help(): number {
       "                                    (DEC-0046): hoogstens één per pull request; exit 4 = correctie nodig.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
-      "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
+      "  overzicht [--extern <pad,pad>] [--uit <bestand>] [--schrijf]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
       "",

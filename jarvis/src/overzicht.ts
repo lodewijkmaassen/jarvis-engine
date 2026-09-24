@@ -83,13 +83,25 @@ export type TaakItem = {
   /** Het project dat het dossier draagt (waar de commits landen). */
   readonly gastheer: string;
   readonly stappen: readonly TaakStap[];
-  /** Wie moet nu iets doen: Jarvis, de eigenaar, of niemand (taak niet actief). */
-  readonly aan_zet: "jarvis" | "eigenaar" | "niemand";
-  /** Waar de taak op wacht: het eerste open eigenaarspunt, of de volgende stap. */
+  /**
+   * Wie moet nu iets doen: Jarvis, de eigenaar, niemand (taak niet actief), of
+   * `wacht` — de taak leeft, maar er valt voor niemand iets te doen tot iets
+   * buiten de wachtrij gebeurt. Die vierde waarde is er sinds 2026-09-24:
+   * zonder haar viel wachtend werk terug op `jarvis` en meldde de interface
+   * "JARVIS AAN ZET" over taken die bewust geparkeerd waren.
+   */
+  readonly aan_zet: "jarvis" | "eigenaar" | "wacht" | "niemand";
+  /** Waarop gewacht wordt, wanneer `aan_zet` `wacht` is; anders `null`. */
+  readonly wacht_soort: "gebeurtenis" | "uitvoerder" | "taak" | "pull-request" | null;
+  /** Waar de taak op wacht, in één korte regel; de volledige tekst staat in `stappen`. */
   readonly wacht_op: string | null;
   /** Datum van de laatste commit met deze taak in de trailer, binnen het venster; null = geen. */
   readonly laatste_beweging: string | null;
-  /** Jarvis is aan zet en er is al dagen geen beweging: iets om te bewaken. */
+  /**
+   * Jarvis is aan zet en er is al dagen geen beweging: iets om te bewaken.
+   * Wachtend werk telt nooit als stil — daar ís geen beweging te verwachten,
+   * en "STIL" zou dan een storing suggereren waar een keuze staat.
+   */
   readonly stil: boolean;
   /**
    * De scope waarop de eigenaar akkoord geeft (DEC-0043): de volledige tekst
@@ -107,6 +119,68 @@ export type TaakItem = {
    */
   readonly akkoord_nodig: boolean;
 };
+
+/**
+ * De vier patronen waarmee een open voortgangsstap zegt dat er op iets buiten
+ * de wachtrij wordt gewacht. Ze staan hier, en niet in `regie.ts`, omdat twee
+ * beelden van "wie is aan zet" onvermijdelijk uiteenlopen zodra er één wordt
+ * bijgewerkt: het overzicht (de interface) zei "Jarvis aan zet" over taken die
+ * de regie al als wachtend kende, en de eigenaar zag daardoor een systeem dat
+ * druk leek maar stilstond. `regie.ts` importeert ze hier.
+ */
+export const WACHT_OP_TAAK = /wacht(?:en)?\s+op\s+(T-\d{8}-[a-z0-9-]+)/i;
+export const WACHT_OP_PR = /wacht(?:en)?\s+op\s+(?:pr|pull request)\s*(?:([\w.-]+\/[\w.-]+))?#?(\d+)/i;
+export const WACHT_OP_GEBEURTENIS = /^\s*wacht(?:en)?\s+op\s+gebeurtenis\s*:\s*(.+?)\s*$/i;
+export const UITVOERDER_STAP = /\bUitvoerder:\s*\*{0,2}\s*([a-z][a-z0-9_-]*)/i;
+
+/** Waarop een stap wacht; `null` betekent: er valt gewoon werk te doen. */
+export type Wachtreden =
+  | { readonly soort: "gebeurtenis"; readonly waarop: string }
+  | { readonly soort: "uitvoerder"; readonly waarop: string }
+  | { readonly soort: "taak"; readonly waarop: string }
+  | { readonly soort: "pull-request"; readonly waarop: string }
+  | null;
+
+/**
+ * Wacht deze stap ergens op, en waarop? De volgorde is die van `bepaalTaak`
+ * in `regie.ts`, zodat beide dezelfde stap hetzelfde noemen. Het akkoord van
+ * de eigenaar zit hier bewust níét in: dat loopt via `isAkkoordStap` en levert
+ * `aan_zet: "eigenaar"`, een andere toestand dan wachten.
+ */
+export function wachtredenVanStap(stap: string | null): Wachtreden {
+  if (stap === null) return null;
+  const taak = WACHT_OP_TAAK.exec(stap);
+  if (taak) return { soort: "taak", waarop: taak[1] ?? "" };
+  const pr = WACHT_OP_PR.exec(stap);
+  if (pr) return { soort: "pull-request", waarop: pr[1] ? `${pr[1]}#${pr[2]}` : `PR #${pr[2]}` };
+  const gebeurtenis = WACHT_OP_GEBEURTENIS.exec(stap);
+  if (gebeurtenis) return { soort: "gebeurtenis", waarop: gebeurtenis[1] ?? "" };
+  const uitvoerder = UITVOERDER_STAP.exec(stap);
+  if (uitvoerder) return { soort: "uitvoerder", waarop: (uitvoerder[1] ?? "").toLowerCase() };
+  return null;
+}
+
+/**
+ * Eén korte regel voor de interface. `wacht_op` droeg eerder de volledige
+ * staptekst — in de praktijk een alinea van honderden tekens, die in de kaart
+ * als onleesbare brij belandde. De volledige tekst blijft in `stappen` staan.
+ */
+export function wachtredenTekst(reden: Wachtreden): string | null {
+  if (reden === null) return null;
+  if (reden.soort === "gebeurtenis") return `wacht op: ${kortAf(reden.waarop, 120)}`;
+  if (reden.soort === "uitvoerder") return `ligt bij uitvoerder ${reden.waarop}`;
+  if (reden.soort === "taak") return `wacht op taak ${reden.waarop}`;
+  return `wacht op ${reden.waarop}`;
+}
+
+/** Kort een regel af op een woordgrens, met een beletselteken. */
+function kortAf(tekst: string, max: number): string {
+  const schoon = tekst.replace(/\s+/g, " ").trim();
+  if (schoon.length <= max) return schoon;
+  const knip = schoon.slice(0, max);
+  const spatie = knip.lastIndexOf(" ");
+  return `${(spatie > max * 0.6 ? knip.slice(0, spatie) : knip).trimEnd()}…`;
+}
 
 /** Een voortgangsstap die het akkoord van de eigenaar op de taak beschrijft. */
 export function isAkkoordStap(tekst: string): boolean {
@@ -817,7 +891,17 @@ export function leesTaken(
         actief &&
         t.tekst !== undefined &&
         ((volgendeStap !== null && isAkkoordStap(volgendeStap)) || vraagtAkkoord(t.resultaat));
-      const aan_zet: TaakItem["aan_zet"] = !actief ? "niemand" : openVoorEigenaar.length > 0 || akkoord_nodig ? "eigenaar" : "jarvis";
+      // De eigenaar gaat voor: een openstaand punt of een akkoordvraag is een
+      // echte handeling van een mens, en die verdwijnt niet doordat de stap
+      // daarnaast ergens op wacht. Pas daarna telt de wachtreden.
+      const wachtreden = !actief || openVoorEigenaar.length > 0 || akkoord_nodig ? null : wachtredenVanStap(volgendeStap);
+      const aan_zet: TaakItem["aan_zet"] = !actief
+        ? "niemand"
+        : openVoorEigenaar.length > 0 || akkoord_nodig
+          ? "eigenaar"
+          : wachtreden !== null
+            ? "wacht"
+            : "jarvis";
       const dagenStil = laatste ? (nu.getTime() - new Date(laatste).getTime()) / 864e5 : Infinity;
       return {
         id: t.id,
@@ -831,7 +915,11 @@ export function leesTaken(
         gastheer,
         stappen,
         aan_zet,
-        wacht_op: openVoorEigenaar.length > 0 ? openVoorEigenaar[0].titel : volgendeStap,
+        wacht_soort: wachtreden?.soort ?? null,
+        wacht_op:
+          openVoorEigenaar.length > 0
+            ? openVoorEigenaar[0].titel
+            : (wachtredenTekst(wachtreden) ?? (volgendeStap === null ? null : kortAf(volgendeStap, 160))),
         laatste_beweging: laatste,
         stil: aan_zet === "jarvis" && dagenStil >= STIL_NA_DAGEN,
         scope: actief && t.tekst !== undefined ? t.tekst.replace(/\r\n/g, "\n") : null,
@@ -939,10 +1027,31 @@ function herverdeel(projecten: readonly ProjectOverzicht[]): readonly ProjectOve
         bron.aandacht.filter((a) => (ids.has(a.project) ? a.project === doel.id : bron.id === doel.id)),
       ),
     ),
-    taken: projecten
-      .flatMap((bron) => bron.taken.filter((t) => (ids.has(t.project) ? t.project === doel.id : bron.id === doel.id)))
-      .sort((a, b) => a.id.localeCompare(b.id)),
+    taken: eenTaakregelPerDossier(
+      projecten.flatMap((bron) => bron.taken.filter((t) => (ids.has(t.project) ? t.project === doel.id : bron.id === doel.id))),
+    ).sort((a, b) => a.id.localeCompare(b.id)),
   }));
+}
+
+/**
+ * Eén taakregel per dossier-id. Een dossier dat in meer dan één aangesloten
+ * repository staat — een dossierspiegel — passeerde het filter hierboven per
+ * bron en kwam dus tweemaal in de kaart. `bepaalRegie` had die wacht al
+ * (`gezien`), het overzicht niet, en daardoor telde de interface meer werk
+ * dan er bestond.
+ *
+ * Welke kopie wint: die van het project dat de taak zegt te zijn
+ * (`gastheer === project`), want dat is de repository waar de commits landen
+ * en waar het dossier dus het verst is. Is die er niet, dan de eerste — de
+ * bronvolgorde is vast, dus de uitkomst is dat ook.
+ */
+function eenTaakregelPerDossier(taken: readonly TaakItem[]): TaakItem[] {
+  const perId = new Map<string, TaakItem>();
+  for (const t of taken) {
+    const bestaand = perId.get(t.id);
+    if (bestaand === undefined || (bestaand.gastheer !== bestaand.project && t.gastheer === t.project)) perId.set(t.id, t);
+  }
+  return [...perId.values()];
 }
 
 /**

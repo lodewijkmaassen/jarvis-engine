@@ -10,7 +10,7 @@ function taak(id: string, over: Partial<TaakItem> = {}): TaakItem {
   return {
     id, titel: id, status: "actief", klasse: "S", project: "jarvis", gastheer: "jarvis",
     stappen: [{ tekst: "Gedaan", gedaan: true }, { tekst: "Bouw de knop", gedaan: false }],
-    aan_zet: "jarvis", wacht_op: "Bouw de knop", laatste_beweging: iso(600), stil: false, scope: "x", scope_hash: "y", akkoord_nodig: false,
+    aan_zet: "jarvis", wacht_soort: null, wacht_op: "Bouw de knop", laatste_beweging: iso(600), stil: false, scope: "x", scope_hash: "y", akkoord_nodig: false,
     ...over,
   };
 }
