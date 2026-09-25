@@ -90,8 +90,12 @@ export type LintInvoer = {
   readonly eigenaarsPunten?: readonly {
     readonly bestand: string;
     readonly tekst: string;
-    /** De labels van de regels onder dit punt (`Optie A`, `Keuze`, `Stap 1`, …). */
-    readonly labels?: readonly string[];
+    /**
+     * De regels onder dit punt, met hun tekst. De tekst is dragend: een
+     * `- Optie B:` zonder gevolg telt niet als alternatief, en zonder die
+     * tekst kon de poort dat niet zien.
+     */
+    readonly regels?: readonly { readonly label: string; readonly tekst: string }[];
   }[];
   /**
    * De commitlog was niet volledig en eenduidig te lezen (een record zonder
@@ -394,11 +398,20 @@ export function keuzeNietUitgesplitst(tekst: string): boolean {
   return leesIngebedeKeuze(tekst).length >= 2;
 }
 
-/** Een `Keuze`-regel zonder minstens twee alternatieven is een half geschreven norm. */
-export function keuzeZonderAlternatieven(labels: readonly string[]): boolean {
-  const heeftKeuze = labels.some((l) => l.trim().toLowerCase() === "keuze");
+/**
+ * Een `Keuze`-regel zonder minstens twee brúíkbare alternatieven is een half
+ * geschreven norm. Bruikbaar betekent: een eigen label én een gevolg. Een
+ * eerdere versie telde alleen labels, waardoor `- Optie B:` zonder tekst en
+ * twee keer `- Optie A:` allebei groen door de poort gingen terwijl de kaart
+ * de eigenaar geen antwoord liet geven.
+ */
+export function keuzeZonderAlternatieven(regels: readonly { label: string; tekst: string }[]): boolean {
+  const heeftKeuze = regels.some((r) => r.label.trim().toLowerCase() === "keuze");
   if (!heeftKeuze) return false;
-  return labels.filter((l) => /^optie\b/i.test(l.trim())).length < 2;
+  const sleutels = new Set(
+    regels.filter((r) => /^optie\b/i.test(r.label.trim()) && r.tekst.trim().length > 0).map((r) => r.label.trim().toLowerCase()),
+  );
+  return sleutels.size < 2;
 }
 
 export function isAdministratieveBevestiging(tekst: string): boolean {
@@ -448,14 +461,15 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // Een half geschreven keuze levert stil een onbruikbare kaart: de vraag staat
   // er, de alternatieven niet, en het punt valt terug op "Later".
   for (const punt of invoer.eigenaarsPunten ?? []) {
-    if (!keuzeZonderAlternatieven(punt.labels ?? [])) continue;
+    if (!keuzeZonderAlternatieven(punt.regels ?? [])) continue;
     bevindingen.push(
       bevinding(
         "eigenaarslijst_keuze_half",
         "fout",
         punt.bestand,
         `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft een "Keuze"-regel maar minder dan twee ` +
-          `"Optie"-regels; zonder alternatieven toont de kaart alleen "Later".`,
+          `bruikbare "Optie"-regels; elk alternatief heeft een eigen label én een gevolg nodig, anders kan de eigenaar ` +
+          `de vraag niet beantwoorden.`,
       ),
     );
   }

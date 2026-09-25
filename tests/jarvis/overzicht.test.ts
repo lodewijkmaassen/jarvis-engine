@@ -249,8 +249,9 @@ describe("wat bij de eigenaar ligt", () => {
       ["bevestiging", "laag"],
       ["bevestiging", "laag"],
     ]);
-    // En zonder soort dat een handeling aanbiedt, ook geen knop die dat
-    // suggereert: alleen "Later" (criterium 3).
+    // De terugval is `bevestiging`: een bestaand punt blijft afsluitbaar. Zou
+    // hier `uitstel` staan, dan verloor elk punt zonder expliciete markering
+    // zijn enige knop — dat is twee QA-rondes lang als regressie gemeten.
     expect(items.map((i) => i.opties.map((o) => o.keuze))).toEqual([
       ["gedaan", "nog-niet", "later"],
       ["gedaan", "nog-niet", "later"],
@@ -404,7 +405,7 @@ describe("opties: wat de eigenaar kan kiezen", () => {
 
   it("valt terug op de standaardopties zonder keuzeregels", () => {
     const standaard = [{ keuze: "gedaan", label: "Gedaan", gevolg: "af." }];
-    const uit = bouwOpties([{ label: "Advies", tekst: "doe het." }], standaard);
+    const uit = bouwOpties([{ label: "Advies", tekst: "doe het." }], standaard, "elke-regel");
     expect(uit.opties.map((o) => o.keuze)).toEqual(["gedaan", "later"]);
     expect(uit.advies).toBe("doe het.");
     expect(uit.waarom).toBeNull();

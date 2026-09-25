@@ -763,7 +763,7 @@ describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", 
     const uit = lint({
       ...basis(l),
       eigenaarsPunten: [
-        { bestand: "tasks/T-1/resultaat.md", tekst: "kies tussen (a) de ene weg, of (b) de andere weg.", labels: ["Stap 1"] },
+        { bestand: "tasks/T-1/resultaat.md", tekst: "kies tussen (a) de ene weg, of (b) de andere weg.", regels: [{ label: "Stap 1", tekst: "kies tussen (a) de ene weg, of (b) de andere weg." }] },
       ],
     });
     const b = uit.bevindingen.find((x) => x.code === "eigenaarslijst_keuze_niet_uitgesplitst");
@@ -776,7 +776,7 @@ describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", 
     const uit = lint({
       ...basis(l),
       eigenaarsPunten: [
-        { bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", labels: ["Keuze", "Optie A", "Optie B"] },
+        { bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", regels: [{ label: "Keuze", tekst: "welke weg?" }, { label: "Optie A", tekst: "dit" }, { label: "Optie B", tekst: "dat" }] },
       ],
     });
     expect(uit.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(false);
@@ -786,7 +786,7 @@ describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", 
     const l = await lading();
     const uit = lint({
       ...basis(l),
-      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", labels: ["Keuze", "Optie A"] }],
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", regels: [{ label: "Keuze", tekst: "welke weg?" }, { label: "Optie A", tekst: "dit" }] }],
     });
     expect(uit.bevindingen.some((x) => x.code === "eigenaarslijst_keuze_half")).toBe(true);
   });
@@ -795,7 +795,7 @@ describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", 
     const l = await lading();
     const uit = lint({
       ...basis(l),
-      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "doe (a) het ene en (b) het andere.", labels: [] }],
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "doe (a) het ene en (b) het andere.", regels: [] }],
     });
     expect(uit.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(false);
   });

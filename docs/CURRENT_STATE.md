@@ -42,8 +42,9 @@ voorgelegd, bereikten de knoppen nooit, en hij heeft die kaart uiteindelijk met
 
 `EigenaarSoort` benoemt nu wat een punt van de eigenaar vraagt — `akkoord`,
 `keuze`, `externe-handeling`, `bevestiging`, `uitstel` — en `bepaalEigenaarSoort`
-kiest in vaste volgorde: governance vóór keuze, keuze vóór handeling, en anders
-uitstel. De knoppen volgen uit het soort: "Gedaan" alleen bij een externe
+kiest in vaste volgorde: governance eerst, dan een punt dat zichzelf een keuze
+noemt, dan een echte keuze met twee bruikbare alternatieven, dan een externe
+handeling, dan een bevestiging — en anders bevestiging als veilige terugval. De knoppen volgen uit het soort: "Gedaan" alleen bij een externe
 handeling of een bevestiging, akkoordknoppen alleen waar de governance een
 autorisatie eist, en bij een keuze de alternatieven zelf, elk met zijn gevolg.
 
@@ -81,10 +82,10 @@ knoppen.
 
 Wat hier nog niet in zit is de weg terug van gesprek naar actie (§3 van het
 uitvoeringsplan): een bericht met een `item_id` sluit de bijbehorende kaart nog
-niet. Zolang die er niet is, valt een bestaand dossierpunt zonder `Extern`- of
-`Bevestig`-regel terug op `uitstel` en biedt het alleen "Later". Dat is bewust:
-de dossierpunten worden in een eigen ronde nagelopen (stap 5 van het plan), en
-de pin volgt pas daarna.
+niet. Een bestaand dossierpunt zonder `Extern`- of `Bevestig`-regel houdt
+intussen zijn knoppen: de terugval is `bevestiging`, niet `uitstel`. De
+dossierpunten worden in een eigen ronde nagelopen (stap 5 van het plan), en de
+pin volgt pas daarna.
 
 De controle schaalt mee met de wijziging. Het rolcontract eiste vóór elke
 commit alle vier de projectcontroles, ook bij een commit die alleen een dossier

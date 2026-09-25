@@ -151,10 +151,15 @@ describe("de poort bewaakt het dossierformaat van een keuze", () => {
     expect(keuzeNietUitgesplitst("zet de sleutel in de kluis.")).toBe(false);
   });
 
-  it("keurt een half geschreven keuze af", () => {
-    expect(keuzeZonderAlternatieven(["Keuze", "Optie A"])).toBe(true);
-    expect(keuzeZonderAlternatieven(["Keuze", "Optie A", "Optie B"])).toBe(false);
-    expect(keuzeZonderAlternatieven(["Stap 1", "Controle"])).toBe(false);
+  it("keurt een half geschreven keuze af, op bruikbare alternatieven", () => {
+    const r = (...paren: readonly (readonly [string, string])[]) => paren.map(([label, tekst]) => ({ label, tekst }));
+    expect(keuzeZonderAlternatieven(r(["Keuze", "welke weg?"], ["Optie A", "dit"]))).toBe(true);
+    // Een optieregel zonder gevolg is geen alternatief.
+    expect(keuzeZonderAlternatieven(r(["Keuze", "welke weg?"], ["Optie A", "dit"], ["Optie B", ""]))).toBe(true);
+    // Twee keer hetzelfde label levert geen tweede antwoord op.
+    expect(keuzeZonderAlternatieven(r(["Keuze", "welke weg?"], ["Optie A", "dit"], ["Optie A", "nog eens"]))).toBe(true);
+    expect(keuzeZonderAlternatieven(r(["Keuze", "welke weg?"], ["Optie A", "dit"], ["Optie B", "dat"]))).toBe(false);
+    expect(keuzeZonderAlternatieven(r(["Stap 1", "doe iets"], ["Controle", "het staat er"]))).toBe(false);
   });
 });
 
@@ -336,5 +341,30 @@ describe("een record houdt zijn eigen knoppen (QA-ronde 3, NB-2 en B2)", () => {
   it("laat een regel `Gedaan:` geen handelingsknop op een risico zetten", () => {
     const items = leesAandacht(metRecord("RSK", "- Gedaan: al af"));
     expect(items[0]?.opties.map((o) => o.keuze)).not.toContain("gedaan");
+  });
+});
+
+describe("een halve keuze krijgt nooit een handelingsknop (QA-ronde 4, B4)", () => {
+  // Een punt dat in het dossier letterlijk `- Keuze:` schrijft maar te weinig
+  // bruikbare alternatieven heeft, kreeg "Gedaan"/"Nog niet" op een open
+  // vraag. Dat is woordelijk de klacht waarmee deze taak begon.
+  const halve: readonly string[] = [
+    "- **Beslispunt.**\n  - Keuze: welke weg nemen we?",
+    "- **Beslispunt.**\n  - Keuze: welke weg?\n  - Optie A: dit — gevolg",
+    "- **Beslispunt.**\n  - Keuze: welke weg?\n  - Optie A: dit — gevolg\n  - Optie B:",
+    "- **Beslispunt.**\n  - Keuze: welke weg?\n  - Optie A: dit — g\n  - Optie A: nog eens — g",
+  ];
+  for (const punt of halve) {
+    it(`biedt geen handeling bij ${JSON.stringify(punt.split("\n")[1]?.trim().slice(0, 34))}`, () => {
+      const item = eerste(punt);
+      expect(item.interactie).toBe("uitstel");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["later"]);
+    });
+  }
+
+  it("laat een volledige keuze wél zijn alternatieven tonen", () => {
+    const item = eerste("- **Beslispunt.**\n  - Keuze: welke weg?\n  - Optie A: dit — g\n  - Optie B: dat — g");
+    expect(item.interactie).toBe("keuze");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
   });
 });

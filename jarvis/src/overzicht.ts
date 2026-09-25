@@ -643,7 +643,7 @@ const isAlternatief = (label: string, welke: Alternatieven): boolean => {
 export function bouwOpties(
   regels: readonly { label: string; tekst: string }[],
   standaard: readonly Optie[],
-  welke: Alternatieven = "geen",
+  welke: Alternatieven,
 ): { opties: readonly Optie[]; advies: string | null; waarom: string | null; stappen: readonly string[]; controle: string | null } {
   const opties: Optie[] = [];
   const stappen: { nr: number; tekst: string }[] = [];
@@ -660,7 +660,7 @@ export function bouwOpties(
     // `Keuze` draagt de vraag, `Extern` en `Bevestig` bepalen het soort. Alle
     // drie zijn betekenisdragers, geen alternatieven; zonder deze regel werd
     // "Extern" zelf een knop.
-    else if (l === "keuze" || l === "extern" || l === "bevestig" || l === "wacht") continue;
+    else if (GERESERVEERDE_LABELS.includes(l)) continue;
     else if (r.tekst.length > 0 && isAlternatief(r.label, welke)) {
       const sleutel = sleutelVan(r.label);
       // `later` en `gedaan` hebben een vaste betekenis in de interface. Een
@@ -812,9 +812,16 @@ export function bepaalEigenaarSoort(invoer: {
   readonly alternatieven: number;
   readonly labels: readonly string[];
 }): EigenaarSoort {
+  const noemtZichKeuze = invoer.labels.some((l) => l.trim().toLowerCase() === "keuze");
   if (invoer.akkoordContext) return "akkoord";
   if (invoer.alternatieven >= 2) return "keuze";
   const heeft = (naam: string) => invoer.labels.some((l) => l.toLowerCase() === naam);
+  // Een punt dat in het dossier letterlijk `- Keuze:` schrijft maar te weinig
+  // bruikbare alternatieven heeft, is een halve keuze. Het mag nooit op een
+  // handelingssoort terugvallen: dan krijgt de eigenaar "Gedaan" op een open
+  // vraag, en dat is woordelijk de klacht waarmee deze taak begon. Het wordt
+  // `uitstel` — alleen "Later" — en de poort keurt het dossier af.
+  if (noemtZichKeuze) return "uitstel";
   if (heeft("extern")) return "externe-handeling";
   if (heeft("bevestig")) return "bevestiging";
   // Een punt dat zegt te wachten is geen handeling; dan ook geen knop die

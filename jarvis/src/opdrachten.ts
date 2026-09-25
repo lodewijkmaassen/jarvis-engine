@@ -1139,9 +1139,9 @@ async function leesEigenaarsPunten(
   wortel: string,
   config: JarvisConfig,
   bestanden: readonly string[],
-): Promise<readonly { bestand: string; tekst: string; labels: readonly string[] }[]> {
+): Promise<readonly { bestand: string; tekst: string; regels: readonly { label: string; tekst: string }[] }[]> {
   const takenMap = normaliseerPadTekst(config.taken_map).replace(/\/+$/, "");
-  const uit: { bestand: string; tekst: string; labels: readonly string[] }[] = [];
+  const uit: { bestand: string; tekst: string; regels: readonly { label: string; tekst: string }[] }[] = [];
   for (const b of bestanden) {
     const pad = normaliseerPadTekst(b);
     if (!pad.startsWith(`${takenMap}/`) || !/\/resultaat\.md$/.test(pad)) continue;
@@ -1152,7 +1152,7 @@ async function leesEigenaarsPunten(
       continue; // verwijderd in deze wijziging
     }
     for (const item of leesItemsOnder(inhoud, KOP_EIGENAAR_LIJST))
-      uit.push({ bestand: pad, tekst: item.toelichting, labels: item.regels.map((r) => r.label) });
+      uit.push({ bestand: pad, tekst: item.toelichting, regels: item.regels.map((r) => ({ label: r.label, tekst: r.tekst })) });
   }
   return uit;
 }
