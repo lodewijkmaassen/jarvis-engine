@@ -271,3 +271,34 @@ describe("het standpaneel botst niet met de opmaak van de app", () => {
     expect(html).toMatch(/\.kop\{position:fixed/);
   });
 });
+
+describe("een lege blokkadesectie blijft leeg, met of zonder opmaak", () => {
+  // `**Geen blokkade.**` werd als blokkade opgevoerd omdat de toets op de ruwe
+  // tekst keek en die met een sterretje begon. De eigenaar kreeg daardoor een
+  // blokkade met urgentie hoog te zien die er niet was, en het terugdraaien
+  // kostte een volledige pull request met eigen CI- en goedkeuringsronde.
+  const basis = (sectie: string): ProjectInvoer =>
+    ({
+      id: "jarvis",
+      naam: "jarvis",
+      aangesloten: true,
+      hoofdbranch: { naam: "main", commit: "abc1234", datum: "2026-09-24" },
+      statusDocument: `# CURRENT_STATE\n\n## Waar staan we\n\nIets.\n\n## Wat is geblokkeerd, en waarop\n\n${sectie}\n`,
+      records: [],
+      taken: [],
+      gitLog: [],
+    }) as unknown as ProjectInvoer;
+
+  const blokkades = (sectie: string) =>
+    bouwOverzicht([basis(sectie)], NU).indeling.risicos.filter((r) => r.soort === "blokkade");
+
+  for (const vorm of ["Geen blokkade.", "**Geen blokkade.**", "_Geen blokkade._", "  Niets.", "> Geen blokkade."]) {
+    it(`leest ${JSON.stringify(vorm)} als niets geblokkeerd`, () => {
+      expect(blokkades(vorm)).toHaveLength(0);
+    });
+  }
+
+  it("laat een echte blokkade wél staan", () => {
+    expect(blokkades("**De pin ontbreekt.** Daardoor draait de oude engine.").length).toBeGreaterThan(0);
+  });
+});
