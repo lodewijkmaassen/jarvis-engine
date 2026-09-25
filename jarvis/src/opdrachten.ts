@@ -45,7 +45,7 @@ import {
   type TaakDossier,
 } from "./overzicht";
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
-import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
+import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, bouwStatus, uitvoeringVan, type Activiteit, type JarvisStatus, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
@@ -525,8 +525,18 @@ export async function poortUitkomst(stappen: readonly PoortStap[]): Promise<numb
 export async function opdrachtPoort(bouwStappen: typeof poortStappen = poortStappen): Promise<number> {
   const lees = (naam: string) => process.env[naam] ?? "";
   const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  // Het promptveld komt als bestand binnen, nooit uit de platformlaag zelf en
+  // nooit als omgevingsvariabele met de tekst erin: een prompt kan namen en
+  // instellingen dragen, en die horen niet in een procesomgeving of een log.
+  const promptBestand = lees("JARVIS_ROUTINE_PROMPT_BESTAND");
+  const routinePrompt = promptBestand === "" ? "" : ((await leesOfNull(path.resolve(promptBestand))) ?? "");
+  if (promptBestand !== "" && routinePrompt === "") {
+    console.error(`jarvis poort: promptbestand ${promptBestand} niet te lezen; de routinecontrole vuurt niet.`);
+  }
   return poortUitkomst(
     bouwStappen(wortel, {
+      routinePrompt,
+      routineVerwijzing: lees("JARVIS_ROUTINE_ID"),
       basis: `origin/${lees("PR_BASIS") || "main"}`,
       tekst: `${lees("PR_TITEL")}
 
@@ -939,6 +949,15 @@ type PoortInvoer = {
   readonly ackActor: string;
   readonly ackRelatie: string;
   /**
+   * Het promptveld van de routine die deze uitvoerder wekt, en de verwijzing
+   * ernaar. Komt als kant-en-klare invoerwaarde binnen, net als `tekst`: de
+   * engine bevraagt de platformlaag niet en kent geen tokens. De uitvoerder die
+   * haar wél mag bevragen zet de tekst in `JARVIS_ROUTINE_PROMPT_BESTAND`.
+   * Ontbreekt zij, dan vuurt de regel niet.
+   */
+  readonly routinePrompt?: string;
+  readonly routineVerwijzing?: string;
+  /**
    * Is er een pull-requestcontext waarin een `Current-State-Impact`-verklaring
    * te lezen valt?
    *
@@ -984,6 +1003,14 @@ export function prContextVanGebeurtenis(gebeurtenis: string): boolean {
 async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   const { wortel, config, lading } = await laadAlles();
   const { basis, tekst, ackTekst, ackActor, ackRelatie, prContext } = invoer;
+  // De routinetekst komt uit de repository, het promptveld van buiten. Alleen
+  // met beide kan de poort een terugkerende kopie betrappen; met één van de twee
+  // beweert zij niets.
+  const routineTekst = await leesOfNull(path.join(wortel, "docs", "ROUTINE_CLOUD.md"));
+  const routine =
+    routineTekst !== null && (invoer.routinePrompt ?? "").trim() !== ""
+      ? { tekst: routineTekst, prompt: invoer.routinePrompt as string, verwijzing: invoer.routineVerwijzing }
+      : undefined;
   const bestanden = await gewijzigdeBestanden(wortel, basis);
 
 
@@ -1074,6 +1101,7 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     acks,
     commits,
     eigenaarsPunten,
+    routine,
     statusCommitsSinds: Number.parseInt(statusCommits || "0", 10) || 0,
     statusImpactVerklaard: statusImpact,
     prContext,
@@ -2116,7 +2144,18 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   // Beide documenten langs de sanitizer, en bij een bevinding in één van de
   // twee gaat er niets weg. Alleen de schone helft schrijven zou precies de
   // scheefstand terugbrengen die deze opdracht wegneemt.
-  const bevindingen = [...scanTekst(json, allowlist, "regie.json"), ...scanTekst(overzichtJson, allowlist, "overzicht.json")];
+  // Het derde document uit dezelfde run. `jarvis/status` stond tot nu toe in een
+  // eigen stap van de routine, met dezelfde scheefstand als gevolg: eindigde een
+  // ronde anders, dan bleef de app een sessie melden die niet meer liep.
+  const statusNaam = vlaggen.get("sessie") ?? `Jarvis — ${dezeUitvoerder()}-uitvoerder`;
+  const status = bouwStatus(regie, { naam: statusNaam, sinds: await leesStatusSinds() });
+  const statusJson = `${JSON.stringify(status, null, 2)}\n`;
+
+  const bevindingen = [
+    ...scanTekst(json, allowlist, "regie.json"),
+    ...scanTekst(overzichtJson, allowlist, "overzicht.json"),
+    ...scanTekst(statusJson, allowlist, "status.json"),
+  ];
   if (bevindingen.length > 0) {
     console.error(`jarvis regie: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);
     for (const b of bevindingen) console.error(`  ${b.severity.toUpperCase()} regel ${b.regel} [${b.patroon}] ${b.fragment}`);
@@ -2131,12 +2170,13 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   if (vlaggen.has("schrijf")) {
     const v2 = await verbindDb();
     if (v2 === null) {
-      console.error("jarvis regie: geen database bereikbaar; regie/huidig en overzicht/huidig niet geschreven.");
+      console.error("jarvis regie: geen database bereikbaar; regie/huidig, overzicht/huidig en jarvis/status niet geschreven.");
       return 1;
     }
     try {
       await v2.sql.unsafe(DOCUMENT_SQL, ["regie/huidig", json]);
       await v2.sql.unsafe(DOCUMENT_SQL, ["overzicht/huidig", overzichtJson]);
+      await v2.sql.unsafe(DOCUMENT_SQL, ["jarvis/status", statusJson]);
     } finally {
       await v2.sql.end({ timeout: 2 });
     }
@@ -2157,7 +2197,7 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
     console.log(`${t.toestand.padEnd(22)} ${t.id.padEnd(36)} ${t.verantwoordelijke.padEnd(18)} ${t.waarom}`);
   }
   const geblokkeerd = regie.taken.filter((t) => t.toestand === "BLOCKED").length;
-  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
+  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig, overzicht/huidig en jarvis/status gezet" : ""}.`);
   return 0;
 }
 
@@ -2184,6 +2224,28 @@ async function leesUitvoerdersregister(wortel: string, pad: string | null): Prom
     const tekst = fout instanceof Error ? fout.message : String(fout);
     console.error(`jarvis regie: uitvoerdersregister onleesbaar (${tekst.slice(0, 80)}); toestand onbekend.`);
     return null;
+  }
+}
+
+/**
+ * De `sinds` van de vorige statusversie, of null. Dat is het begin van de sessie
+ * en niet van deze berekening: hij hoort niet elke ronde te verspringen, anders
+ * leest de app elke ronde als een nieuwe sessie.
+ */
+async function leesStatusSinds(): Promise<string | null> {
+  const verbinding = await verbindDb();
+  if (verbinding === null) return null;
+  try {
+    const rijen = await verbinding.sql.unsafe(DOCUMENT_LEES_SQL, ["jarvis/status"]);
+    const inhoud = (rijen as readonly { inhoud?: unknown }[])[0]?.inhoud;
+    const gelezen = typeof inhoud === "string" ? (JSON.parse(inhoud) as JarvisStatus) : (inhoud as JarvisStatus | undefined);
+    const sinds = gelezen?.sessie?.sinds;
+    return typeof sinds === "string" && !Number.isNaN(new Date(sinds).getTime()) ? sinds : null;
+  } catch {
+    // Een onleesbare vorige versie is geen fout: dan begint de sessie nu.
+    return null;
+  } finally {
+    await verbinding.sql.end({ timeout: 2 });
   }
 }
 

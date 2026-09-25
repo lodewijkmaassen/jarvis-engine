@@ -6,7 +6,6 @@
 // er niets mee te maken heeft, en niet door de agent zelf te omzeilen is.
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { JarvisConfig } from "@/jarvis/src/config";
 import {
   ackBronIsVertrouwd,
   bevatTriggerwoord,
@@ -17,46 +16,10 @@ import {
   toetsRandvoorwaarden,
 } from "@/jarvis/src/lint";
 import { laadKennis, type KennisLading } from "@/jarvis/src/store";
+import { CONFIG } from "./fixtures/config";
 
 const WORTEL = path.join(process.cwd(), "tests/jarvis/fixtures");
 
-const CONFIG: JarvisConfig = {
-  project: "fixture",
-  enabled: true,
-  knowledge_map: "kennis",
-  taken_map: "tasks",
-  current_state: "docs/CURRENT_STATE.md",
-  project_kaart: "PROJECT.md",
-  budget: { S: 8000, M: 20000, L: 40000 },
-  limieten: {
-    qa_rondes: 3,
-    subagenten: 12,
-    besluiten_per_taak: 1,
-    nieuwe_dec_per_taak: 3,
-    wallclock_minuten: 60,
-  },
-  context_nooit: [],
-  context_symbolen: [],
-  context_fragment_regels: 400,
-  sanitize_paden: [],
-  status_paden: ["supabase/migrations", "app/api"],
-  migratie_pad: "",
-  rol_controle_vanaf: "",
-  test_pad: "tests",
-  branch_voorvoegsel: "jarvis/",
-  rollen_map: "jarvis/roles",
-  engine_repository: "",
-  attestatie: { url: "", sleutel: "", bot: "", uitvoerders: [], extra_paden: [] },
-  overzicht_kern_id: "",
-  overzicht_kern_naam: "",
-  overzicht_kern_paden: [],
-  overzicht_kern_tag: "",
-  rol_afgeleiden_map: "",
-  rol_afgeleiden_voorvoegsel: "",
-  rol_overzicht: "",
-  rol_neutraal: "",
-  rol_gereedschap: { lezen: "", schrijven: "", rapporteren: "", uitvoeren: "" },
-};
 
 async function lading(): Promise<KennisLading> {
   return laadKennis(WORTEL, "kennis");
