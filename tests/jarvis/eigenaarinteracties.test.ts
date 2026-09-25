@@ -42,7 +42,7 @@ describe("criterium 1 — classificatie naar betekenis, niet naar het eerste woo
   it("maakt van een punt dat met \"beslis\" begint géén keuze zonder alternatieven", () => {
     // De oude code las "beslis" en gaf een beslissing; nu telt alleen of er
     // werkelijk alternatieven zijn.
-    expect(eerste("- Stap 1: beslissen of X mag.").interactie).toBe("uitstel");
+    expect(eerste("- Stap 1: beslissen of X mag.").interactie).toBe("bevestiging");
   });
 
   it("kent elk soort uit de verzameling een eigen bepaling toe", () => {
@@ -50,7 +50,10 @@ describe("criterium 1 — classificatie naar betekenis, niet naar het eerste woo
     expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 2, labels: ["extern"] })).toBe("keuze");
     expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 1, labels: ["Extern"] })).toBe("externe-handeling");
     expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 0, labels: ["Bevestig"] })).toBe("bevestiging");
-    expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 0, labels: [] })).toBe("uitstel");
+    expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 0, labels: ["Wacht"] })).toBe("uitstel");
+    // Zonder markering is de terugval `bevestiging`, niet `uitstel`: anders
+    // verliest elk bestaand eigenaarspunt zijn enige knop.
+    expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 0, labels: [] })).toBe("bevestiging");
   });
 });
 
@@ -108,7 +111,7 @@ describe("criterium 3 — \"Gedaan\" alleen bij een externe handeling of een bev
   });
 
   it("biedt geen enkele handeling bij uitstel", () => {
-    expect(keuzes("- Stap 1: wachten tot de klant zich meldt.")).toEqual(["later"]);
+    expect(keuzes("- **Wachten.**\n  - Wacht: tot de klant zich meldt")).toEqual(["later"]);
   });
 });
 
@@ -161,6 +164,7 @@ describe("de invariant: de knoppen volgen uit het soort", () => {
   // het soort kon verdringen — een externe handeling verloor zijn "Gedaan",
   // en een punt met een regel "- Gedaan: …" kreeg er juist één.
   const MET_GEDAAN = new Set(["externe-handeling", "bevestiging"]);
+  // `uitstel` vraagt sinds ronde 3 een expliciete `- Wacht:`-regel.
   const gevallen: readonly string[] = [
     "- Stap 1: kies tussen (a) de ene weg, of (b) de andere weg.",
     "- **Sleutel zetten.**\n  - Extern: de sleutelkluis van de database",
@@ -170,7 +174,7 @@ describe("de invariant: de knoppen volgen uit het soort", () => {
     "- **Losse regels.**\n  - Termijn: morgen\n  - Eigenaar: jij",
     "**akkoord_pr**\n\n- Stap 1: deze pull request raakt een harde uitzondering.",
     "**akkoord_pr**\n\n- **Toch opties.**\n  - Optie A: dit — gevolg\n  - Optie B: dat — gevolg",
-    "- Stap 1: wachten tot de klant zich meldt.",
+    "- **Wachten.**\n  - Wacht: tot de klant zich meldt",
   ];
 
   for (const punt of gevallen) {
@@ -202,13 +206,16 @@ describe("de invariant: de knoppen volgen uit het soort", () => {
 
   it("geeft geen Gedaan aan een punt dat er alleen een labelregel voor heeft", () => {
     const item = eerste("- **Repository aanmaken.**\n  - Stap 1: klik\n  - Gedaan: Jarvis pusht");
-    expect(item.interactie).toBe("uitstel");
-    expect(item.opties.map((o) => o.keuze)).toEqual(["later"]);
+    // De regel `- Gedaan:` bepaalt niets; het soort is de terugval, en die
+    // geeft "Gedaan" én "Nog niet" — niet de tekst van die regel.
+    expect(item.interactie).toBe("bevestiging");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["gedaan", "nog-niet", "later"]);
   });
 
   it("maakt van twee willekeurige labelregels geen keuze", () => {
     const item = eerste("- **Losse regels.**\n  - Termijn: morgen\n  - Eigenaar: jij");
-    expect(item.interactie).toBe("uitstel");
+    expect(item.interactie).toBe("bevestiging");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["gedaan", "nog-niet", "later"]);
   });
 });
 
@@ -255,15 +262,79 @@ describe("de invariant geldt op élk aanroeppunt, niet op één", () => {
     // Een lege `- Optie B:` gaf stil een keuze met één knop, of met alleen
     // "Later" — een vraag zonder manier om te antwoorden.
     const half = eerste("- **Het beslispunt.**\n  - Optie A: dit — gevolg\n  - Optie B:");
-    expect(half.interactie).toBe("uitstel");
-    expect(half.opties.map((o) => o.keuze)).toEqual(["later"]);
+    expect(half.interactie).not.toBe("keuze");
+    expect(half.opties.map((o) => o.keuze)).not.toContain("optie-a");
     const leeg = eerste("- **Het beslispunt.**\n  - Optie A:\n  - Optie B:");
-    expect(leeg.interactie).toBe("uitstel");
-    expect(leeg.opties.map((o) => o.keuze)).toEqual(["later"]);
+    expect(leeg.interactie).not.toBe("keuze");
   });
 
   it("geeft twee optieregels met dezelfde sleutel geen dubbele knop", () => {
     const item = eerste("- **Het beslispunt.**\n  - Optie A: dit — g\n  - Optie A: nog eens — g");
-    expect(item.opties.map((o) => o.keuze)).toEqual(["later"]);
+    expect(item.interactie).not.toBe("keuze");
+    expect(item.opties.map((o) => o.keuze)).not.toContain("optie-a");
+  });
+});
+
+describe("bestaande dossierpunten houden hun knop (QA-ronde 3, NB-4)", () => {
+  // Het uitvoeringsplan zet `uitstel` als terugval. Zolang niet elk dossierpunt
+  // expliciet zegt wat het is, betekent dat: elk bestaand punt verliest zijn
+  // enige knop en is niet meer af te sluiten. Twee QA-rondes hebben dat als
+  // verlies van werkend gedrag gemeten. De terugval is daarom `bevestiging`.
+  it("laat een gewone LRN-0014-vorm afsluitbaar", () => {
+    const item = eerste("- **Repository aanmaken.**\n  - Stap 1: open de pagina\n  - Controle: hij staat er");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["gedaan", "nog-niet", "later"]);
+  });
+
+  it("laat een punt met alleen een titel afsluitbaar", () => {
+    expect(keuzes("- **Iets doen.** Toelichting erbij.")).toEqual(["gedaan", "nog-niet", "later"]);
+  });
+
+  it("geeft uitstel alleen bij een expliciete wachtregel", () => {
+    expect(eerste("- **Wachten.**\n  - Wacht: tot de klant zich meldt").interactie).toBe("uitstel");
+    expect(keuzes("- **Wachten.**\n  - Wacht: tot de klant zich meldt")).toEqual(["later"]);
+  });
+});
+
+describe("een record houdt zijn eigen knoppen (QA-ronde 3, NB-2 en B2)", () => {
+  function metRecord(type: "CFL" | "RSK", opties: string): ProjectInvoer {
+    return {
+      id: "jarvis",
+      naam: "jarvis",
+      aangesloten: true,
+      hoofdbranch: { naam: "main", commit: "abc1234", datum: "2026-09-25" },
+      statusDocument: "# CURRENT_STATE\n\n## Waar staan we\n\nIets.\n",
+      records: [
+        {
+          id: `${type}-0001`,
+          type,
+          titel: "Een record",
+          status: "open",
+          datum: "2026-09-25",
+          samenvatting: "Iets.",
+          velden: { opties },
+          pad: `knowledge/${type}-0001.md`,
+        },
+      ],
+      taken: [],
+      gitLog: [],
+    } as unknown as ProjectInvoer;
+  }
+
+  it("laat een losse labelregel de vaste knoppen van een conflict niet verdringen", () => {
+    const items = leesAandacht(metRecord("CFL", "- Let op: vandaag nog"));
+    const kn = items[0]?.opties.map((o) => o.keuze) ?? [];
+    expect(kn).not.toContain("let-op");
+    expect(kn).toContain("later");
+  });
+
+  it("laat een regel `Later:` de vaste Later-knop niet overnemen", () => {
+    const items = leesAandacht(metRecord("RSK", "- Later: het gaat vanzelf weg"));
+    const later = items[0]?.opties.find((o) => o.keuze === "later");
+    expect(later?.gevolg).not.toContain("vanzelf weg");
+  });
+
+  it("laat een regel `Gedaan:` geen handelingsknop op een risico zetten", () => {
+    const items = leesAandacht(metRecord("RSK", "- Gedaan: al af"));
+    expect(items[0]?.opties.map((o) => o.keuze)).not.toContain("gedaan");
   });
 });

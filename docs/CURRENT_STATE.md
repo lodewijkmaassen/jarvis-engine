@@ -62,6 +62,23 @@ Een keuze vraagt een keuzewoord én alternatieven die met "of" gescheiden zijn.
 Twee merken alleen volstaan niet: "doe (a) het ene en (b) het andere" is één
 handeling met twee delen, en "artikel 5 lid (a) en lid (b)" is een verwijzing.
 
+De terugval is `bevestiging` en niet `uitstel`, en dat wijkt bewust af van het
+uitvoeringsplan. Dat plan zet `uitstel` als laatste stap, en dat klopt zodra elk
+dossierpunt expliciet zegt wat het is. Zolang dat niet zo is, betekent die
+terugval iets anders: elk bestaand eigenaarspunt zonder `Extern`- of
+`Bevestig`-regel verliest zijn enige knop en is voor de eigenaar niet meer af te
+sluiten. Onafhankelijke QA heeft dat twee rondes achter elkaar als verlies van
+werkend gedrag gemeten. `uitstel` vraagt nu een expliciete `- Wacht:`-regel;
+zodra de dossiers zijn nagelopen kan de terugval alsnog verschuiven, en is dat
+een keuze met een lege verzameling gevallen in plaats van een stille breuk.
+
+Een bronregel kan de vaste knoppen niet meer overnemen. `later` en `gedaan`
+hebben een vaste betekenis in de interface; een kennisrecord met een regel
+`- Later: …` gaf de enige altijd-aanwezige knop een eigen gevolg, en `- Gedaan:
+…` zette een handelingsknop op een risicokaart. En één alternatief vervangt de
+vaste knoppen niet: een record met één optieregel verloor daardoor zijn eigen
+knoppen.
+
 Wat hier nog niet in zit is de weg terug van gesprek naar actie (§3 van het
 uitvoeringsplan): een bericht met een `item_id` sluit de bijbehorende kaart nog
 niet. Zolang die er niet is, valt een bestaand dossierpunt zonder `Extern`- of

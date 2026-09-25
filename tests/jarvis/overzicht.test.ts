@@ -245,13 +245,17 @@ describe("wat bij de eigenaar ligt", () => {
     // daar is zichtbaar voor de eigenaar.
     expect(items.map((i) => i.soort)).toEqual(["actie", "actie", "actie"]);
     expect(items.map((i) => [i.interactie, i.urgentie])).toEqual([
-      ["uitstel", "hoog"],
-      ["uitstel", "laag"],
-      ["uitstel", "laag"],
+      ["bevestiging", "hoog"],
+      ["bevestiging", "laag"],
+      ["bevestiging", "laag"],
     ]);
     // En zonder soort dat een handeling aanbiedt, ook geen knop die dat
     // suggereert: alleen "Later" (criterium 3).
-    expect(items.map((i) => i.opties.map((o) => o.keuze))).toEqual([["later"], ["later"], ["later"]]);
+    expect(items.map((i) => i.opties.map((o) => o.keuze))).toEqual([
+      ["gedaan", "nog-niet", "later"],
+      ["gedaan", "nog-niet", "later"],
+      ["gedaan", "nog-niet", "later"],
+    ]);
     expect(items[0].bron).toBe("tasks/T-1/resultaat.md");
   });
 
@@ -477,7 +481,11 @@ describe("stappen van een handeling", () => {
     const uit = bouwOpties(regels, [], "elke-regel");
     expect(uit.stappen).toEqual(["open github.com/new.", "klik Create."]);
     expect(uit.controle).toBe("de pagina toont de lege repository.");
-    expect(uit.opties.map((o) => o.keuze)).toEqual(["gedaan", "later"]);
+    // `gedaan` en `later` hebben een vaste betekenis in de interface; een
+    // bronregel met die naam neemt ze niet over. Zonder twee echte
+    // alternatieven blijven de standaardknoppen gelden — hier geen, dus
+    // alleen "Later".
+    expect(uit.opties.map((o) => o.keuze)).toEqual(["later"]);
   });
 });
 

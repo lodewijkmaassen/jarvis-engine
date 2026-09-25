@@ -43,7 +43,7 @@ export type AandachtSoort = "beslissing" | "actie" | "conflict" | "risico" | "bl
 export type EigenaarSoort = "akkoord" | "keuze" | "externe-handeling" | "bevestiging" | "uitstel";
 
 /** De labels die in een eigenaarspunt een eigen betekenis hebben en dus geen alternatief zijn. */
-export const GERESERVEERDE_LABELS = Object.freeze(["advies", "waarom", "controle", "keuze", "extern", "bevestig"]);
+export const GERESERVEERDE_LABELS = Object.freeze(["advies", "waarom", "controle", "keuze", "extern", "bevestig", "wacht"]);
 
 /** Eén keuze die de eigenaar kan maken, met wat er dan gebeurt. */
 export type Optie = {
@@ -660,15 +660,23 @@ export function bouwOpties(
     // `Keuze` draagt de vraag, `Extern` en `Bevestig` bepalen het soort. Alle
     // drie zijn betekenisdragers, geen alternatieven; zonder deze regel werd
     // "Extern" zelf een knop.
-    else if (l === "keuze" || l === "extern" || l === "bevestig") continue;
+    else if (l === "keuze" || l === "extern" || l === "bevestig" || l === "wacht") continue;
     else if (r.tekst.length > 0 && isAlternatief(r.label, welke)) {
       const sleutel = sleutelVan(r.label);
+      // `later` en `gedaan` hebben een vaste betekenis in de interface. Een
+      // regel met die naam mag ze niet overnemen: een kennisrecord met een
+      // regel `- Later: …` gaf de enige altijd-aanwezige knop een eigen gevolg,
+      // en `- Gedaan: …` zette een handelingsknop op een risicokaart.
+      if (sleutel === "later" || sleutel === "gedaan") continue;
       // Twee knoppen met dezelfde sleutel zijn niet ondubbelzinnig toe te
       // wijzen aan een antwoord.
       if (!opties.some((o) => o.keuze === sleutel)) opties.push({ keuze: sleutel, label: r.label, gevolg: r.tekst });
     }
   }
-  const basis = opties.length > 0 ? opties : [...standaard];
+  // Eén alternatief is geen keuze. Met minder dan twee vervangt de bron de
+  // vaste knoppen niet: een record met één optieregel verloor daardoor zijn
+  // "Beslissing vastleggen" of "Accepteren"/"Aanpakken".
+  const basis = opties.length >= 2 ? opties : [...standaard];
   if (!basis.some((o) => o.keuze === "later")) basis.push(OPTIE_LATER);
   return { opties: basis, advies, waarom, stappen: stappen.sort((a, b) => a.nr - b.nr).map((s) => s.tekst), controle };
 }
@@ -809,10 +817,25 @@ export function bepaalEigenaarSoort(invoer: {
   const heeft = (naam: string) => invoer.labels.some((l) => l.toLowerCase() === naam);
   if (heeft("extern")) return "externe-handeling";
   if (heeft("bevestig")) return "bevestiging";
-  // Niets in het dossier zegt dat de eigenaar iets kan doen. Dan ook geen knop
-  // die suggereert van wel; een punt dat op een gebeurtenis wacht is geen
-  // handeling (CON-0016).
-  return "uitstel";
+  // Een punt dat zegt te wachten is geen handeling; dan ook geen knop die
+  // suggereert van wel (CON-0016).
+  if (heeft("wacht")) return "uitstel";
+  // Anders: bevestiging, niet uitstel.
+  //
+  // Het uitvoeringsplan zet `uitstel` als terugval, en dat klopt zodra elk
+  // dossierpunt expliciet zegt wat het is. Zolang dat niet zo is, betekent die
+  // terugval iets anders: elk bestaand eigenaarspunt zonder `Extern`- of
+  // `Bevestig`-regel verliest zijn enige knop en is voor de eigenaar niet meer
+  // af te sluiten. Onafhankelijke QA heeft dat twee rondes achter elkaar als
+  // verlies van werkend gedrag gemeten, en terecht: het is geen migratiepad
+  // maar een regressie die pas bij de pin zichtbaar zou worden.
+  //
+  // `bevestiging` is hier de veilige terugval — de eigenaar kan zeggen dat het
+  // gedaan is of dat het nog niet is — en hij breekt criterium 3 niet, want
+  // "Gedaan" hoort bij dit soort. Zodra de dossiers zijn nagelopen (stap 5 van
+  // het plan) kan de terugval alsnog naar `uitstel`; dat is dan een keuze met
+  // een lege verzameling gevallen, geen stille breuk.
+  return "bevestiging";
 }
 
 export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
@@ -967,12 +990,18 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // Eén bron per keer, niet alles aan elkaar geplakt: dezelfde zin staat
       // vaak in de titel én in de toelichting én in de stapregel, en samen
       // geplakt levert dat elk alternatief drie keer op.
+      // Het vangnet leest de tekst van het punt zelf en zijn stappen — nooit
+      // een betekenisdragende labelregel. Een keuze die in `- Let op: …` of
+      // `- Controle: …` stond, maakte anders het hele punt tot keuze en gaf de
+      // eigenaar knoppen uit een waarschuwing; een `Controle` is bovendien werk
+      // van Jarvis en nooit een handeling van de eigenaar (CON-0016).
+      const vangnetBronnen = [
+        ...item.regels.filter((r) => /^stap\s*\d+$/i.test(r.label.trim())).map((r) => r.tekst),
+        item.toelichting,
+        item.titel,
+      ];
       const ingebed =
-        uitRegels.length >= 2
-          ? []
-          : [...item.regels.map((r) => r.tekst), item.toelichting, item.titel]
-              .map((t) => leesIngebedeKeuze(t))
-              .find((o) => o.length >= 2) ?? [];
+        uitRegels.length >= 2 ? [] : (vangnetBronnen.map((t) => leesIngebedeKeuze(t)).find((o) => o.length >= 2) ?? []);
       const alternatieven = uitRegels.length >= 2 ? ontdubbelOpties(uitRegels.map((r) => ({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst }))).length : ingebed.length;
       const interactie = bepaalEigenaarSoort({
         akkoordContext,
