@@ -572,3 +572,70 @@ describe("regie — het register mag zelf niet de stille schakel worden", () => 
     });
   });
 });
+
+// AC-11 van T-20260917-uitvoerderbewaking: de acceptatie A t/m H op de
+// productiecasus. Onafhankelijke QA mat dat de regie-uitvoer vóór en na, op
+// `gegenereerd_op` na, byte-identiek was — nul geblokkeerd, nul afwijkingen —
+// terwijl het register twee van de drie ingangen als geblokkeerd kende. Twee
+// oorzaken, beide hier vastgelegd.
+describe("regie — een geblokkeerde uitvoerder wordt gezien, ook zonder claim", () => {
+  const reg = (naam: string, over: Partial<UitvoerderItem> = {}): Uitvoerders => ({
+    gegenereerd_op: iso(1),
+    uitvoerders: [{ naam, soort: "laptop", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "de brug is onbereikbaar", ...over }],
+  });
+  const toegewezen = (naam: string) =>
+    taak("T-1", { stappen: [{ tekst: `Iets doen. **Uitvoerder: ${naam}.** De cloud kan dit niet.`, gedaan: false }], wacht_op: null });
+
+  it("blokkeert een taak die aan een geblokkeerde uitvoerder is toegewezen (bevinding 1)", () => {
+    // Dit was de productiecasus: drie taken stonden aan de onbereikbare laptop
+    // toegewezen als WAITING_FOR_DEPENDENCY met `blokkade: null`, en de regie
+    // meldde nul afwijkingen. Deze tak vroeg het register nooit.
+    const r = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("laptop"), "cloud");
+    expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd", uitvoerder: "laptop" });
+    expect(r.taken[0].wacht_op).toMatch(/onbereikbaar/);
+    expect(r.afwijkingen.length).toBeGreaterThan(0);
+  });
+
+  it("laat een toegewezen stap een wachttoestand zonder register (geen vals alarm)", () => {
+    // Zonder register mag een uitvoerder tussen twee taken door stil zijn; anders
+    // wordt elke toegewezen stap een blokkade (ontwerp §7).
+    const r = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, null, "cloud");
+    expect(r.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", blokkade: null });
+    const ander = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("cloud"), "cloud");
+    expect(ander.taken[0].toestand).toBe("WAITING_FOR_DEPENDENCY");
+  });
+
+  it("hervat zodra het register de uitvoerder weer actief meldt (AC-7)", () => {
+    const r = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("laptop", { platformtoestand: "working", laatste_teken: iso(2) }), "cloud");
+    expect(r.taken[0].toestand).toBe("WAITING_FOR_DEPENDENCY");
+    expect(r.taken[0].blokkade).toBeNull();
+  });
+
+  it("noemt elke uitvoerder met zijn toestand, ook zonder taken (bevinding 2, criterium H)", () => {
+    // De gepauzeerde roosterroutine hangt aan geen enkele taak. Zonder deze lijst
+    // was zij onzichtbaar: niets wekt de keten nog en de regie meldde nul
+    // afwijkingen.
+    const twee: Uitvoerders = {
+      gegenereerd_op: iso(1),
+      uitvoerders: [
+        { naam: "cloud", soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+        { naam: "cloud", soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "de roosterroutine staat op pauze" },
+      ],
+    };
+    const r = bepaalRegie(overzicht([taak("T-1")]), [], NU, twee, "cloud");
+    const cloud = r.uitvoerders.find((u) => u.naam === "cloud");
+    expect(cloud).toMatchObject({ toestand: "GEBLOKKEERD" });
+    expect(cloud?.reden).toMatch(/op pauze/);
+    expect(r.uitvoerders.every((u) => Array.isArray(u.taken))).toBe(true);
+  });
+
+  it("noemt ook een uitvoerder die alleen in de werkactiviteit voorkomt", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), [act({ uitvoerder: "laptop", op: iso(5) })], NU, null, "cloud");
+    expect(r.uitvoerders.map((u) => u.naam)).toContain("laptop");
+  });
+
+  it("zet de taken van een uitvoerder bij zijn regel", () => {
+    const r = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("laptop"), "cloud");
+    expect(r.uitvoerders.find((u) => u.naam === "laptop")?.taken).toEqual(["T-1"]);
+  });
+});

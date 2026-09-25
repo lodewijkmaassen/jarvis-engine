@@ -167,6 +167,41 @@ Een verse werkactiviteit blijft een geldig teken van leven, register of geen
 register: een uitvoerder die net een stap schreef is aantoonbaar in leven. Dat
 is de grens tegen vals alarm; de bewering van een verlopen register is het niet.
 
+Het register wordt op twéé plekken gevraagd, niet op één. De blokkade hing eerst
+volledig aan een lópende claim, en daardoor bleef de productiecasus buiten beeld:
+onafhankelijke QA mat dat de regie-uitvoer vóór en na, op `gegenereerd_op` na,
+byte-identiek was — nul geblokkeerd, nul afwijkingen — terwijl het register twee
+van de drie ingangen als geblokkeerd kende. Twee oorzaken.
+
+Een stap die aan een uitvoerder is *toegewezen* (`**Uitvoerder: laptop.**`) is werk
+dat aan hém hangt, ook zonder claim. Die tak vroeg het register nooit: drie taken
+stonden aan de onbereikbare laptop toegewezen als `WAITING_FOR_DEPENDENCY` met
+`blokkade: null`. Nu is zo'n taak `BLOCKED` met de reden uit het register. Alleen
+als het register de uitvoerder **kent**: zonder register mag hij tussen twee taken
+door legitiem stil zijn, en anders wordt elke toegewezen stap een blokkade — het
+valse alarm van §7.
+
+En de regie draagt nu een lijst `uitvoerders` met per uitvoerder zijn toestand, de
+reden en zijn taken. Zonder die lijst was een geblokkeerde uitvoerder alleen via
+zijn taken zichtbaar, en dus onzichtbaar zodra hij er geen had. Dat is het geval
+van de gepauzeerde roosterroutine: niets wekt de keten nog, geen enkele taak hangt
+eraan. De slotregel van `jarvis regie` noemt hen bij naam met hun reden en telt ze
+apart. Eis 9 verbiedt een tweede wekker; zíen dat de wekker uit staat is er geen.
+
+Gemeten op de productiecasus van 2026-09-25: vóór `16 open, 5 uitvoerbaar, 0
+geblokkeerd, 0 afwijking(en)`; na `16 open, 5 uitvoerbaar, 3 geblokkeerd, 2
+uitvoerder(s) geblokkeerd, 3 afwijking(en)`, met beide geblokkeerde uitvoerders bij
+naam en met reden. `uitvoerbaar` blijft 5: ander werk gaat door.
+
+**Wat nog niet werkt: het documentpad in de cloud.** De gepubliceerde Edge Function
+`jarvis-db` staat op versie 7 en haar allowlist kent `DOCUMENT_LEES_SQL` niet, dus
+`jarvis regie` krijgt daar `HTTP 400 — statement niet toegestaan` en valt terug op
+`onbekend`. Dat is gemeten, en het weerspreekt wat hier eerder stond: het statement
+staat in de allowlist van de engine (`db.ts`), niet in die van de uitgerolde
+functie. Tot versie 8 is uitgerold werkt alleen `jarvis regie --uitvoerders <pad>`.
+Uitrollen is een deployment en valt buiten de randvoorwaarden van de
+cloud-uitvoerder (DEC-0049).
+
 `requires_action`, `blocked` en `failed` blokkeren ongeacht het teken;
 `working` met een verlopen teken ook. Ontbreken is een toestand en geen leegte:
 een uitvoerder die in geen enkele bron een teken binnen `UITVOERDER_TERMIJN_MINUTEN`

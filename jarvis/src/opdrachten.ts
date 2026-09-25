@@ -2158,7 +2158,9 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
     console.log(`${t.toestand.padEnd(22)} ${t.id.padEnd(36)} ${t.verantwoordelijke.padEnd(18)} ${t.waarom}`);
   }
   const geblokkeerd = regie.taken.filter((t) => t.toestand === "BLOCKED").length;
-  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
+  const geblokkeerdeUitvoerders = regie.uitvoerders.filter((u) => u.toestand === "GEBLOKKEERD");
+  for (const u of geblokkeerdeUitvoerders) console.error(`jarvis regie: uitvoerder ${u.naam} is GEBLOKKEERD — ${u.reden}`);
+  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${geblokkeerdeUitvoerders.length} uitvoerder(s) geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
   return 0;
 }
 

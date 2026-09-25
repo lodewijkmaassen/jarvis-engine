@@ -85,10 +85,30 @@ export type RolRegie = {
   readonly uitvoerder: string | null;
 };
 
+/**
+ * De toestand van één uitvoerder in de regie-uitkomst.
+ *
+ * Zonder deze lijst was een geblokkeerde uitvoerder alleen zichtbaar via zijn
+ * taken, en dus onzichtbaar zodra hij er geen had. Dat is precies het geval van
+ * de gepauzeerde roosterroutine: niets wekt de keten nog, geen enkele taak hangt
+ * eraan, en de regie meldde nul afwijkingen (QA op AC-11, criterium H). Eis 9 van
+ * de opdracht verbiedt een tweede wekker; zíen dat de wekker uit staat is geen
+ * tweede wekker.
+ */
+export type UitvoerderRegie = {
+  readonly naam: string;
+  readonly toestand: UitvoerderToestand;
+  readonly reden: string;
+  /** De taken die aan deze uitvoerder hangen, geclaimd of toegewezen. */
+  readonly taken: readonly string[];
+};
+
 export type Regie = {
   readonly gegenereerd_op: string;
   readonly taken: readonly TaakRegie[];
   readonly rollen: readonly RolRegie[];
+  /** Elke uitvoerder die het register kent of die in de werkactiviteit voorkomt. */
+  readonly uitvoerders: readonly UitvoerderRegie[];
   /** Uitvoerbaar werk in prioriteitsvolgorde: eerst herstel, dan afronding, dan onderbroken werk, dan nieuw werk. */
   readonly uitvoerbaar: readonly TaakRegie[];
   readonly afwijkingen: readonly TaakRegie[];
@@ -326,7 +346,21 @@ export function prGemerged(overzicht: Overzicht, activiteit: readonly Activiteit
 /** Oordeel over één uitvoerder, zoals `bepaalTaak` het nodig heeft. */
 type UitvoerderOordeel = (naam: string) => { readonly toestand: UitvoerderToestand; readonly reden: string };
 
-function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date, oordeel: UitvoerderOordeel, uitvoerder: string | null): TaakRegie {
+/**
+ * Hetzelfde oordeel, maar alleen wanneer het register de uitvoerder **kent**;
+ * anders null.
+ *
+ * Voor een lopende claim geldt "ontbreken is een toestand": zonder register en
+ * zonder vers teken is die claim geen lopende uitvoering meer (ontwerp §2.2).
+ * Voor een stap die alleen aan een uitvoerder is *toegewezen* geldt dat niet: die
+ * uitvoerder mag tussen twee taken door legitiem stil zijn, en zonder register zou
+ * elke toegewezen stap een blokkade worden. Dat is het valse alarm van §7, en het
+ * brak twee bestaande toetsen die vastleggen dat een toegewezen stap een
+ * wachttoestand is.
+ */
+type RegisterOordeel = (naam: string) => { readonly toestand: UitvoerderToestand; readonly reden: string } | null;
+
+function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activiteit: readonly Activiteit[], nu: Date, oordeel: UitvoerderOordeel, uitvoerder: string | null, uitRegister: RegisterOordeel = () => null): TaakRegie {
   const stappen = t.stappen ?? [];
   const open = stappen.filter((s) => !s.gedaan);
   const volgende = open[0]?.tekst ?? null;
@@ -422,6 +456,22 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
     const toegewezen = UITVOERDER_STAP.exec(volgende);
     if (toegewezen) {
       const naam = toegewezen[1].toLowerCase();
+      // Een stap die aan een uitvoerder is toegewezen is werk dat aan hém hangt,
+      // ook zonder claim. Staat hij volgens het register geblokkeerd, dan wacht de
+      // taak niet op hem — zij ligt stil, en dat is een blokkade.
+      //
+      // Dit was de productiecasus, en zij bleef buiten beeld: deze tak bouwde op
+      // `...basis` en vroeg het register nooit. Drie taken stonden aan de
+      // onbereikbare laptop toegewezen als `WAITING_FOR_DEPENDENCY` met
+      // `blokkade: null`, en de regie meldde nul afwijkingen terwijl het register
+      // die uitvoerder al dagen als geblokkeerd kende (QA op AC-11, bevinding 1).
+      const overToegewezen = uitRegister(naam);
+      if (overToegewezen !== null && overToegewezen.toestand === "GEBLOKKEERD") {
+        return { ...basis, toestand: "BLOCKED", verantwoordelijke: "task-controller", uitvoerder: naam, sinds: laatste, uitvoerbaar: false,
+          wacht_op: overToegewezen.reden, blokkade: "uitvoerder_geblokkeerd", blokkade_rol: null,
+          volgende_stap: `${t.id} is aan ${naam} toegewezen, en die uitvoerder is geblokkeerd: de blokkade opheffen of de stap aan een andere uitvoerder toewijzen`,
+          waarom: `${overToegewezen.reden}; de stap is aan ${naam} toegewezen en ligt daarmee stil. Een geblokkeerde uitvoerder is werk voor Jarvis, niet voor de eigenaar` };
+      }
       if (uitvoerder === null || uitvoerder.toLowerCase() !== naam) {
         return { ...basis, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: naam, sinds: laatste, uitvoerbaar: false, wacht_op: naam,
           waarom: uitvoerder === null
@@ -531,6 +581,10 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
     if (slechtste !== undefined) return { toestand: "GEBLOKKEERD", reden: blokkadeReden(naam, slechtste, teken, nu) };
     return { toestand: "ACTIEF", reden: blokkadeReden(naam, rij[0], teken, nu) };
   };
+  // Alleen wat het register expliciet over deze uitvoerder zegt; kent het hem
+  // niet, dan is er geen oordeel. Zie `RegisterOordeel` voor waarom dat verschil
+  // ertoe doet.
+  const uitRegister: RegisterOordeel = (naam) => ((register.get(naam) ?? []).length === 0 ? null : oordeel(naam));
 
   const taken: TaakRegie[] = [];
   const gezien = new Set<string>();
@@ -539,7 +593,7 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
       if (t.status !== "actief" && t.status !== "review") continue;
       if (gezien.has(t.id)) continue; // een dossierspiegel in een ander project telt niet als tweede taak
       gezien.add(t.id);
-      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu, oordeel, uitvoerder));
+      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu, oordeel, uitvoerder, uitRegister));
     }
   }
   const uitvoerbaar = taken
@@ -593,5 +647,21 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
       laatste_activiteit: laatste?.op ?? null, volgende_stap: null, wachtrij, uitvoerder: null };
   });
 
-  return { gegenereerd_op: nu.toISOString(), taken, rollen, uitvoerbaar, afwijkingen };
+  // Elke uitvoerder die het register kent of die in de werkactiviteit voorkomt,
+  // met zijn toestand en de taken die aan hem hangen. Een geblokkeerde uitvoerder
+  // zonder taken was anders onzichtbaar.
+  const namen = new Set<string>([...register.keys()]);
+  for (const a of activiteit) namen.add(a.uitvoerder);
+  const uitvoerderStand: UitvoerderRegie[] = [...namen]
+    .sort()
+    .map((naam) => {
+      const over = oordeel(naam);
+      return {
+        naam,
+        toestand: over.toestand,
+        reden: over.reden,
+        taken: taken.filter((t) => t.uitvoerder !== null && t.uitvoerder.toLowerCase() === naam.toLowerCase()).map((t) => t.id),
+      };
+    });
+  return { gegenereerd_op: nu.toISOString(), taken, rollen, uitvoerders: uitvoerderStand, uitvoerbaar, afwijkingen };
 }
