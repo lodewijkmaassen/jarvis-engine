@@ -719,7 +719,12 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
     const tekst = invoer.statusDocument.replace(/\r\n/g, "\n");
     const m = KOP_GEBLOKKEERD.exec(tekst);
     const sectie = m ? tekst.slice(m.index + m[0].length).split(/^## /m)[0].trim() : "";
-    const nietsGeblokkeerd = /^(niets|geen|nvt|n\.v\.t\.)\b/i.test(sectie);
+    // De opmaaktekens eraf vóór de toets. `**Geen blokkade.**` bedoelt
+    // hetzelfde als `Geen blokkade.`, maar greep niet: de sectie begon met een
+    // sterretje, de toets faalde, en de zin werd zelf als blokkade opgevoerd —
+    // met urgentie hoog in de lijst van de eigenaar. Dat kostte een volledige
+    // pull request om terug te draaien.
+    const nietsGeblokkeerd = /^(niets|geen|nvt|n\.v\.t\.)\b/i.test(sectie.replace(/^[*_#>\s]+/, ""));
     if (sectie.length > 0 && !nietsGeblokkeerd) {
       const bron: readonly GelezenItem[] =
         blok.length > 0 ? blok : [{ titel: kortTitel(sectie), toelichting: sectie, context: "", regels: [] }];

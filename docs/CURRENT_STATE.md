@@ -12,7 +12,7 @@ _Gegenereerd op 2026-09-25._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 38 |
+| Testbestanden | 39 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -31,6 +31,45 @@ _Gegenereerd op 2026-09-25._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+De controle schaalt mee met de wijziging. Het rolcontract eiste vóór elke
+commit alle vier de projectcontroles, ook bij een commit die alleen een dossier
+of een statusdocument raakt — en die vier zeggen over een tekstbestand niets.
+Ze draaien nu zodra de commit ook maar één pad raakt dat geen documentatie,
+dossier of kennisrecord is; bij twijfel draaien ze wel. De poort blijft bij
+elke commit staan.
+
+Daarbij hoort een tweede regel, uit de meting: groen is een ondergrens, geen
+bewijs. De fouten die in de laatste reeks wijzigingen werkelijk tot in
+productie doorliepen — een veld dat stil uit de weergavelaag viel, een
+botsende klassenaam, een ontbrekend configuratiebestand in een uitrol — waren
+geen van drieën met de bestaande tests te vinden, terwijl die bij elke commit
+groen stonden. Verandert er iets dat de eigenaar ziet, dan hoort de echte
+uitkomst bij het bewijs: de pagina gerenderd, het gepubliceerde document
+teruggelezen.
+
+Een lege blokkadesectie blijft ook leeg met opmaak eromheen. `**Geen
+blokkade.**` greep niet op de toets `/^(niets|geen|…)/`, want de sectie begon
+met een sterretje; de zin werd daardoor zelf als blokkade met urgentie hoog
+opgevoerd, en het terugdraaien kostte een volledige pull request met eigen CI-
+en goedkeuringsronde. De toets kijkt nu langs de opmaaktekens heen.
+
+Een uitrol zonder `config.js` kan niet meer stil slagen. De app kreeg haar
+bron uit een `config.js` die buiten de repository in de doelmap hoorde te
+staan; ontbrak hij, dan meldde `bouw.mjs` dat met een waarschuwing en eindigde
+met 0, en rolde de uitrol door. De pagina slikte de laadfout ook door
+(`onerror="void 0"`) en viel terug op "geen gegevens — open dit op claude.ai of
+als eigen app" — een tekst die naar de verkeerde oorzaak wijst wanneer je juist
+wél de eigen app draait. Zo stond er na een uitrol een lege interface zonder
+dat iets de echte reden noemde.
+
+Nu faalt de bouw met exitcode 1 en schrijft hij niets, want een halve doelmap
+is erger dan een lege: die zou alsnog uitgerold worden. Met `--url` en
+`--sleutel` schrijft hij de `config.js` zelf, zodat de uitrol één opdracht is
+en niemand het bestand met de hand hoeft te zetten; een bestaande `config.js`
+blijft staan. De twee waarden zijn publieke identifiers — ze staan in elke
+browser die de interface opent — en komen van de aanroeper, niet uit een
+bestand in de engine.
 
 Het overzicht deelt het werk in vakken in, en de regie publiceert het mee. Dat
 zijn de twee helften van één klacht: de administratieve nulstand was bereikt,

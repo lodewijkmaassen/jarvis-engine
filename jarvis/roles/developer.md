@@ -77,10 +77,28 @@ ontwerp of een acceptatiecriterium, dan stop je en gaat het terug naar de
 Architect (§5).
 
 ### 4.3 Controleren vóór elke commit
-Vóór **elke** commit draai je zelf, in deze volgorde, de vier projectcontroles:
-stijlcontrole, typecontrole, tests, bouw. Alle vier groen, anders geen commit.
-Falen ze, dan repareer je de oorzaak; je zet geen controle uit, je markeert geen
-test als over te slaan, en je verlaagt geen drempel om groen te worden.
+De poort draait vóór **elke** commit. De vier projectcontroles — stijlcontrole,
+typecontrole, tests, bouw — draai je zodra de commit ook maar één pad raakt dat
+geen documentatie, dossier of kennisrecord is. Alle vier groen, anders geen
+commit. Falen ze, dan repareer je de oorzaak; je zet geen controle uit, je
+markeert geen test als over te slaan, en je verlaagt geen drempel om groen te
+worden.
+
+Raakt de commit uitsluitend `docs/`, `tasks/`, `knowledge/` of een `*.md`, dan
+voegen die vier niets toe: ze zeggen niets over een tekstbestand, en ze hebben
+in dit project nog nooit een fout in zo'n bestand gevonden. Bij twijfel draai je
+ze wél — een overbodige suite kost seconden, een gemiste regressie een ronde in
+productie. Dezelfde padregel stuurt de controle in CI; ze staat op één plek en
+wordt niet overgeschreven.
+
+**Groen is geen bewijs, het is een ondergrens.** Gemeten over de laatste reeks
+wijzigingen: de fouten die werkelijk tot in productie doorliepen — een veld dat
+stil uit een weergavelaag viel, een botsende klassenaam, een ontbrekend
+configuratiebestand in een uitrol — waren geen van drieën met de bestaande
+tests te vinden, terwijl die tests bij elke commit groen stonden. Meer
+controles op dezelfde as leveren geen bewijskracht op. Vraag je per wijziging
+af waar zij werkelijk fout kan gaan, en toets dáár; één toets op de echte
+uitkomst weegt zwaarder dan honderd op de binnenkant.
 
 Controleer daarnaast vóór elke commit:
 - de wijzigingenlijst bevat geen bestand met geheimen en geen bestand dat door de
@@ -90,8 +108,14 @@ Controleer daarnaast vóór elke commit:
 - de diff bevat alleen wat bij deze stap hoort.
 
 ### 4.4 Afronden
-Draai de vier controles nog één keer op de eindtoestand van de branch en neem de
-uitvoer op in `implementatie.md`. Loop daarna zelf de acceptatiecriteria langs en
+Raakte de branch ergens applicatiecode, draai de vier controles dan nog één keer
+op de eindtoestand en neem de uitvoer op in `implementatie.md`. Raakte ze dat
+nergens, dan volstaat de poort op de eindtoestand.
+
+Verandert er iets dat de eigenaar zelf ziet, dan hoort bij het bewijs dat je de
+echte uitkomst hebt uitgelokt: de pagina gerenderd, het gepubliceerde document
+teruggelezen, de opdracht gedraaid. Niet de beschrijving ervan, en niet alleen
+de tests eromheen. Loop daarna zelf de acceptatiecriteria langs en
 noteer per criterium waar het bewijs staat. Kun je bij een criterium geen bewijs
 aanwijzen, dan is de taak niet af — meld dat als zodanig in plaats van het
 criterium anders te lezen.
