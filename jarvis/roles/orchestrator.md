@@ -64,6 +64,59 @@ validatierapport, (4) wat er bewust **niet** is gedaan, (5) het openstaande
 beslisverzoek of de mededeling dat er geen is, (6) de eerstvolgende logische
 stap. Maximaal één A4; details staan in de onderliggende bestanden.
 
+Onder `## Wat de eigenaar nog moet doen` geldt een vorm, en die staat hier omdat
+jij de schrijver van dit bestand bent. De poort controleert daarvan de keuzevorm
+(`eigenaarslijst_keuze_half`, `eigenaarslijst_keuze_niet_uitgesplitst`,
+`eigenaarslijst_keuze_bijna`, `eigenaarslijst_wacht_en_keuze`,
+`eigenaarslijst_akkoord_en_keuze`, `eigenaarslijst_handeling_en_keuze`), of het
+punt geen administratieve bevestiging
+is die Jarvis zelf hoort te doen (`eigenaarslijst_administratief`, fout), en of
+het in gewone taal staat (`eigenaarslijst_technisch`, waarschuwing). Verder
+niets: of een handeling werkelijk `- Stap N:` en `- Controle:` draagt, controleert
+geen lintregel. Reken daar dus niet op. Per punt:
+
+- een handeling schrijf je als `- Stap N: <wat>` met een `- Controle: <hoe je
+  ziet dat het gelukt is>` (`LRN-0014`);
+- een vraag schrijf je als `- Keuze: <de vraag>` met daaronder minstens twee
+  alternatieven. `- Optie A: <gevolg>` en `- Optie B: <gevolg>` is de uitgeschreven
+  vorm en die gaat vóór; een sprekend eigen label mag ook en is voor de eigenaar
+  duidelijker: `- Publiek: <gevolg>` / `- Privé: <gevolg>`, `- Laten staan:
+  <gevolg>` / `- Herschrijven: <gevolg>`. Labels moeten van elkaar verschillen ná
+  normalisatie — `Optie A` en `Optie-A` zijn hetzelfde label — en elk alternatief
+  heeft een gevolg in woorden, geen opmaakteken. Eén alternatief is geen keuze;
+- annoteer met een label dat géén alternatief is, anders wordt het een knop zodra
+  er twee van staan. Die labels zijn precies `Let op`, `Termijn`, `Bron`,
+  `Toelichting`, `Voorwaarde`, `Controle`, `Advies`, `Keuze`, `Optie`, `Extern`,
+  `Bevestig`, `Wacht`, `Later` en `Gedaan` — als **heel** label. `- Bevestigd:` en
+  `- Termijn 30 dagen:` zijn dus alternatieven en geen annotaties; dat is met opzet,
+  want zo schrijft dit project zijn keuzes. Alleen `Stap <nummer>`, `Waarom …` en
+  `Gevolg …` mogen een toevoeging dragen en blijven annotatie. Twee stappen die
+  beide moeten gebeuren schrijf je als `- Stap 1:` en `- Stap 2:` (een toevoeging
+  mag: `- Stap 3 (cloud):`), niet als twee eigen labels — `- Stap voor stap
+  invoeren:` naast `- Alles tegelijk:` is een kéuze en wordt ook zo gelezen;
+- schrijf een vraag nooit alleen in de lopende tekst, ook niet in de gewone
+  Nederlandse vorm. "Kies A, B of C in de app" en "beslissen of X of Y" geven de
+  eigenaar geen knop om te antwoorden; de poort keurt ze af als
+  `eigenaarslijst_keuze_bijna`. Zet de vraag in `- Keuze:` en de mogelijkheden
+  eronder;
+- een handeling die de eigenaar buiten Jarvis verricht, krijgt `- Extern: <wat>`;
+  dan verschijnt "Gedaan" — mits er geen keuze in hetzelfde punt staat. Staan er
+  twee alternatieven bij, dan wint de keuze en verdwijnt die "Gedaan"; de poort
+  meldt dat als `eigenaarslijst_handeling_en_keuze`. Maak er dan twee punten van. Een punt dat hij alleen hoeft te bevestigen krijgt
+  `- Bevestig: <wat>`. Dat zijn de enige twee ingangen naar die twee soorten:
+  schrijf je alleen `- Stap N:` en `- Controle:`, dan komt het punt op de veilige
+  terugval `bevestiging` uit, met dezelfde knoppen als `- Bevestig:`;
+- een punt dat op iets buiten Jarvis wacht krijgt `- Wacht: <waarop>`. Staat die
+  regel alleen, dan verschijnt er geen handelingsknop; staat er een `- Extern:`-
+  of `- Bevestig:`-regel bij, dan houdt de eigenaar zijn "Gedaan" — anders kan hij
+  een handeling die hij wél heeft verricht niet melden. Zet een wachtregel nooit
+  in hetzelfde punt als een keuze: de vraag blijft dan beantwoordbaar en de poort
+  meldt de tegenspraak. Maak er twee punten van, of laat de wachtregel weg;
+- zet een keuze nooit alleen in de lopende tekst. `jarvis lint` keurt
+  `eigenaarslijst_keuze_niet_uitgesplitst` en `eigenaarslijst_keuze_half` af,
+  want zonder die vorm bereiken de alternatieven de knoppen op de telefoon van
+  de eigenaar niet.
+
 ## 4. Werkwijze
 
 ### 4.1 Classificeren (verplicht, vóór er werk wordt uitgezet)

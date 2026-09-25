@@ -188,9 +188,29 @@ function isRol(x: string): x is Rol {
   return (ROLLEN as readonly string[]).includes(x);
 }
 
-/** Welke rol een open stap uitvoert, afgeleid uit de tekst van die stap. */
+/**
+ * Welke rol een open stap uitvoert, afgeleid uit de tekst van die stap.
+ *
+ * Noemt de stap een rol bij naam in haar eerste woorden — "Developer (engine):",
+ * "QA:", "Kennisbeheerder:" — dan is dat de rol, en telt geen woordpatroon
+ * verderop meer mee. Zonder die voorrang greep de patroontoets op een woord in de
+ * staart: de stap "Bouw van richting 2 (developer, engine): … Zie \"Analyse (e)\"
+ * voor de criteria" kwam bij de architect terecht omdat er ergens "Analyse" stond,
+ * en de regie wees daarmee een rol aan die niet aan zet was (QA op de
+ * acceptatiecriteria van T-20260914-agent-operations, bevinding 7).
+ */
 export function rolVoorStap(tekst: string): Rol {
   const t = tekst.toLowerCase();
+  const kop = t.slice(0, 60);
+  const genoemd: readonly (readonly [RegExp, Rol])[] = [
+    [/\b(qa|kwaliteitsbewaking)\b/, "qa"],
+    [/\b(developer|ontwikkelaar)\b/, "developer"],
+    [/\b(architect)\b/, "architect"],
+    [/\b(kennisbeheerder|knowledge[- ]manager)\b/, "knowledge-manager"],
+    [/\b(reviewer|tweede lezing)\b/, "reviewer"],
+    [/\b(task[- ]controller|orchestrator)\b/, "task-controller"],
+  ];
+  for (const [patroon, rol] of genoemd) if (patroon.test(kop)) return rol;
   if (/\b(qa|toets\w*|kwaliteits)/.test(t)) return "qa";
   if (/\b(onderzoek\w*|ontwerp\w*|analyse|analyseer|architect\w*|impact)/.test(t)) return "architect";
   if (/\b(dossier\w*|kennisrecord\w*|record\b|dec-\d|con-\d|lrn-\d|rsk-\d|documentatie|afsluit\w*|afrond\w*|index|feitenblok|kennis)/.test(t)) return "knowledge-manager";

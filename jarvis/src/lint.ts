@@ -11,6 +11,7 @@
 //   waarschuwing  — zichtbaar, blokkeert niet
 import { matchtGlob, normaliseerPad } from "./classify";
 import { technischeMarkers } from "./review";
+import { alternatiefRegels, isExplicietAlternatief, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze, lijktOpVraag } from "./overzicht";
 import type { JarvisConfig } from "./config";
 import { isActiefRecord, type KnowledgeRecord } from "./records";
 import { formatteerBevinding, formatteerLaadFout, type KennisLading } from "./store";
@@ -35,6 +36,12 @@ export const LINT_CODES = [
   "ack_bron_onbetrouwbaar",
   "eigenaarslijst_administratief",
   "eigenaarslijst_technisch",
+  "eigenaarslijst_keuze_niet_uitgesplitst",
+  "eigenaarslijst_keuze_half",
+  "eigenaarslijst_keuze_bijna",
+  "eigenaarslijst_wacht_en_keuze",
+  "eigenaarslijst_akkoord_en_keuze",
+  "eigenaarslijst_handeling_en_keuze",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -84,7 +91,22 @@ export type LintInvoer = {
    * De punten onder "Wat de eigenaar nog moet doen" van de taakdossiers die
    * deze wijziging raakt: bestand en de tekst per punt.
    */
-  readonly eigenaarsPunten?: readonly { readonly bestand: string; readonly tekst: string }[];
+  readonly eigenaarsPunten?: readonly {
+    readonly bestand: string;
+    readonly tekst: string;
+    /**
+     * De regels onder dit punt, met hun tekst. De tekst is dragend: een
+     * `- Optie B:` zonder gevolg telt niet als alternatief, en zonder die
+     * tekst kon de poort dat niet zien.
+     */
+    readonly regels?: readonly { readonly label: string; readonly tekst: string }[];
+    /** Staat dit punt onder een governancecontext die een autorisatie vraagt? */
+    readonly akkoordContext?: boolean;
+    /** De vette tussenkop waaronder dit punt staat; de kaart toont haar, dus leest de poort haar ook. */
+    readonly context?: string;
+    /** Is het punt afgevinkt, of vraagt het het akkoord op de taak? Dan toont de kaart het niet en beoordeelt de poort het niet. */
+    readonly buitenDeKaart?: boolean;
+  }[];
   /**
    * De commitlog was niet volledig en eenduidig te lezen (een record zonder
    * geldige vorm, of een verschil met de lijst uit rev-list). Blokkerend: een
@@ -367,6 +389,107 @@ export function toetsRandvoorwaarden(
  * echte eigenaarshandeling noemt — inloggen, een credential, een instelling,
  * een betaling, een akkoord of beslissing — blijft staan.
  */
+/**
+ * Staat er een keuze verstopt in een stapregel?
+ *
+ * Een keuzepunt hoort zijn alternatieven als eigen optieregels te schrijven.
+ * Gebeurt dat niet, dan valt de kaart terug op de standaardknoppen van het
+ * soort en bereiken de alternatieven de eigenaar nooit — gemeten: een punt met
+ * "kies tussen (a) … of (b) …" in een `Stap 1`-regel kwam bij de eigenaar aan
+ * als één knop "Gedaan". De engine herkent zo'n regel nog wel (het vangnet),
+ * maar dit is de norm en de poort bewaakt hem.
+ */
+/**
+ * Alle tekst waarin een keuze kan schuilen: de vette tussenkop, de tekst van het
+ * punt zelf, en élke labelregel.
+ *
+ * Dit was drie rondes lang een opsomming van labels, en dat is precies waarom er
+ * elke ronde een volgend label overbleef. Ronde 7 vond een keuze in `- Extern:`,
+ * ronde 8 in `- Voorwaarde:` en in de vette tussenkop. De motivering om
+ * `- Let op:` en `- Controle:` uit te sluiten ("een waarschuwing hoort geen kaart
+ * met knoppen te worden") is meetbaar onjuist: de kaart krijgt haar knoppen uit
+ * het soort, niet uit deze lijst, dus uitsluiten verhindert geen knoppen — alleen
+ * dat de poort de tegenspraak meldt.
+ *
+ * De omkering kost niets. Gemeten over de volledige historie van de drie
+ * projecten, 140 unieke eigenaarspunten: acht bevindingen met de oude
+ * labellijst, acht met deze — **nul** nieuwe treffers. Wat de kaart als tekst
+ * toont, leest de poort.
+ */
+export function keuzeBronnen(
+  tekst: string,
+  regels: readonly { readonly label: string; readonly tekst: string }[],
+  context = "",
+): readonly string[] {
+  return [context, tekst, ...regels.map((r) => r.tekst)].filter((t) => t.trim().length > 0);
+}
+
+export function keuzeNietUitgesplitst(punt: {
+  readonly tekst: string;
+  readonly context?: string;
+  readonly regels?: readonly { readonly label: string; readonly tekst: string }[];
+}): boolean {
+  const regels = punt.regels ?? [];
+  // Al netjes uitgesplitst: dan valt er niets te melden.
+  if (leesAlternatieven(regels).length >= 2) return false;
+  // Dezelfde herkenning als de engine gebruikt, niet een tweede kopie ervan:
+  // wat het vangnet als keuze leest, hoort de poort als niet-uitgesplitst af
+  // te keuren — en uit dezelfde bronnen. Twee eerdere versies vuurden daarom
+  // nooit op de vorm waarvoor de regel is geschreven: eerst ankerde zij op
+  // "Stap N:" in de toelichting, en daarna keek zij alleen naar de toelichting
+  // terwijl de stapregels van een LRN-0014-punt in `regels` zitten en de
+  // toelichting alleen de vette kop draagt (QA-ronde 5, N3).
+  return keuzeBronnen(punt.tekst, regels, punt.context).some((t) => leesIngebedeKeuze(t).length >= 2);
+}
+
+/**
+ * Een `Keuze`-regel zonder minstens twee brúíkbare alternatieven is een half
+ * geschreven norm. Bruikbaar betekent: een eigen label én een gevolg. Een
+ * eerdere versie telde alleen labels, waardoor `- Optie B:` zonder tekst en
+ * twee keer `- Optie A:` allebei groen door de poort gingen terwijl de kaart
+ * de eigenaar geen antwoord liet geven.
+ */
+export function keuzeZonderAlternatieven(regels: readonly { label: string; tekst: string }[]): boolean {
+  const heeftKeuze = regels.some((r) => r.label.trim().toLowerCase() === "keuze");
+  // Ook zonder `- Keuze:`-regel. Een punt met twee optieregels waarvan er te
+  // weinig bruikbaar zijn — hetzelfde label tweemaal, of een optie zonder
+  // gevolg — viel stil terug op `bevestiging` en kreeg "Gedaan" onder een
+  // beslissing die nooit is genomen (QA-ronde 6, B2). Wie alternatieven
+  // aandraagt, draagt er twee bruikbare aan of de poort zegt het.
+  //
+  // Maar "aandraagt" is precies wat de kaart eronder verstaat, niet minder. Deze
+  // regel vuurde al bij één niet-annotatielabel terwijl de kaart er twee eist, en
+  // keurde daarmee vijf echte historische dossierpunten af die niets met een keuze
+  // te maken hadden — een punt met alleen `- Rotatie/intrekking: …` of alleen
+  // `- Volgorde: …` naast zijn stappen. De boodschap sprak daarbij over een
+  // `Keuze`-regel die er niet was. Dat is dezelfde asymmetrie tussen kaart en poort
+  // die deze taak wegneemt, gespiegeld (QA-ronde 9, bevinding 1).
+  const expliciet = regels.some((r) => isExplicietAlternatief(r.label));
+  if (!heeftKeuze && !expliciet && alternatiefRegels(regels).length < 2) return false;
+  // Letterlijk de functie van de engine, niet een tweede telling ernaast: zolang
+  // de lint op `label.trim().toLowerCase()` ontdubbelde en de engine op
+  // `sleutelVan`, ging `- Optie A:` naast `- Optie-A:` groen door de poort
+  // terwijl de kaart de eigenaar alleen "Later" gaf (QA-ronde 5, B1).
+  // Een keuze die haar alternatieven in de `Keuze`-regel zelf schrijft, leest
+  // het vangnet wel; die vorm meldt `eigenaarslijst_keuze_niet_uitgesplitst`.
+  if (leesIngebedeKeuze(regels.find((r) => r.label.trim().toLowerCase() === "keuze")?.tekst ?? "").length >= 2) return false;
+  return leesAlternatieven(regels).length < 2;
+}
+
+/**
+ * Een `- Wacht:`-regel naast een uitgeschreven keuze: het dossier zegt twee
+ * dingen tegelijk. De kaart kiest sinds QA-ronde 6 voor de keuze — een vraag
+ * blijft beantwoordbaar terwijl er op iets anders gewacht wordt — maar wélke
+ * van de twee het is, hoort in het dossier te staan en niet uit een volgorde in
+ * de code te volgen. Daarvóór wiste de wachtregel álle knoppen: de vraag stond
+ * als kaarttitel en "Later" was het enige antwoord.
+ */
+export function wachtNaastKeuze(regels: readonly { label: string; tekst: string }[]): boolean {
+  if (!regels.some((r) => r.label.trim().toLowerCase() === "wacht")) return false;
+  const heeftKeuze = regels.some((r) => r.label.trim().toLowerCase() === "keuze");
+  return heeftKeuze || leesAlternatieven(regels).length >= 2;
+}
+
 export function isAdministratieveBevestiging(tekst: string): boolean {
   const t = tekst.replace(/`/g, "").replace(/\s+/g, " ");
   const werkwoord = /\b(bevestig\w*|valideer\w*|controleer\w*|lees|nalezen|doorlezen|nakijken|kijk\w* na|goedkeur\w* (?:de|het) (?:tekst|documentatie))\b/i;
@@ -383,6 +506,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // doen (CON-0016). Een documentatie- of statusbevestiging die daar belandt,
   // komt als actie op zijn telefoon; de poort houdt dat tegen.
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     if (!isAdministratieveBevestiging(punt.tekst)) continue;
     bevindingen.push(
       bevinding(
@@ -395,10 +519,142 @@ export function lint(invoer: LintInvoer): LintResultaat {
     );
   }
 
+  // Een keuze hoort haar alternatieven als eigen optieregels te schrijven; in
+  // een stapregel verstopt bereiken ze de knoppen niet.
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
+    if (!keuzeNietUitgesplitst(punt)) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_keuze_niet_uitgesplitst",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" zet de alternatieven van een keuze in de lopende tekst; ` +
+          `schrijf de vraag als "- Keuze: <vraag>" met daaronder "- Optie A: <gevolg>" en "- Optie B: <gevolg>", ` +
+          `anders hangt de kaart van het vangnet af in plaats van van het formaat.`,
+      ),
+    );
+  }
+
+  // Een half geschreven keuze levert stil een onbruikbare kaart: de vraag staat
+  // er, de alternatieven niet, en het punt valt terug op "Later".
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
+    if (!keuzeZonderAlternatieven(punt.regels ?? [])) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_keuze_half",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" kondigt alternatieven aan maar draagt er ` +
+          `minder dan twee bruikbare: elk alternatief heeft een eigen label én een gevolg nodig, en twee labels die na ` +
+          `normalisatie hetzelfde zijn tellen als één. Zonder die twee kan de eigenaar de vraag niet beantwoorden.`,
+      ),
+    );
+  }
+
+  // Een tekst die eruitziet als een keuze maar het formaat net niet haalt:
+  // cijfers in plaats van letters, geen keuzewoord, twee keer hetzelfde merk,
+  // of een leeg alternatief. De kaart kan die niet lezen, dus moet de poort hem
+  // afdwingen — anders krijgt de eigenaar "Gedaan" onder een open vraag zonder
+  // dat iets dat meldt (QA-ronde 6, B3).
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
+    const regels = punt.regels ?? [];
+    if (leesAlternatieven(regels).length >= 2) continue;
+    // Twee toetsen met elk hun eigen bronnen. De strenge (`lijktOpKeuze`: twee
+    // merken of twee keer "of") mag over álle tekst van het punt; de losse
+    // (`lijktOpVraag`: een keuzewoord en één voegwoord) alleen over de punttekst en
+    // de `- Keuze:`-regel, en niet bij een punt dat een `- Extern:`- of
+    // `- Bevestig:`-regel draagt. Zie `lijktOpVraag` voor de meting waarop dat
+    // verschil rust: over de strengere bronnen zou de losse toets een instructie
+    // afkeuren waarin "kies X of Y" over een knop in iemand anders' scherm gaat.
+    const breed = keuzeBronnen(punt.tekst, regels, punt.context ?? "").some((t) => lijktOpKeuze(t));
+    const isHandeling = regels.some((r) => /^(extern|bevestig)$/i.test(r.label.trim()));
+    const smalleBronnen = [punt.tekst, regels.find((r) => r.label.trim().toLowerCase() === "keuze")?.tekst ?? ""];
+    const smal = !isHandeling && smalleBronnen.some((t) => t.trim().length > 0 && lijktOpVraag(t));
+    if (!breed && !smal) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_keuze_bijna",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" leest als een keuze — twee of meer ` +
+          `alternatieven door "of" gescheiden — maar het vangnet kan hem niet uitpakken (een ontbrekend keuzewoord, ` +
+          `tweemaal hetzelfde merk, of een leeg alternatief). Schrijf hem als "- Keuze: <vraag>" met ` +
+          `"- Optie A: <gevolg>" en "- Optie B: <gevolg>".`,
+      ),
+    );
+  }
+
+  // Een wachtregel naast een uitgeschreven keuze: het dossier zegt twee dingen
+  // tegelijk, en de code hoort dat niet stil voor de eigenaar te beslissen.
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
+    if (!wachtNaastKeuze(punt.regels ?? [])) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_wacht_en_keuze",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft zowel een "Wacht"-regel als een ` +
+          `keuze. Beide kunnen niet waar zijn voor de eigenaar: of hij kan nu kiezen, of er valt te wachten. ` +
+          `Haal de wachtregel weg, of maak er een apart punt van.`,
+      ),
+    );
+  }
+
+  // Optieregels onder een akkoordcontext, zonder `- Keuze:`-regel: de kaart geeft
+  // dan "Akkoord"/"Niet akkoord" over een inhoudelijke keuze. Dat is de
+  // gedocumenteerde uitkomst — een akkoord blijft een akkoord — maar het dossier
+  // zegt daarmee twee dingen tegelijk, net als bij een wachtregel. Symmetrisch
+  // met `eigenaarslijst_wacht_en_keuze` (QA-ronde 7, bevinding 6).
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
+    const regels = punt.regels ?? [];
+    if (!punt.akkoordContext) continue;
+    if (regels.some((r) => r.label.trim().toLowerCase() === "keuze")) continue;
+    if (leesAlternatieven(regels).length < 2) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_akkoord_en_keuze",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" staat in een akkoordcontext en draagt ` +
+          `tegelijk twee alternatieven. De kaart geeft dan "Akkoord"/"Niet akkoord" over een inhoudelijke keuze; ` +
+          `schrijf de vraag als een eigen punt met "- Keuze: <vraag>", of haal de optieregels weg.`,
+      ),
+    );
+  }
+
+  // Een `- Extern:`- of `- Bevestig:`-regel naast een uitgeschreven keuze: de
+  // keuze wint, en daarmee verliest de eigenaar de "Gedaan" waarmee hij een
+  // handeling die hij wél heeft verricht zou melden. `wacht_en_keuze` en
+  // `akkoord_en_keuze` bestonden al; dit is de derde van dezelfde soort, en hij
+  // ontbrak nog (QA-ronde 8, bevinding 7).
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
+    const regels = punt.regels ?? [];
+    const soort = regels.find((r) => /^(extern|bevestig)$/i.test(r.label.trim()));
+    if (soort === undefined) continue;
+    if (leesAlternatieven(regels).length < 2) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_handeling_en_keuze",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft een "${soort.label.trim()}"-regel en ` +
+          `tegelijk twee alternatieven. De keuze wint, en daarmee verdwijnt de knop waarmee je de handeling zou ` +
+          `melden; maak er twee punten van.`,
+      ),
+    );
+  }
+
   // Wat bij de eigenaar ligt leest hij op zijn telefoon: kort en zonder
   // technische namen (DEC-0046). Een technisch punt blijft staan — het kan
   // een echte handeling zijn — maar de poort zegt dat het herschreven hoort.
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     const markers = technischeMarkers(punt.tekst);
     if (markers.length === 0) continue;
     bevindingen.push(

@@ -12,7 +12,7 @@ _Gegenereerd op 2026-09-25._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 39 |
+| Testbestanden | 40 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -31,6 +31,265 @@ _Gegenereerd op 2026-09-25._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Een eigenaarspunt krijgt zijn soort uit structuur in het dossier, niet uit het
+eerste woord van zijn titel. Dat woord bepaalde het tot nu toe: `blokkerend` in
+de context, of een titel die met "beslis" begint. Een punt dat luidde "kies
+tussen (a) … of (b) …" viel daardoor buiten beide en werd een handeling met één
+knop "Gedaan"; de twee alternatieven die de eigenaar in de tekst kreeg
+voorgelegd, bereikten de knoppen nooit, en hij heeft die kaart uiteindelijk met
+"Gedaan" moeten sluiten voor een keuze die hij al in het gesprek had gegeven.
+
+`EigenaarSoort` benoemt nu wat een punt van de eigenaar vraagt — `akkoord`,
+`keuze`, `externe-handeling`, `bevestiging`, `uitstel` — en `bepaalEigenaarSoort`
+kiest in deze vaste volgorde, waarbij de eerste tak die past wint:
+
+1. een akkoordcontext (`akkoord_pr`) zónder `- Keuze:`-regel — dan `akkoord`;
+2. twee of meer bruikbare alternatieven — dan `keuze`;
+3. een punt dat alternatieven aandraagt maar niet bruikbaar (een `- Keuze:`-regel
+   zonder twee alternatieven, of optieregels waarvan er te weinig een eigen
+   sleutel én een gevolg hebben) — dan `uitstel`, alleen "Later";
+4. een `- Extern:`-regel — dan `externe-handeling`;
+5. een `- Bevestig:`-regel — dan `bevestiging`;
+6. een `- Wacht:`-regel — dan `uitstel`;
+7. anders `bevestiging` als veilige terugval.
+
+De knoppen volgen uit het soort: "Gedaan" alleen bij een externe
+handeling of een bevestiging, akkoordknoppen alleen waar de governance een
+autorisatie eist, en bij een keuze de alternatieven zelf, elk met zijn gevolg.
+
+Drie takken staan waar ze staan omdat onafhankelijke QA ze eerder ergens anders
+mat. Een punt dat zelf een vraag stelt gaat vóór de akkoordcontext: een keuze
+onder `akkoord_pr` kreeg "Akkoord"/"Niet akkoord" onder de vraagtitel, en de
+alternatieven die het dossier had opgeschreven verdwenen volledig uit de kaart.
+Zonder `- Keuze:`-regel blijft een akkoord een akkoord, ook met optieregels
+erbij. `- Wacht:` staat juist achteraan, en stond één ronde ten onrechte vooraan:
+daar wiste zij álle knoppen van een volledig uitgeschreven keuze — de vraag als
+kaarttitel, "Later" als enige antwoord, beide alternatieven nergens — en ook de
+"Gedaan" van een externe handeling die de eigenaar wél had verricht. Wachten op
+iets externs maakt een vraag niet onbeantwoordbaar. Dat de twee samen in één punt
+staan is een fout in het dossier, en de poort meldt haar als
+`eigenaarslijst_wacht_en_keuze` in plaats van haar stil op te lossen. De derde
+tak telt niet alleen een letterlijke `- Keuze:`-regel: een punt met twee
+optieregels waarvan er te weinig bruikbaar zijn, viel anders stil terug op
+`bevestiging` en kreeg "Gedaan" onder een beslissing die nooit is genomen.
+
+De alternatieven komen uit eigen labelregels; `- Keuze:` draagt de vraag, zodat
+de titel de hele vraag is. `- Optie A:` en `- Keuze B:` zijn de uitgeschreven vorm
+en gaan vóór op elk ander label, maar zij zijn niet de enige: **elke labelregel die
+geen annotatie is en een gevolg draagt, telt als alternatief zodra er twee of meer
+van zijn.**
+
+Dat was acht QA-rondes lang omgekeerd, en dat bleek het formaat van de poort in
+plaats van dat van de dossiers. Gemeten over de volledige historie van de drie
+projecten — 140 unieke eigenaarspunten — schreven er zestien hun alternatieven als
+eigen label: `- Publiek:` / `- Privé:`, `- Laten staan:` / `- Herschrijven:`,
+`- Ja:` / `- Nee:`, `- Dagelijks:` / `- Alleen bij een sessie:`. Alle zestien waren
+een echte vraag aan de eigenaar, en alle zestien kwamen bij hem aan als één knop
+"Gedaan" met de alternatieven volledig van de kaart verdwenen. Na deze wijziging
+leveren dezelfde dossiers **tweeëntwintig** keuzekaarten met werkelijke knoppen op,
+en geen enkele kaart met alleen "Later".
+
+Die toets is **geankerd**: alleen het hele label telt, niet een label dat er
+toevallig mee begint. Ongeankerd verdwenen twee échte alternatieven samen —
+`- Bevestigd:` viel onder `bevestig`, `- Termijn 30 dagen:` onder `termijn`,
+`- Controle door mij:` onder `controle` — en drie historische punten schrijven hun
+keuze als `- Bevestigd:` / `- Correcties nodig:`. Drie woorden mogen wél een
+toevoeging dragen omdat zij juist ín die toevoeging annoteren: `Stap <nummer>`,
+`Waarom …` en `Gevolg …`. `Stap` vraagt een nummer, want `- Stap voor stap
+invoeren:` naast `- Alles tegelijk:` is een keuze en geen stap.
+
+De labelgrens van de parser is **tachtig** tekens, niet veertig, en het label mag
+zelf een dubbele punt dragen: de scheiding is een dubbele punt met witruimte
+erachter. Op veertig sneed de grens echte alternatieven weg (de langste in de
+eigenaarssecties is zevenenveertig tekens), en op `[^:*]` brak het label op de
+eerste dubbele punt — waardoor de eigenaar knoppen als "Ja, elk uur (07" kreeg met
+de rest in het gevolg. Dat was een echte kaart in dit project.
+
+Wat de kaart niet leest, dwingt de poort af, en dat gaat verder dan merken. Een
+keuze tussen benoemde mogelijkheden met één "of" en zonder merken — "kies A, B of
+C in de Jarvis-app", "beslissen wat er met X of Y gebeurt" — kwam bij de eigenaar
+aan als "Gedaan / Nog niet / Later" met een groene poort, en staat zo in echte
+dossiers. `lijktOpVraag` vraagt een keuzewoord en één voegwoord, en `KEUZEWOORD`
+kent nu ook de beslis-familie. Omdat die toets losser is, leest de poort haar op
+mínder bronnen: alleen de tekst van het punt zelf en de `- Keuze:`-regel, nooit de
+stapregels, en niet bij een punt met een `- Extern:`- of `- Bevestig:`-regel. Anders
+keurt zij een instructie af waarin "kies X of Y" over een knop in iemand anders'
+scherm gaat, en dat staat óók in de dossiers. Gemeten over de historie: acht
+treffers, alle acht een echte vraag aan de eigenaar, en nul op de huidige boom.
+
+`taakIsAfgerond` leest de status met dezelfde front-matterparser als de kaart, niet
+met een eigen regex over de eerste vierduizend tekens. Die regex liep op vier
+vormen anders, waarvan één de gevaarlijke richting op: `status: afgerond` in een
+citaat in de body liet de poort een punt overslaan dat de eigenaar wél op zijn
+kaart heeft.
+
+Wat nooit een alternatief is, staat in `ANNOTATIELABELS`: `Stap N`, `Controle`,
+`Advies`, `Waarom`, `Let op`, `Termijn`, `Gevolg`, `Bron`, `Toelichting`,
+`Voorwaarde`, het kale `Keuze` en `Optie`, `Extern`, `Bevestig`, `Wacht`, en `Later`
+en `Gedaan` die in de interface een vaste betekenis hebben. Met die lijst levert
+dezelfde meting **nul** valse treffers: geen punt met een annotatie (`- Let op:`
+naast `- Termijn:`) en geen punt met stappen die allebei moeten gebeuren
+(`- Stap 3 (cloud):` naast `- Stap 4 (laptop):`) haalt de drempel. Eén los label is
+nooit een keuze — dat is een annotatie, en die mag de vaste knoppen van het soort
+niet verdringen. Voor bestaande dossiers herkent de engine daarnaast een
+keuze die in één regel staat — in een stapregel, in de toelichting, in de titel,
+en ook in de `- Keuze:`-regel zelf. Dat is een migratiepad, geen tweede formaat:
+`jarvis lint` keurt een keuze in de lopende tekst af en noemt de hersteltekst.
+
+Eén functie telt de alternatieven, `leesAlternatieven`, en de lint gebruikt
+letterlijk diezelfde functie. Zolang zij haar eigen telling had, ontdubbelde de
+lint op de ruwe labeltekst en de engine op `sleutelVan`; `- Optie A:` naast
+`- Optie-A:` ging daardoor groen door de poort terwijl de kaart de eigenaar
+alleen "Later" gaf. Een onbruikbaar alternatief maakt de hele keuze onbruikbaar
+in plaats van stil weg te vallen: twee labels met dezelfde sleutel zijn niet aan
+een antwoord toe te wijzen, en een optietekst die alleen opmaak is (`**`, `-`)
+draagt geen gevolg. Het punt wordt dan een halve keuze en de poort keurt het af —
+ook zonder `- Keuze:`-regel, want wie alternatieven aandraagt draagt er twee
+bruikbare aan.
+
+Het vangnet leest ook cijfers als merk (`(1)` naast `(a)`). Wat het net níét kan
+uitpakken, dwingt de poort af met `eigenaarslijst_keuze_bijna`. Die regel is
+bewust lósser dan de lezer en niet strenger: één ronde deed zij dezelfde strenge
+scheidingstoets, en toen glipte elke keuze waarvan het merk achteraan stond
+("betaalt (a) of pas na de levering (b)"), waar een bijzin tussen "of" en het
+volgende merk stond, waar "ofwel" stond, waar een derde merk tussenkwam, of die
+helemaal geen merken had ("kies of je nu betaalt of pas na de levering"), door
+beide netten heen. De toets is nu: er staat een keuzewoord, én er is een
+aanwijzing dat er meer dan één mogelijkheid is — twee merken, of twee keer "of".
+
+Dat keuzewoord is dragend. Zonder die eis gold "twee merken met een of ertussen"
+als keuze, en dan keurt de poort `- Lees punt (a) of (b) van het contract door`
+af terwijl dat een verwijzing is. Een tekst met twee merken en géén keuzewoord is
+vaker een verwijzing dan een vraag en valt daarom buiten de regel. Criterium 2
+laat precies twee wegen open — de kaart herkent de keuze, of de poort dwingt het
+formaat af — en beide grenzen zijn met echte teksten gemeten.
+
+**Wat de kaart als tekst toont, leest de poort.** Die regel is omgekeerd ten
+opzichte van drie eerdere rondes, en de omkering is de reden dat er nu geen volgend
+label overblijft. De poort las een vaste lijst labels, de kaart een andere, en dus
+vond elke ronde een label dat er niet in stond: ronde 7 een keuze in `- Extern:`,
+ronde 8 een keuze in `- Voorwaarde:` en in de vette tussenkop. De motivering om
+`- Let op:` en `- Controle:` uit te sluiten — "een waarschuwing hoort geen kaart met
+knoppen te worden" — is meetbaar onjuist: de kaart krijgt haar knoppen uit het
+soort, niet uit die lijst, dus uitsluiten verhinderde geen knoppen, alleen dat de
+poort de tegenspraak meldde. De omkering kost niets: dezelfde meting over de
+historie geeft vijf keuzebevindingen met de oude lijst en vijf met deze, nul nieuwe
+treffers. (Hier stond eerder het getal acht; dat was inclusief een code die
+inmiddels op nul staat, en onafhankelijke QA kon het niet reproduceren.)
+
+Omgekeerd geldt ook: **wat de kaart niet toont, beoordeelt de poort niet.** Een
+afgevinkt punt is gedaan, een akkoordvraag loopt over de akkoordkaart, en het
+dossier van een afgeronde taak levert geen kaarten; alle drie keurde de poort af —
+de eerste twee met een hersteltekst die voor een akkoord niet eens klopte, de derde
+om een kaart die niet bestaat.
+
+Naast `eigenaarslijst_wacht_en_keuze` en `eigenaarslijst_akkoord_en_keuze` staat een
+derde tegenspraakregel: `eigenaarslijst_handeling_en_keuze`. Een `- Extern:`- of
+`- Bevestig:`-regel naast twee alternatieven laat de keuze winnen, en daarmee
+verdwijnt de knop waarmee de eigenaar de handeling zou melden.
+
+Optieregels onder een akkoordcontext zonder `- Keuze:`-regel geven
+`eigenaarslijst_akkoord_en_keuze`. De kaart blijft een akkoord — dat is de
+gedocumenteerde keuze — maar het dossier zegt dan twee dingen tegelijk, net als
+bij een wachtregel, en de poort zegt dat in plaats van het stil op te lossen.
+
+Wat niet in een knop terechtkomt, staat nu wél op de kaart: de staart van een
+vraag die langer is dan de titel, en de tekst van **elke** labelregel die geen eigen
+veld heeft (`Stap N`, `Advies`, `Waarom` en `Controle` hebben dat wel). Dat
+verdween volledig voor elk label dat het soort bepaalt of dat geen alternatief is:
+een punt met `- Extern: log in op het platform en zet de sleutel onder deze naam`
+kwam aan als een kop met één knop "Gedaan" en zonder de instructie, bij een
+wachtregel zag de eigenaar niet waarop gewacht werd, en `- Termijn: vóór 1 oktober,
+anders vervalt de licentie` kwam nergens aan. Een alternatief dat al knop is, komt
+niet nóg eens als tekst terug, en de vette kop staat één keer op de kaart in plaats
+van twee keer. De eigenaar zag daar eerst een vraag
+zonder antwoord én zonder de tekst die het dossier voor hem had opgeschreven. Een
+lege `- Keuze:`-regel geeft geen lege kaarttitel meer maar valt terug op de titel
+van het punt.
+
+De betekenisdragende labels gelden alleen op de eigenaarslijst. In de
+`## Opties`-sectie van een kennisrecord zijn `Keuze`, `Extern`, `Bevestig` en
+`Wacht` gewone woorden, en `- Doorgaan: nu bouwen` naast `- Wacht: nog een maand
+afwachten` is daar een volwaardige keuze; één ronde lang verdwenen bij een
+conflictrecord beide alternatieven. `later` en `gedaan` blijven overal beschermd:
+die hebben in de interface een vaste betekenis, waar het label ook staat.
+
+De knoppen volgen strikt uit het soort. Een eerdere opzet liet elke
+`- Label: tekst`-regel vóórgaan op de knoppen van het soort; daardoor verloor
+een externe handeling zijn "Gedaan" zodra er een regel `- Let op: …` bij stond,
+en kon een punt met een regel `- Gedaan: …` juist "Gedaan" tonen terwijl het
+soort dat niet toestaat. Alleen bij een keuze zíjn de alternatieven de knoppen.
+
+Een keuze vraagt een keuzewoord én alternatieven die met "of" gescheiden zijn.
+Twee merken alleen volstaan niet: "doe (a) het ene en (b) het andere" is één
+handeling met twee delen, en "artikel 5 lid (a) en lid (b)" is een verwijzing.
+
+De terugval is `bevestiging` en niet `uitstel`, en dat wijkt bewust af van het
+uitvoeringsplan. Dat plan zet `uitstel` als laatste stap, en dat klopt zodra elk
+dossierpunt expliciet zegt wat het is. Zolang dat niet zo is, betekent die
+terugval iets anders: elk bestaand eigenaarspunt zonder `Extern`- of
+`Bevestig`-regel verliest zijn enige knop en is voor de eigenaar niet meer af te
+sluiten. Onafhankelijke QA heeft dat twee rondes achter elkaar als verlies van
+werkend gedrag gemeten. `uitstel` heeft drie ingangen en geen andere: een
+expliciete `- Wacht:`-regel, een `- Keuze:`-regel die haar twee bruikbare
+alternatieven niet aanreikt, en een punt dat wél optieregels draagt maar er te
+weinig bruikbare — ook zonder `- Keuze:`-regel. Zodra de dossiers zijn nagelopen
+kan de terugval alsnog verschuiven, en is dat een keuze met een lege verzameling
+gevallen in plaats van een stille breuk.
+
+Een bronregel kan de vaste knoppen niet meer overnemen. `later` en `gedaan`
+hebben een vaste betekenis in de interface; een kennisrecord met een regel
+`- Later: …` gaf de enige altijd-aanwezige knop een eigen gevolg, en `- Gedaan:
+…` zette een handelingsknop op een risicokaart. En één alternatief vervangt de
+vaste knoppen niet: een record met één optieregel verloor daardoor zijn eigen
+knoppen.
+
+Wat hier nog niet in zit is de weg terug van gesprek naar actie (§3 van het
+uitvoeringsplan): een bericht met een `item_id` sluit de bijbehorende kaart nog
+niet. Een bestaand dossierpunt zonder `Extern`- of `Bevestig`-regel houdt intussen
+zijn knoppen: de terugval is `bevestiging`, niet `uitstel`. Dat geldt niet voor de
+drie ingangen van `uitstel` hierboven — een `- Wacht:`-regel, een `- Keuze:`-regel
+zonder twee bruikbare alternatieven, en een punt dat wél alternatieven aankondigt
+maar er te weinig bruikbare draagt. Daar is "Gedaan" juist de fout die deze taak
+wegneemt. De dossierpunten worden in een eigen ronde nagelopen (stap 5 van
+het plan), en de pin volgt pas daarna.
+
+Wat hier ook nog niet in zit: het veld `interactie` wordt serverside bepaald maar
+nergens gerenderd. De interface bouwt haar knoppen uitsluitend uit `opties`, dus
+een `uitstel`-kaart staat met één knop "Later" tussen de acties zonder te zeggen
+waarom er niets te doen valt — voor de eigenaar niet te onderscheiden van een
+kaart waarvan de knoppen zijn weggevallen. De invariant is daarmee volledig
+serverside getoetst en er is geen weergavecontrole die hem zou opmerken als hij
+breekt. Gemeten door onafhankelijke QA, ronde 5.
+
+De poort zag de eerste ongecommitte wijziging niet. `git status --porcelain` zet
+de toestand in de eerste twee tekens, en een van die twee kan een spatie zijn:
+`" M pad"`. De git-aanroep trimde haar uitvoer, waardoor die spatie van de eerste
+regel verdween en het afsnijden van de statuskolom daarna drie tekens van het
+pád afhaalde — `" M tasks/x"` werd `"sks/x"`. De eerste ongecommitte wijziging
+viel daardoor buiten elke poortcontrole en `jarvis lint` gaf tijdens het
+schrijven een vals groen; na committen vuurde alles weer, dus CI en de poort
+vóór een pull request waren niet geraakt. De porcelain-uitvoer wordt nu ongetrimd
+gelezen en per veld ontleed: de aanhalingstekens gaan er eerst af en dan de octale
+escapes die `core.quotepath` erin zet, zodat een pad met een niet-ASCII-teken
+bestaat en wordt gelint; en een `" -> "` binnen die aanhalingstekens is deel van de
+naam, geen herbenoeming. Gevonden door onafhankelijke QA, rondes 7 en 8.
+
+Twee kleinere dingen uit dezelfde meting. `rolVoorStap` wees een rol aan op een
+woord in de staart van de stap: "Bouw van richting 2 (developer, engine) … Zie
+'Analyse (e)' voor de criteria" kwam bij de architect terecht. Noemt een stap een
+rol in haar eerste woorden, dan is dát de rol. En `jarvis regie` en `jarvis werk`
+stonden niet in de hulptekst van `npx jarvis`, terwijl zij de twee opdrachten zijn
+waarmee een uitvoerder zijn werk zichtbaar maakt.
+
+Dat laatste is meer dan kosmetisch. Onafhankelijke QA mat dat de rolkaarten in de
+app allemaal "beschikbaar" melden terwijl er aantoonbaar werk loopt, omdat de
+rolstatus alleen "bezig" wordt via een open claim — en de uitvoerders zijn gestopt
+met claimen: de laatste claim in `jarvis.activiteit` was van 2026-09-24 22:44, en
+alle negentien rijen van de dag erna dragen `taak = null`. Zonder claim is er geen
+`RUNNING`, geen heartbeat en geen dodemansdetectie in productie. Dat is geen
+codefout maar een gewoonte van de uitvoerder, en de hulptekst zegt het nu.
 
 De controle schaalt mee met de wijziging. Het rolcontract eiste vóór elke
 commit alle vier de projectcontroles, ook bij een commit die alleen een dossier

@@ -221,7 +221,7 @@ describe("wat bij de eigenaar ligt", () => {
     expect(items.map((i) => i.bron)).toEqual(["RSK-0002"]);
   });
 
-  it("leest de eigenaarslijst uit een taakdossier, blokkerend als beslissing", () => {
+  it("leest de eigenaarslijst uit een taakdossier; het soort hangt niet aan een woord", () => {
     const resultaat = [
       "## Wat de eigenaar nog moet doen",
       "",
@@ -235,10 +235,27 @@ describe("wat bij de eigenaar ligt", () => {
       "3. **Beslissen of X mag.** Toelichting.",
     ].join("\n");
     const items = leesAandacht(project({ taken: [{ id: "T-1", opdracht: { status: "actief" }, resultaat }] }));
-    expect(items.map((i) => [i.soort, i.urgentie])).toEqual([
-      ["beslissing", "hoog"],
-      ["beslissing", "laag"],
-      ["actie", "laag"],
+    // Geen van deze drie punten noemt alternatieven, een externe dienst of een
+    // bevestiging, en geen ervan draagt een akkoordcontext. Ze vragen dus geen
+    // handeling die Jarvis kan aanbieden — ook niet het punt dat toevallig met
+    // "Beslissen" begint. Dat is de kern van criterium 1: het eerste woord van
+    // een titel bepaalt niets meer. De urgentie blijft wél uit de context komen.
+    // `soort` blijft geassserteerd: de interface rendert er een chip en een
+    // icoon op en sorteert erop (SOORT_VOLGORDE), dus een stille wijziging
+    // daar is zichtbaar voor de eigenaar.
+    expect(items.map((i) => i.soort)).toEqual(["actie", "actie", "actie"]);
+    expect(items.map((i) => [i.interactie, i.urgentie])).toEqual([
+      ["bevestiging", "hoog"],
+      ["bevestiging", "laag"],
+      ["bevestiging", "laag"],
+    ]);
+    // De terugval is `bevestiging`: een bestaand punt blijft afsluitbaar. Zou
+    // hier `uitstel` staan, dan verloor elk punt zonder expliciete markering
+    // zijn enige knop — dat is twee QA-rondes lang als regressie gemeten.
+    expect(items.map((i) => i.opties.map((o) => o.keuze))).toEqual([
+      ["gedaan", "nog-niet", "later"],
+      ["gedaan", "nog-niet", "later"],
+      ["gedaan", "nog-niet", "later"],
     ]);
     expect(items[0].bron).toBe("tasks/T-1/resultaat.md");
   });
@@ -379,7 +396,7 @@ describe("opties: wat de eigenaar kan kiezen", () => {
 
   it("maakt keuzes, advies en waarom uit de regels, met later er altijd bij", () => {
     const regels = leesOptieRegels("- **Smal**: alleen review.\n- Breed: alles.\n- Advies: smal.\n- Waarom: productkeuze.");
-    const uit = bouwOpties(regels, []);
+    const uit = bouwOpties(regels, [], "elke-regel");
     expect(uit.opties.map((o) => o.keuze)).toEqual(["smal", "breed", "later"]);
     expect(uit.opties[0]).toEqual({ keuze: "smal", label: "Smal", gevolg: "alleen review." });
     expect(uit.advies).toBe("smal.");
@@ -388,7 +405,7 @@ describe("opties: wat de eigenaar kan kiezen", () => {
 
   it("valt terug op de standaardopties zonder keuzeregels", () => {
     const standaard = [{ keuze: "gedaan", label: "Gedaan", gevolg: "af." }];
-    const uit = bouwOpties([{ label: "Advies", tekst: "doe het." }], standaard);
+    const uit = bouwOpties([{ label: "Advies", tekst: "doe het." }], standaard, "elke-regel");
     expect(uit.opties.map((o) => o.keuze)).toEqual(["gedaan", "later"]);
     expect(uit.advies).toBe("doe het.");
     expect(uit.waarom).toBeNull();
@@ -462,10 +479,14 @@ describe("taken over een ander project", () => {
 describe("stappen van een handeling", () => {
   it("leest genummerde stappen en een controle, los van de keuzes", () => {
     const regels = leesOptieRegels("- Stap 2: klik Create.\n- Stap 1: open github.com/new.\n- Controle: de pagina toont de lege repository.\n- Gedaan: Jarvis pusht.");
-    const uit = bouwOpties(regels, []);
+    const uit = bouwOpties(regels, [], "elke-regel");
     expect(uit.stappen).toEqual(["open github.com/new.", "klik Create."]);
     expect(uit.controle).toBe("de pagina toont de lege repository.");
-    expect(uit.opties.map((o) => o.keuze)).toEqual(["gedaan", "later"]);
+    // `gedaan` en `later` hebben een vaste betekenis in de interface; een
+    // bronregel met die naam neemt ze niet over. Zonder twee echte
+    // alternatieven blijven de standaardknoppen gelden — hier geen, dus
+    // alleen "Later".
+    expect(uit.opties.map((o) => o.keuze)).toEqual(["later"]);
   });
 });
 
@@ -599,7 +620,7 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
     expect(items).toHaveLength(1);
     expect(items[0].titel).toBe("Handeling 2 — de trigger bijstellen");
     expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Stap 2", "Controle"]);
-    const uit = bouwOpties(items[0].regels, []);
+    const uit = bouwOpties(items[0].regels, [], "elke-regel");
     expect(uit.stappen).toHaveLength(2);
     expect(uit.controle).toMatch(/^Jarvis meet/);
   });
@@ -644,7 +665,7 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
     expect(items[0].titel).toBe("Handeling 3 — het recht toekennen");
     expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle"]);
     expect(items[0].regels[0].tekst).toBe("open de instellingen.");
-    const uit = bouwOpties(items[0].regels, []);
+    const uit = bouwOpties(items[0].regels, [], "elke-regel");
     expect(uit.stappen).toHaveLength(1);
     expect(uit.controle).toMatch(/^Jarvis meet/);
   });
@@ -706,9 +727,21 @@ describe("de invariant van de eigenaarslijst", () => {
     expect(bouwOverzicht([p], NU).projecten[0].taken[0].akkoord_nodig).toBe(false);
   });
 
-  it("houdt een echte eigenaarskeuze staan: die vereist hem nog steeds", () => {
+  it("houdt een echte eigenaarskeuze staan, en biedt hem aan als keuze", () => {
+    // Dit is de regel die deze verzameling heeft uitgelokt. Vroeger werd hij
+    // `actie` met één knop "Gedaan", en bereikten de twee alternatieven uit de
+    // tekst de knoppen nooit; de eigenaar heeft de kaart toen met "Gedaan"
+    // moeten sluiten voor een keuze die hij al in het gesprek had gegeven.
     const doc = eigenaarslijst("- Stap 1: kies tussen (a) een vercel.json met een ignoreCommand, of (b) niets doen.\n");
-    expect(leesAandacht(project({ taken: [met(doc)] })).map((i) => i.soort)).toEqual(["actie"]);
+    const [item] = leesAandacht(project({ taken: [met(doc)] }));
+    expect(item.interactie).toBe("keuze");
+    const keuzes = item.opties.map((o) => o.keuze);
+    expect(keuzes).toEqual(["optie-a", "optie-b", "later"]);
+    // Een keuze is geen handeling: "Gedaan" hoort er niet bij (criterium 3).
+    expect(keuzes).not.toContain("gedaan");
+    // En elk alternatief draagt zijn eigen gevolg (criterium 2).
+    expect(item.opties[0].gevolg).toContain("vercel.json");
+    expect(item.opties[1].gevolg).toContain("niets doen");
   });
 });
 

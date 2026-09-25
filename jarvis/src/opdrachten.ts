@@ -36,6 +36,8 @@ import {
   RECENT_DAGEN,
   bouwOverzicht,
   dossiersZonderBekendeStatus,
+  isAfgevinkt,
+  isAkkoordVraag,
   leesItemsOnder,
   openTakenUitDossiers,
   type Overzicht,
@@ -115,12 +117,105 @@ const uitvoeren = promisify(execFile);
 
 /** Git-aanroep die nooit gooit: een lege repo of ontbrekende ref is geen crash. */
 async function git(wortel: string, args: readonly string[]): Promise<string> {
+  return (await gitRuw(wortel, args)).trim();
+}
+
+/**
+ * Dezelfde aanroep, maar zonder `trim()`. Nodig voor `git status --porcelain`,
+ * waar de eerste twee tekens de toestand zijn en een ervan een spatie kan zijn:
+ * `" M pad"`. Het wegtrimmen van die spatie schoof de hele regel op, waarna het
+ * afsnijden van de statuskolom drie tekens van het pád afhaalde — `" M tasks/x"`
+ * werd `"sks/x"`. Gevolg: de eerste ongecommitte wijziging viel buiten elke
+ * poortcontrole, en `jarvis lint` gaf tijdens het schrijven een vals groen
+ * (gemeten door onafhankelijke QA, ronde 7, bevinding 5).
+ */
+async function gitRuw(wortel: string, args: readonly string[]): Promise<string> {
   try {
     const { stdout } = await uitvoeren("git", [...args], { cwd: wortel, maxBuffer: 32 * 1024 * 1024 });
-    return stdout.trim();
+    return stdout;
   } catch {
     return "";
   }
+}
+
+/**
+ * De paden uit `git status --porcelain`: de eerste drie tekens zijn de toestand
+ * plus een spatie. Een herbenoeming staat als `oud -> nieuw`; dan telt het
+ * nieuwe pad, want dat is het bestand dat er nu is.
+ */
+export function padenUitPorcelain(uitvoer: string): readonly string[] {
+  const uit: string[] = [];
+  for (const regel of uitvoer.replace(/\r\n/g, "\n").split("\n")) {
+    if (regel.length <= 3) continue;
+    // Eén pad per veld, en de aanhalingstekens gaan er eerst af: met
+    // `core.quotepath` staat een pad met een niet-ASCII-teken tussen
+    // aanhalingstekens, en een " -> " binnen die aanhalingstekens is dan deel van
+    // de naam en geen herbenoeming. Zocht je de pijl eerst, dan hield je `b.md"`
+    // over en bestond het pad niet (QA-ronde 8, bevinding 9).
+    const velden = splitsPorcelainVelden(regel.slice(3));
+    const pad = velden[velden.length - 1];
+    if (pad !== undefined && pad.length > 0) uit.push(pad);
+  }
+  return uit;
+}
+
+/**
+ * De velden van één porcelain-regel: bij een herbenoeming twee, anders één. Een
+ * veld tussen aanhalingstekens wordt ontdaan van zijn aanhalingstekens en van de
+ * octale escapes die `core.quotepath` erin zet (`caf\303\251` → `café`).
+ */
+function splitsPorcelainVelden(rest: string): readonly string[] {
+  const velden: string[] = [];
+  let i = 0;
+  while (i < rest.length) {
+    while (rest[i] === " ") i += 1;
+    if (i >= rest.length) break;
+    if (rest[i] === '"') {
+      let j = i + 1;
+      while (j < rest.length && !(rest[j] === '"' && rest[j - 1] !== "\\")) j += 1;
+      velden.push(ontescape(rest.slice(i + 1, j)));
+      i = j + 1;
+    } else {
+      const pijl = rest.indexOf(" -> ", i);
+      if (pijl >= 0) {
+        velden.push(rest.slice(i, pijl).trim());
+        i = pijl + 4;
+      } else {
+        velden.push(rest.slice(i).trim());
+        break;
+      }
+    }
+    // Een " -> " tussen twee velden is de scheiding en hoort bij geen van beide.
+    if (rest.slice(i, i + 4) === " -> ") i += 4;
+  }
+  return velden.filter((v) => v.length > 0);
+}
+
+/** Octale en gewone escapes zoals git ze schrijft, terug naar bytes en dan naar UTF-8. */
+function ontescape(tekst: string): string {
+  if (!/\\/.test(tekst)) return tekst;
+  const bytes: number[] = [];
+  for (let i = 0; i < tekst.length; i += 1) {
+    if (tekst[i] !== "\\") {
+      bytes.push(...Buffer.from(tekst[i], "utf8"));
+      continue;
+    }
+    const octaal = /^[0-7]{3}/.exec(tekst.slice(i + 1));
+    if (octaal) {
+      bytes.push(parseInt(octaal[0], 8));
+      i += 3;
+      continue;
+    }
+    const enkel: Record<string, number> = { n: 10, t: 9, r: 13, '"': 34, "\\": 92 };
+    const code = enkel[tekst[i + 1] ?? ""];
+    if (code !== undefined) {
+      bytes.push(code);
+      i += 1;
+      continue;
+    }
+    bytes.push(92);
+  }
+  return Buffer.from(bytes).toString("utf8");
 }
 
 // Formaat voor één `git log` over de hele branch: recordscheiding (0x1e) per
@@ -175,13 +270,9 @@ async function gewijzigdeBestanden(wortel: string, basis: string): Promise<reado
   const samengevoegd = await git(wortel, ["merge-base", basis, "HEAD"]);
   const punt = samengevoegd.length > 0 ? samengevoegd : basis;
   const uit = await git(wortel, ["diff", "--name-only", `${punt}..HEAD`]);
-  const ongecommit = await git(wortel, ["status", "--porcelain"]);
+  const ongecommit = await gitRuw(wortel, ["status", "--porcelain"]);
   const uitDiff = uit.split("\n").filter((r) => r.trim().length > 0);
-  const uitStatus = ongecommit
-    .split("\n")
-    .map((r) => r.slice(3).trim())
-    .filter((r) => r.length > 0);
-  return [...new Set([...uitDiff, ...uitStatus])].sort();
+  return [...new Set([...uitDiff, ...padenUitPorcelain(ongecommit)])].sort();
 }
 
 /**
@@ -1135,13 +1226,29 @@ async function opdrachtContext(vlaggen: ReadonlyMap<string, string>): Promise<nu
  * wijziging raakt (resultaat.md in de takenmap), voor de poortregel
  * eigenaarslijst_administratief (CON-0016).
  */
-async function leesEigenaarsPunten(
+export async function leesEigenaarsPunten(
   wortel: string,
   config: JarvisConfig,
   bestanden: readonly string[],
-): Promise<readonly { bestand: string; tekst: string }[]> {
+): Promise<
+  readonly {
+    bestand: string;
+    tekst: string;
+    regels: readonly { label: string; tekst: string }[];
+    akkoordContext: boolean;
+    context: string;
+    buitenDeKaart: boolean;
+  }[]
+> {
   const takenMap = normaliseerPadTekst(config.taken_map).replace(/\/+$/, "");
-  const uit: { bestand: string; tekst: string }[] = [];
+  const uit: {
+    bestand: string;
+    tekst: string;
+    regels: readonly { label: string; tekst: string }[];
+    akkoordContext: boolean;
+    context: string;
+    buitenDeKaart: boolean;
+  }[] = [];
   for (const b of bestanden) {
     const pad = normaliseerPadTekst(b);
     if (!pad.startsWith(`${takenMap}/`) || !/\/resultaat\.md$/.test(pad)) continue;
@@ -1151,11 +1258,49 @@ async function leesEigenaarsPunten(
     } catch {
       continue; // verwijderd in deze wijziging
     }
-    for (const item of leesItemsOnder(inhoud, KOP_EIGENAAR_LIJST)) uit.push({ bestand: pad, tekst: item.toelichting });
+    // Een afgeronde taak levert geen kaarten, dus beoordeelt de poort haar niet:
+    // anders keurde zij een commit af om een kaart die niet bestaat (QA-ronde 9,
+    // bevinding 4). De status staat in `opdracht.md` naast dit bestand.
+    const afgerond = await taakIsAfgerond(path.join(wortel, path.dirname(pad)));
+    for (const item of leesItemsOnder(inhoud, KOP_EIGENAAR_LIJST))
+      uit.push({
+        bestand: pad,
+        tekst: item.toelichting,
+        // De vette tussenkop hoort erbij: de kaart plakt haar vóór de toelichting,
+        // dus een keuze die in die kop staat is voor de eigenaar zichtbaar. Zonder
+        // haar zweeg de poort erover (QA-ronde 8, bevinding 3).
+        context: item.context,
+        regels: item.regels.map((r) => ({ label: r.label, tekst: r.tekst })),
+        akkoordContext: /akkoord[_ -]?pr/i.test(item.context),
+        // Wat de kaart niet toont, beoordeelt de poort niet: een afgevinkt punt is
+        // gedaan en een akkoordvraag loopt over de akkoordkaart. Anders keurde de
+        // poort punten af die de eigenaar nooit ziet, met een hersteltekst die voor
+        // een akkoord niet eens klopt (QA-ronde 8, bevinding 8).
+        buitenDeKaart: afgerond || isAfgevinkt(item.titel) || isAkkoordVraag(item.titel),
+      });
   }
   return uit;
 }
 const KOP_EIGENAAR_LIJST = /^## Wat de eigenaar nog moet doen\s*$/m;
+
+/**
+ * Staat de taak in deze map op `afgerond`? Dan toont de kaart haar niet.
+ *
+ * Met dezelfde parser als de kaart, niet met een eigen regex. Een eigen regex over
+ * de eerste vierduizend tekens liep op vier vormen anders: `status: afgerond` in
+ * een citaat of codeblok in de body (dan slaat de poort een punt over dat de
+ * eigenaar wél op zijn kaart heeft — de gevaarlijke richting), een commentaar
+ * achter de waarde, aanhalingstekens eromheen, en front matter langer dan de
+ * afkapgrens (QA-ronde 10, bevinding 6).
+ */
+async function taakIsAfgerond(map: string): Promise<boolean> {
+  const opdracht = await leesOfNull(path.join(map, "opdracht.md"));
+  if (opdracht === null) return false;
+  const fm = parseFrontMatter(opdracht.replace(/\r\n/g, "\n"));
+  if (!fm.ok) return false;
+  const status = fm.data["status"];
+  return typeof status === "string" && status.trim().toLowerCase() === "afgerond";
+}
 function normaliseerPadTekst(p: string): string {
   return p.replace(/\\/g, "/");
 }
@@ -1504,6 +1649,16 @@ function help(): number {
       "  overzicht [--extern <pad,pad>] [--uit <bestand>] [--schrijf]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
+      "  regie    [--extern <pad,pad>] [--uitvoerders <pad>] [--uit <bestand>] [--schrijf] [--json] [--door <uitvoerder>]",
+      "                                    De Task Controller: per open taak de toestand, de verantwoordelijke",
+      "                                    rol, waarom, en het uitvoerbare werk in prioriteitsvolgorde; per rol",
+      "                                    en per uitvoerder wat hij doet. --schrijf zet regie/huidig,",
+      "                                    overzicht/huidig en jarvis/status uit dezelfde run.",
+      "  werk     <claim|stap|heartbeat|fout|klaar|vrijgave> <taak-id> [--rol <rol>] [--project <id>]",
+      "           [--tekst \"<wat>\"] [--verwijzing <pr/commit>] [--door <uitvoerder>] [--forceer]",
+      "                                    Legt vast dat er aan een taak wordt gewerkt. Zonder een claim is",
+      "                                    er geen RUNNING, geen heartbeat en geen dodemansdetectie:",
+      "                                    claim vóór je begint. exitcode 3 = overgeslagen, een ander werkt eraan.",
       "",
       "Exitcodes: 0 ok · 1 bevindingen · 2 gebruiksfout · 3 uitgeschakeld,",
       "           of bij pr attesteren: nog niet rijp, niets gestart",
