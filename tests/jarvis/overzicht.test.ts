@@ -391,7 +391,7 @@ describe("opties: wat de eigenaar kan kiezen", () => {
 
   it("maakt keuzes, advies en waarom uit de regels, met later er altijd bij", () => {
     const regels = leesOptieRegels("- **Smal**: alleen review.\n- Breed: alles.\n- Advies: smal.\n- Waarom: productkeuze.");
-    const uit = bouwOpties(regels, []);
+    const uit = bouwOpties(regels, [], "elke-regel");
     expect(uit.opties.map((o) => o.keuze)).toEqual(["smal", "breed", "later"]);
     expect(uit.opties[0]).toEqual({ keuze: "smal", label: "Smal", gevolg: "alleen review." });
     expect(uit.advies).toBe("smal.");
@@ -474,7 +474,7 @@ describe("taken over een ander project", () => {
 describe("stappen van een handeling", () => {
   it("leest genummerde stappen en een controle, los van de keuzes", () => {
     const regels = leesOptieRegels("- Stap 2: klik Create.\n- Stap 1: open github.com/new.\n- Controle: de pagina toont de lege repository.\n- Gedaan: Jarvis pusht.");
-    const uit = bouwOpties(regels, []);
+    const uit = bouwOpties(regels, [], "elke-regel");
     expect(uit.stappen).toEqual(["open github.com/new.", "klik Create."]);
     expect(uit.controle).toBe("de pagina toont de lege repository.");
     expect(uit.opties.map((o) => o.keuze)).toEqual(["gedaan", "later"]);
@@ -611,7 +611,7 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
     expect(items).toHaveLength(1);
     expect(items[0].titel).toBe("Handeling 2 — de trigger bijstellen");
     expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Stap 2", "Controle"]);
-    const uit = bouwOpties(items[0].regels, []);
+    const uit = bouwOpties(items[0].regels, [], "elke-regel");
     expect(uit.stappen).toHaveLength(2);
     expect(uit.controle).toMatch(/^Jarvis meet/);
   });
@@ -656,7 +656,7 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
     expect(items[0].titel).toBe("Handeling 3 — het recht toekennen");
     expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle"]);
     expect(items[0].regels[0].tekst).toBe("open de instellingen.");
-    const uit = bouwOpties(items[0].regels, []);
+    const uit = bouwOpties(items[0].regels, [], "elke-regel");
     expect(uit.stappen).toHaveLength(1);
     expect(uit.controle).toMatch(/^Jarvis meet/);
   });

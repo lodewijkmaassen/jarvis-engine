@@ -211,3 +211,59 @@ describe("de invariant: de knoppen volgen uit het soort", () => {
     expect(item.interactie).toBe("uitstel");
   });
 });
+
+describe("de invariant geldt op élk aanroeppunt, niet op één", () => {
+  // QA-ronde 2: de eerste reparatie bouwde om `bouwOpties` heen in plaats van
+  // de oorzaak weg te nemen. Een losse labelregel verdrong daardoor nog steeds
+  // de knoppen van het soort — op de keuze-tak en op de drie andere
+  // aanroeppunten (blokkade, CFL, RSK).
+  function metStatus(sectie: string): ProjectInvoer {
+    return {
+      id: "jarvis",
+      naam: "jarvis",
+      aangesloten: true,
+      hoofdbranch: { naam: "main", commit: "abc1234", datum: "2026-09-25" },
+      statusDocument: `# CURRENT_STATE\n\n## Waar staan we\n\nIets.\n\n## Wat is geblokkeerd, en waarop\n\n${sectie}\n`,
+      records: [],
+      taken: [],
+      gitLog: [],
+    } as unknown as ProjectInvoer;
+  }
+
+  it("laat een blokkade zijn eigen knop houden naast een losse labelregel", () => {
+    const [item] = leesAandacht(metStatus("- **De sleutel ontbreekt.**\n  - Let op: vandaag nog"));
+    expect(item.soort).toBe("blokkade");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["opgelost", "later"]);
+  });
+
+  it("laat een losse labelregel geen alternatief worden bij een keuze", () => {
+    const item = eerste(
+      ["- **Het beslispunt.**", "  - Optie A: dit — gevolg", "  - Optie B: dat — gevolg", "  - Let op: vandaag nog"].join("\n"),
+    );
+    expect(item.interactie).toBe("keuze");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+  });
+
+  it("maakt van twee losse labelregels naast opties geen extra knoppen", () => {
+    const item = eerste(
+      ["- **Het beslispunt.**", "  - Optie A: dit — g", "  - Optie B: dat — g", "  - Termijn: morgen", "  - Eigenaar: jij"].join("\n"),
+    );
+    expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+  });
+
+  it("is geen keuze zonder twee bruikbare alternatieven", () => {
+    // Een lege `- Optie B:` gaf stil een keuze met één knop, of met alleen
+    // "Later" — een vraag zonder manier om te antwoorden.
+    const half = eerste("- **Het beslispunt.**\n  - Optie A: dit — gevolg\n  - Optie B:");
+    expect(half.interactie).toBe("uitstel");
+    expect(half.opties.map((o) => o.keuze)).toEqual(["later"]);
+    const leeg = eerste("- **Het beslispunt.**\n  - Optie A:\n  - Optie B:");
+    expect(leeg.interactie).toBe("uitstel");
+    expect(leeg.opties.map((o) => o.keuze)).toEqual(["later"]);
+  });
+
+  it("geeft twee optieregels met dezelfde sleutel geen dubbele knop", () => {
+    const item = eerste("- **Het beslispunt.**\n  - Optie A: dit — g\n  - Optie A: nog eens — g");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["later"]);
+  });
+});

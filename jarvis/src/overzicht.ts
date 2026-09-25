@@ -621,9 +621,29 @@ export function leesOptieRegels(tekst: string | undefined | null): readonly { la
  * een eigen plek. Staan er geen keuzes in de bron, dan gelden de standaard-
  * opties van het soort item; "later" is er altijd bij.
  */
+/**
+ * Welke labelregels als alternatief tellen. Elk aanroeppunt zegt het expliciet;
+ * er is geen stilzwijgende regel meer.
+ *
+ * Dit is de kern van een bevinding die twee QA-rondes kostte. `bouwOpties` liet
+ * élke niet-gereserveerde `- Label: tekst`-regel een knop worden, en die knop
+ * verdrong de knoppen van het soort. Een blokkade met een regel `- Let op: …`
+ * kreeg daardoor een knop "Let op" in plaats van "Opgelost", en een keuze kreeg
+ * er een alternatief bij dat geen alternatief was. Wie hier een aanroep
+ * toevoegt, moet kiezen — vandaar dat er geen standaardwaarde is.
+ */
+export type Alternatieven = "geen" | "elke-regel" | "alleen-optie";
+
+const isAlternatief = (label: string, welke: Alternatieven): boolean => {
+  if (welke === "geen") return false;
+  if (welke === "alleen-optie") return /^optie\b/i.test(label.trim());
+  return true;
+};
+
 export function bouwOpties(
   regels: readonly { label: string; tekst: string }[],
   standaard: readonly Optie[],
+  welke: Alternatieven = "geen",
 ): { opties: readonly Optie[]; advies: string | null; waarom: string | null; stappen: readonly string[]; controle: string | null } {
   const opties: Optie[] = [];
   const stappen: { nr: number; tekst: string }[] = [];
@@ -641,7 +661,12 @@ export function bouwOpties(
     // drie zijn betekenisdragers, geen alternatieven; zonder deze regel werd
     // "Extern" zelf een knop.
     else if (l === "keuze" || l === "extern" || l === "bevestig") continue;
-    else if (r.tekst.length > 0) opties.push({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst });
+    else if (r.tekst.length > 0 && isAlternatief(r.label, welke)) {
+      const sleutel = sleutelVan(r.label);
+      // Twee knoppen met dezelfde sleutel zijn niet ondubbelzinnig toe te
+      // wijzen aan een antwoord.
+      if (!opties.some((o) => o.keuze === sleutel)) opties.push({ keuze: sleutel, label: r.label, gevolg: r.tekst });
+    }
   }
   const basis = opties.length > 0 ? opties : [...standaard];
   if (!basis.some((o) => o.keuze === "later")) basis.push(OPTIE_LATER);
@@ -768,6 +793,12 @@ export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
  * wint. Geen enkele stap leest het eerste woord van een titel — dat was de
  * fout: een keuze die met "kies" begon werd een handeling met één knop.
  */
+/** Alternatieven met dezelfde sleutel zijn niet toe te wijzen aan een antwoord. */
+function ontdubbelOpties(opties: readonly Optie[]): readonly Optie[] {
+  const gezien = new Set<string>();
+  return opties.filter((o) => (gezien.has(o.keuze) ? false : (gezien.add(o.keuze), true)));
+}
+
 export function bepaalEigenaarSoort(invoer: {
   readonly akkoordContext: boolean;
   readonly alternatieven: number;
@@ -851,7 +882,9 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
           bron: "docs/CURRENT_STATE.md",
           urgentie: "hoog",
           ...metWaarom(
-            bouwOpties(b.regels, STANDAARD_BLOKKADE),
+            // Een blokkade uit het statusdocument heeft geen optieregels; wat
+            // daar staat is toelichting, geen keuze.
+            bouwOpties(b.regels, STANDAARD_BLOKKADE, "geen"),
             "Het werk staat stil tot dit is opgelost, en de oplossing ligt buiten wat Jarvis zelf kan doen.",
           ),
         });
@@ -879,7 +912,9 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         bron: r.id,
         urgentie: "hoog",
         ...metWaarom(
-          bouwOpties(leesOptieRegels(r.opties), STANDAARD_BESLISSING),
+          // De sectie `## Opties` van een record is per definitie een lijst
+          // alternatieven; elke regel daarin is er een.
+          bouwOpties(leesOptieRegels(r.opties), STANDAARD_BESLISSING, "elke-regel"),
           `Twee lezingen zijn allebei verdedigbaar en de repository beslist het niet (${(r.tussen ?? []).join(" tegenover ")}). ` +
             "Dit is een productkeuze die alleen jij kunt maken; tot die tijd bouwt Jarvis niets dat ervan afhangt.",
         ),
@@ -898,7 +933,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         bron: r.id,
         urgentie: r.impact === "hoog" ? "midden" : "laag",
         ...metWaarom(
-          bouwOpties(leesOptieRegels(r.opties), risicoOpties(r)),
+          bouwOpties(leesOptieRegels(r.opties), risicoOpties(r), "elke-regel"),
           `Jij bent eigenaar van dit risico (${r.eigenaar}); open sinds ${r.datum}. Accepteren of laten aanpakken is jouw afweging, niet die van Jarvis.`,
         ),
       });
@@ -923,7 +958,11 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // Alleen regels die zich als alternatief aandienen tellen mee. "Termijn"
       // en "Eigenaar" zijn geen keuzes; die maakten van elk punt met twee
       // losse labelregels een keuze met die labels als knoppen.
-      const uitRegels = item.regels.filter((r) => /^optie\b/i.test(r.label.trim()));
+      // Alleen optieregels mét tekst tellen. Een `- Optie B:` zonder gevolg
+      // leverde stil een "keuze" met één knop — of met alleen "Later" — en dat
+      // is precies de kaart waarover de eigenaar klaagde: een vraag zonder
+      // manier om te antwoorden.
+      const uitRegels = item.regels.filter((r) => /^optie\b/i.test(r.label.trim()) && r.tekst.trim().length > 0);
       const keuzeRegel = item.regels.find((r) => r.label.toLowerCase() === "keuze");
       // Eén bron per keer, niet alles aan elkaar geplakt: dezelfde zin staat
       // vaak in de titel én in de toelichting én in de stapregel, en samen
@@ -934,7 +973,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
           : [...item.regels.map((r) => r.tekst), item.toelichting, item.titel]
               .map((t) => leesIngebedeKeuze(t))
               .find((o) => o.length >= 2) ?? [];
-      const alternatieven = uitRegels.length >= 2 ? uitRegels.length : ingebed.length;
+      const alternatieven = uitRegels.length >= 2 ? ontdubbelOpties(uitRegels.map((r) => ({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst }))).length : ingebed.length;
       const interactie = bepaalEigenaarSoort({
         akkoordContext,
         alternatieven,
@@ -943,7 +982,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // De titel is de hele vraag. Staat er een `Keuze`-regel, dan is dát de
       // vraag; anders de titel van het punt zelf.
       const titel = keuzeRegel ? kortTitel(keuzeRegel.tekst, 120) : item.titel;
-      const gebouwd = bouwOpties(item.regels, KNOPPEN[interactie]);
+      const gebouwd = bouwOpties(item.regels, KNOPPEN[interactie], "alleen-optie");
       // De knoppen volgen uit het soort — dat is de hele invariant van deze
       // verzameling, en hij mag niet van een toevallige labelregel afhangen.
       // `bouwOpties` laat elke niet-gereserveerde `- Label: tekst`-regel
@@ -952,11 +991,15 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // kon een punt met een regel `- Gedaan: …` juist "Gedaan" tonen terwijl
       // het soort dat niet toestaat. Alleen bij een keuze zíjn de
       // alternatieven de knoppen; bij elk ander soort zijn ze het nooit.
-      const alternatieveOpties = uitRegels.length >= 2 ? gebouwd.opties.filter((o) => o.keuze !== "later") : ingebed;
+      // De alternatieven komen uit de optieregels zelf, niet uit wat
+      // `bouwOpties` er verder van maakt: anders glippen losse labelregels als
+      // `- Let op: …` er alsnog als knop tussen.
+      const uitOptieregels = uitRegels.map((r) => ({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst }));
+      const alternatieveOpties = uitOptieregels.length >= 2 ? ontdubbelOpties(uitOptieregels) : ingebed;
       const opties =
-        interactie === "keuze"
+        interactie === "keuze" && alternatieveOpties.length >= 2
           ? [...alternatieveOpties, OPTIE_LATER]
-          : [...KNOPPEN[interactie], OPTIE_LATER];
+          : [...KNOPPEN[interactie === "keuze" ? "uitstel" : interactie], OPTIE_LATER];
       items.push({
         id: `${p}:${taak.id}:${korteSleutel(item.titel)}`,
         project: taak.opdracht["project"] ?? p,
