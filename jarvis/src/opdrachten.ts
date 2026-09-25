@@ -751,12 +751,15 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
 }
 
 /**
- * `jarvis overzicht [--extern <pad,pad>] [--uit <bestand>]`
+ * `jarvis overzicht [--extern <pad,pad>] [--uit <bestand>] [--schrijf]`
  *
  * Bouwt het overzicht dat de interface toont: deze repository als aangesloten
  * project, plus eventuele andere repositories als niet-aangesloten. De uitvoer
  * gaat door de sanitizer voordat hij ergens terechtkomt. Dit is persistente
  * Jarvis-data die de repository verlaat, en daar geldt CON-0008 dubbel.
+ *
+ * Met `--schrijf` gaat het resultaat als document `overzicht/huidig` naar de
+ * database, zodat de interface het toont zonder een tweede opdracht.
  */
 /** Het overzicht zoals `jarvis overzicht` het bouwt, voor hergebruik door `jarvis regie`. */
 async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
@@ -854,10 +857,34 @@ async function opdrachtOverzicht(vlaggen: ReadonlyMap<string, string>): Promise<
   if (uit) {
     await mkdir(path.dirname(path.resolve(wortel, uit)), { recursive: true });
     await writeFile(path.resolve(wortel, uit), json, "utf8");
+  }
+
+  // `--schrijf` zet het overzicht zelf in de database, net als `jarvis regie
+  // --schrijf`. Zonder deze vlag was publiceren een losse tweede opdracht
+  // (`jarvis db document overzicht/huidig --bestand …`) die alleen in stap 9
+  // van de routine stond: een ronde die anders eindigde liet de interface op
+  // een oude wereld staan, zonder dat iets dat meldde. De sanitizer hierboven
+  // gaat er nog steeds als eerste overheen — wat de repository verlaat, is
+  // gescand, ook langs deze weg.
+  if (vlaggen.has("schrijf")) {
+    const verbinding = await verbindDb();
+    if (verbinding === null) {
+      console.error("jarvis overzicht: geen database bereikbaar; overzicht/huidig niet geschreven.");
+      return 1;
+    }
+    try {
+      await verbinding.sql.unsafe(DOCUMENT_SQL, ["overzicht/huidig", json]);
+    } finally {
+      await verbinding.sql.end({ timeout: 2 });
+    }
+  }
+
+  if (uit || vlaggen.has("schrijf")) {
     const n = overzicht.voor_jou.length;
-    console.log(
-      `jarvis overzicht: ${overzicht.projecten.length} project(en), ${n} item(s) voor de eigenaar, geschreven naar ${uit}`,
-    );
+    const waar = [uit ? `geschreven naar ${uit}` : null, vlaggen.has("schrijf") ? "overzicht/huidig gezet" : null]
+      .filter((x) => x !== null)
+      .join(", ");
+    console.log(`jarvis overzicht: ${overzicht.projecten.length} project(en), ${n} item(s) voor de eigenaar, ${waar}`);
     return 0;
   }
   process.stdout.write(json);
@@ -1474,7 +1501,7 @@ function help(): number {
       "                                    (DEC-0046): hoogstens één per pull request; exit 4 = correctie nodig.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
-      "  overzicht [--extern <pad,pad>] [--uit <bestand>]",
+      "  overzicht [--extern <pad,pad>] [--uit <bestand>] [--schrijf]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
       "",
@@ -2035,8 +2062,9 @@ async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<strin
  * uitvoerder deze ronde draait (standaard de uitvoerder van deze omgeving);
  * een stap die aan een ándere uitvoerder is toegewezen telt dan niet als
  * uitvoerbaar werk. Met --schrijf
- * gaat het als document regie/huidig naar de database en meldt de controller
- * zijn ronde als activiteit.
+ * gaat het als document regie/huidig naar de database, samen met
+ * overzicht/huidig uit dezelfde run, en meldt de controller zijn ronde als
+ * activiteit.
  */
 async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<number> {
   const { wortel, wortels, overzicht } = await bouwOverzichtVanuit(vlaggen);
@@ -2063,10 +2091,23 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   const regie = bepaalRegie(overzicht, activiteit, new Date(), uitvoerders, vlaggen.get("door") ?? dezeUitvoerder());
   const json = `${JSON.stringify(regie, null, 2)}\n`;
 
+  // Het overzicht komt uit DEZELFDE run als de regie hierboven, en gaat mee
+  // naar de database. Dat is de reparatie van de scheefstand die de eigenaar
+  // zag: `regie --schrijf` verving elke ronde `regie/huidig`, terwijl
+  // `overzicht/huidig` alleen door een losse tweede opdracht werd bijgewerkt.
+  // Eindigde een ronde anders dan in de afsluitstap, dan bleef de interface op
+  // een oude wereld staan terwijl de wachtrij wél verse was. Eén run, één
+  // stand: de twee documenten kunnen niet meer uiteenlopen.
+  const overzichtJson = `${JSON.stringify(overzicht, null, 2)}\n`;
+
   const allowlist = await refNamenAlsAllowlist(wortels, await laadAllowlistVanSchijf(wortel));
-  const bevindingen = scanTekst(json, allowlist, "regie.json");
+  // Beide documenten langs de sanitizer, en bij een bevinding in één van de
+  // twee gaat er niets weg. Alleen de schone helft schrijven zou precies de
+  // scheefstand terugbrengen die deze opdracht wegneemt.
+  const bevindingen = [...scanTekst(json, allowlist, "regie.json"), ...scanTekst(overzichtJson, allowlist, "overzicht.json")];
   if (bevindingen.length > 0) {
     console.error(`jarvis regie: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);
+    for (const b of bevindingen) console.error(`  ${b.severity.toUpperCase()} regel ${b.regel} [${b.patroon}] ${b.fragment}`);
     return 1;
   }
 
@@ -2078,11 +2119,12 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   if (vlaggen.has("schrijf")) {
     const v2 = await verbindDb();
     if (v2 === null) {
-      console.error("jarvis regie: geen database bereikbaar; regie/huidig niet geschreven.");
+      console.error("jarvis regie: geen database bereikbaar; regie/huidig en overzicht/huidig niet geschreven.");
       return 1;
     }
     try {
       await v2.sql.unsafe(DOCUMENT_SQL, ["regie/huidig", json]);
+      await v2.sql.unsafe(DOCUMENT_SQL, ["overzicht/huidig", overzichtJson]);
     } finally {
       await v2.sql.end({ timeout: 2 });
     }
@@ -2103,7 +2145,7 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
     console.log(`${t.toestand.padEnd(22)} ${t.id.padEnd(36)} ${t.verantwoordelijke.padEnd(18)} ${t.waarom}`);
   }
   const geblokkeerd = regie.taken.filter((t) => t.toestand === "BLOCKED").length;
-  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig gezet" : ""}.`);
+  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
   return 0;
 }
 

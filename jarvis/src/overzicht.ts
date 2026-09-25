@@ -17,7 +17,7 @@ import { scopeHash } from "./attestatie";
 import type { KnowledgeRecord, RecordType } from "./records";
 import type { OpenTaak } from "./state";
 
-export const OVERZICHT_VERSIE = 1;
+export const OVERZICHT_VERSIE = 2;
 
 /** Hoeveel dagen "recent" is. Twee weken: een vakantie mag geen gat slaan. */
 export const RECENT_DAGEN = 14;
@@ -83,13 +83,25 @@ export type TaakItem = {
   /** Het project dat het dossier draagt (waar de commits landen). */
   readonly gastheer: string;
   readonly stappen: readonly TaakStap[];
-  /** Wie moet nu iets doen: Jarvis, de eigenaar, of niemand (taak niet actief). */
-  readonly aan_zet: "jarvis" | "eigenaar" | "niemand";
-  /** Waar de taak op wacht: het eerste open eigenaarspunt, of de volgende stap. */
+  /**
+   * Wie moet nu iets doen: Jarvis, de eigenaar, niemand (taak niet actief), of
+   * `wacht` — de taak leeft, maar er valt voor niemand iets te doen tot iets
+   * buiten de wachtrij gebeurt. Die vierde waarde is er sinds 2026-09-24:
+   * zonder haar viel wachtend werk terug op `jarvis` en meldde de interface
+   * "JARVIS AAN ZET" over taken die bewust geparkeerd waren.
+   */
+  readonly aan_zet: "jarvis" | "eigenaar" | "wacht" | "niemand";
+  /** Waarop gewacht wordt, wanneer `aan_zet` `wacht` is; anders `null`. */
+  readonly wacht_soort: "gebeurtenis" | "uitvoerder" | "taak" | "pull-request" | null;
+  /** Waar de taak op wacht, in één korte regel; de volledige tekst staat in `stappen`. */
   readonly wacht_op: string | null;
   /** Datum van de laatste commit met deze taak in de trailer, binnen het venster; null = geen. */
   readonly laatste_beweging: string | null;
-  /** Jarvis is aan zet en er is al dagen geen beweging: iets om te bewaken. */
+  /**
+   * Jarvis is aan zet en er is al dagen geen beweging: iets om te bewaken.
+   * Wachtend werk telt nooit als stil — daar ís geen beweging te verwachten,
+   * en "STIL" zou dan een storing suggereren waar een keuze staat.
+   */
   readonly stil: boolean;
   /**
    * De scope waarop de eigenaar akkoord geeft (DEC-0043): de volledige tekst
@@ -107,6 +119,68 @@ export type TaakItem = {
    */
   readonly akkoord_nodig: boolean;
 };
+
+/**
+ * De vier patronen waarmee een open voortgangsstap zegt dat er op iets buiten
+ * de wachtrij wordt gewacht. Ze staan hier, en niet in `regie.ts`, omdat twee
+ * beelden van "wie is aan zet" onvermijdelijk uiteenlopen zodra er één wordt
+ * bijgewerkt: het overzicht (de interface) zei "Jarvis aan zet" over taken die
+ * de regie al als wachtend kende, en de eigenaar zag daardoor een systeem dat
+ * druk leek maar stilstond. `regie.ts` importeert ze hier.
+ */
+export const WACHT_OP_TAAK = /wacht(?:en)?\s+op\s+(T-\d{8}-[a-z0-9-]+)/i;
+export const WACHT_OP_PR = /wacht(?:en)?\s+op\s+(?:pr|pull request)\s*(?:([\w.-]+\/[\w.-]+))?#?(\d+)/i;
+export const WACHT_OP_GEBEURTENIS = /^\s*wacht(?:en)?\s+op\s+gebeurtenis\s*:\s*(.+?)\s*$/i;
+export const UITVOERDER_STAP = /\bUitvoerder:\s*\*{0,2}\s*([a-z][a-z0-9_-]*)/i;
+
+/** Waarop een stap wacht; `null` betekent: er valt gewoon werk te doen. */
+export type Wachtreden =
+  | { readonly soort: "gebeurtenis"; readonly waarop: string }
+  | { readonly soort: "uitvoerder"; readonly waarop: string }
+  | { readonly soort: "taak"; readonly waarop: string }
+  | { readonly soort: "pull-request"; readonly waarop: string }
+  | null;
+
+/**
+ * Wacht deze stap ergens op, en waarop? De volgorde is die van `bepaalTaak`
+ * in `regie.ts`, zodat beide dezelfde stap hetzelfde noemen. Het akkoord van
+ * de eigenaar zit hier bewust níét in: dat loopt via `isAkkoordStap` en levert
+ * `aan_zet: "eigenaar"`, een andere toestand dan wachten.
+ */
+export function wachtredenVanStap(stap: string | null): Wachtreden {
+  if (stap === null) return null;
+  const taak = WACHT_OP_TAAK.exec(stap);
+  if (taak) return { soort: "taak", waarop: taak[1] ?? "" };
+  const pr = WACHT_OP_PR.exec(stap);
+  if (pr) return { soort: "pull-request", waarop: pr[1] ? `${pr[1]}#${pr[2]}` : `PR #${pr[2]}` };
+  const gebeurtenis = WACHT_OP_GEBEURTENIS.exec(stap);
+  if (gebeurtenis) return { soort: "gebeurtenis", waarop: gebeurtenis[1] ?? "" };
+  const uitvoerder = UITVOERDER_STAP.exec(stap);
+  if (uitvoerder) return { soort: "uitvoerder", waarop: (uitvoerder[1] ?? "").toLowerCase() };
+  return null;
+}
+
+/**
+ * Eén korte regel voor de interface. `wacht_op` droeg eerder de volledige
+ * staptekst — in de praktijk een alinea van honderden tekens, die in de kaart
+ * als onleesbare brij belandde. De volledige tekst blijft in `stappen` staan.
+ */
+export function wachtredenTekst(reden: Wachtreden): string | null {
+  if (reden === null) return null;
+  if (reden.soort === "gebeurtenis") return `wacht op: ${kortAf(reden.waarop, 120)}`;
+  if (reden.soort === "uitvoerder") return `ligt bij uitvoerder ${reden.waarop}`;
+  if (reden.soort === "taak") return `wacht op taak ${reden.waarop}`;
+  return `wacht op ${reden.waarop}`;
+}
+
+/** Kort een regel af op een woordgrens, met een beletselteken. */
+function kortAf(tekst: string, max: number): string {
+  const schoon = tekst.replace(/\s+/g, " ").trim();
+  if (schoon.length <= max) return schoon;
+  const knip = schoon.slice(0, max);
+  const spatie = knip.lastIndexOf(" ");
+  return `${(spatie > max * 0.6 ? knip.slice(0, spatie) : knip).trimEnd()}…`;
+}
 
 /** Een voortgangsstap die het akkoord van de eigenaar op de taak beschrijft. */
 export function isAkkoordStap(tekst: string): boolean {
@@ -178,6 +252,13 @@ export type Overzicht = {
   readonly projecten: readonly ProjectOverzicht[];
   /** Alles wat bij de eigenaar ligt, over alle projecten heen, urgentste eerst. */
   readonly voor_jou: readonly AandachtItem[];
+  /**
+   * Elke taak in precies één vak, en de open risico's apart. De interface
+   * toont deze indeling en leidt hem niet zelf af: dat was de fout die
+   * `aan_zet` en de regie uiteen liet lopen — twee beelden van dezelfde vraag,
+   * elk met een eigen kopie van de regel.
+   */
+  readonly indeling: Indeling;
 };
 
 // ---------------------------------------------------------------------------
@@ -817,7 +898,17 @@ export function leesTaken(
         actief &&
         t.tekst !== undefined &&
         ((volgendeStap !== null && isAkkoordStap(volgendeStap)) || vraagtAkkoord(t.resultaat));
-      const aan_zet: TaakItem["aan_zet"] = !actief ? "niemand" : openVoorEigenaar.length > 0 || akkoord_nodig ? "eigenaar" : "jarvis";
+      // De eigenaar gaat voor: een openstaand punt of een akkoordvraag is een
+      // echte handeling van een mens, en die verdwijnt niet doordat de stap
+      // daarnaast ergens op wacht. Pas daarna telt de wachtreden.
+      const wachtreden = !actief || openVoorEigenaar.length > 0 || akkoord_nodig ? null : wachtredenVanStap(volgendeStap);
+      const aan_zet: TaakItem["aan_zet"] = !actief
+        ? "niemand"
+        : openVoorEigenaar.length > 0 || akkoord_nodig
+          ? "eigenaar"
+          : wachtreden !== null
+            ? "wacht"
+            : "jarvis";
       const dagenStil = laatste ? (nu.getTime() - new Date(laatste).getTime()) / 864e5 : Infinity;
       return {
         id: t.id,
@@ -831,7 +922,11 @@ export function leesTaken(
         gastheer,
         stappen,
         aan_zet,
-        wacht_op: openVoorEigenaar.length > 0 ? openVoorEigenaar[0].titel : volgendeStap,
+        wacht_soort: wachtreden?.soort ?? null,
+        wacht_op:
+          openVoorEigenaar.length > 0
+            ? openVoorEigenaar[0].titel
+            : (wachtredenTekst(wachtreden) ?? (volgendeStap === null ? null : kortAf(volgendeStap, 160))),
         laatste_beweging: laatste,
         stil: aan_zet === "jarvis" && dagenStil >= STIL_NA_DAGEN,
         scope: actief && t.tekst !== undefined ? t.tekst.replace(/\r\n/g, "\n") : null,
@@ -932,17 +1027,88 @@ export function bouwProjectOverzicht(invoer: ProjectInvoer, nu: Date): ProjectOv
  */
 function herverdeel(projecten: readonly ProjectOverzicht[]): readonly ProjectOverzicht[] {
   const ids = new Set(projecten.map((p) => p.id));
+  // Waar een taak heen gaat: het project dat zij zegt te zijn, als dat bestaat;
+  // anders blijft zij bij de repository die het dossier draagt.
+  const doelVan = (bronId: string, t: TaakItem): string => (ids.has(t.project) ? t.project : bronId);
+
+  // Eerst globaal ontdubbelen, dan pas verdelen. Andersom — per doelproject,
+  // zoals het eerst was — grijpt de dedup alleen wanneer de kopieën toevallig
+  // in hetzelfde doelproject belanden. Noemt het dossier een `project:` dat
+  // geen bestaand project-id is, dan blijft elke kopie in haar eigen bron en
+  // komen ze elkaar nooit tegen: het overzicht toonde dan nog steeds één
+  // dossier als twee of drie taakregels.
+  const gekozen = eenTaakregelPerDossier(projecten.flatMap((bron) => bron.taken.map((t) => ({ bronId: bron.id, t }))));
+
   return projecten.map((doel) => ({
     ...doel,
     aandacht: sorteerAandacht(
-      projecten.flatMap((bron) =>
-        bron.aandacht.filter((a) => (ids.has(a.project) ? a.project === doel.id : bron.id === doel.id)),
+      eenAandachtPerBron(
+        projecten.flatMap((bron) =>
+          bron.aandacht.filter((a) => (ids.has(a.project) ? a.project === doel.id : bron.id === doel.id)),
+        ),
       ),
     ),
-    taken: projecten
-      .flatMap((bron) => bron.taken.filter((t) => (ids.has(t.project) ? t.project === doel.id : bron.id === doel.id)))
+    taken: gekozen
+      .filter(({ bronId, t }) => doelVan(bronId, t) === doel.id)
+      .map(({ t }) => t)
       .sort((a, b) => a.id.localeCompare(b.id)),
   }));
+}
+
+/**
+ * Eén taakregel per dossier-id. Een dossier dat in meer dan één aangesloten
+ * repository staat — een dossierspiegel — passeerde het filter hierboven per
+ * bron en kwam dus tweemaal in de kaart. `bepaalRegie` had die wacht al
+ * (`gezien`), het overzicht niet, en daardoor telde de interface meer werk
+ * dan er bestond.
+ *
+ * Welke kopie wint: die van het project dat de taak zegt te zijn
+ * (`gastheer === project`), want dat is de repository waar de commits landen
+ * en waar het dossier dus het verst is. Is die er niet, dan de eerste — de
+ * bronvolgorde is vast, dus de uitkomst is dat ook.
+ */
+/**
+ * Eén aandachtpunt per bron en titel. Een gespiegeld dossier leverde hetzelfde
+ * eigenaarspunt twee keer, met alleen een ander project-voorvoegsel in het id.
+ * De eigenaar zag dan één handeling als twee, en de teller "X voor jou" telde
+ * te hoog — precies het soort verschil dat de lijst onbetrouwbaar maakt.
+ */
+function eenAandachtPerBron(items: readonly AandachtItem[]): AandachtItem[] {
+  const gezien = new Map<string, AandachtItem>();
+  for (const a of items) {
+    const sleutel = `${a.bron}\u0000${a.titel}`;
+    if (!gezien.has(sleutel)) gezien.set(sleutel, a);
+  }
+  return [...gezien.values()];
+}
+
+function eenTaakregelPerDossier<T extends { readonly t: TaakItem }>(rijen: readonly T[]): T[] {
+  const perId = new Map<string, T>();
+  for (const rij of rijen) {
+    const bestaand = perId.get(rij.t.id);
+    if (bestaand === undefined || beterDossier(rij.t, bestaand.t)) perId.set(rij.t.id, rij);
+  }
+  return [...perId.values()];
+}
+
+/**
+ * Welke kopie van een gespiegeld dossier het beeld bepaalt. Dit moet een
+ * inhoudelijke keuze zijn, geen toevallige: twee kopieën van hetzelfde dossier
+ * lopen in de praktijk uiteen — de ene repository is verder dan de andere — en
+ * wie dan "de eerste" neemt, laat de uitkomst afhangen van de volgorde waarin
+ * de projecten toevallig zijn meegegeven. Dezelfde taak kreeg zo een andere
+ * `aan_zet` naar gelang welke repository de ronde draaide.
+ *
+ * Wint, in deze volgorde: de kopie in de repository die de taak zegt te zijn;
+ * anders de kopie die het verst is (de meeste afgevinkte stappen); anders de
+ * kopie met de meeste stappen; anders de eerste, en dan is het ook echt gelijk.
+ */
+function beterDossier(nieuw: TaakItem, oud: TaakItem): boolean {
+  const eigen = (t: TaakItem): number => (t.gastheer === t.project ? 1 : 0);
+  if (eigen(nieuw) !== eigen(oud)) return eigen(nieuw) > eigen(oud);
+  const gedaan = (t: TaakItem): number => t.stappen.filter((s) => s.gedaan).length;
+  if (gedaan(nieuw) !== gedaan(oud)) return gedaan(nieuw) > gedaan(oud);
+  return nieuw.stappen.length > oud.stappen.length;
 }
 
 /**
@@ -963,7 +1129,19 @@ export function verbindAfhankelijkheden(projecten: readonly ProjectOverzicht[]):
     const uit: TaakItem = dep
       ? (() => {
           const d = los(dep, diepte + 1);
-          return { ...t, aan_zet: d.aan_zet === "eigenaar" ? "eigenaar" : "jarvis", wacht_op: `${d.id}: ${d.wacht_op ?? d.titel}`, stil: false };
+          // Wachten op een andere taak is wachten, ook wanneer die taak zelf
+          // wel loopt. Dit zette de uitkomst van `leesTaken` eerder terug op
+          // "jarvis", zodat de kaart "JARVIS AAN ZET" toonde over een taak die
+          // de regie WAITING_FOR_DEPENDENCY noemt — precies de tweespalt die
+          // `wacht` moest opheffen. De eigenaar gaat nog steeds voor: wacht de
+          // andere taak op hém, dan is dat hier ook de eerlijke weergave.
+          return {
+            ...t,
+            aan_zet: d.aan_zet === "eigenaar" ? "eigenaar" : "wacht",
+            wacht_soort: d.aan_zet === "eigenaar" ? null : "taak",
+            wacht_op: `${d.id}: ${d.wacht_op ?? d.titel}`,
+            stil: false,
+          };
         })()
       : t;
     opgelost.set(t.id, uit);
@@ -972,13 +1150,123 @@ export function verbindAfhankelijkheden(projecten: readonly ProjectOverzicht[]):
   return projecten.map((p) => ({ ...p, taken: p.taken.map((t) => los(t)) }));
 }
 
+/**
+ * De vakken waarin het werk uiteenvalt. Ze zijn wederzijds uitsluitend en
+ * samen volledig: elke taak valt in precies één vak. Dat is de hele reden dat
+ * ze bestaan — de eigenaar kon actief werk, backlog, geparkeerd werk en
+ * wachtend werk niet uit elkaar houden, omdat alles wat niet van hem was als
+ * "Jarvis aan zet" op één hoop kwam.
+ */
+export type StandVak = "actief" | "backlog" | "bij_jou" | "wacht" | "geparkeerd" | "afgerond";
+
+/** Eén taak, ingedeeld, met de reden in de woorden van de kaart. */
+export type IngedeeldeTaak = {
+  readonly id: string;
+  readonly titel: string;
+  readonly project: string;
+  readonly status: string;
+  readonly vak: StandVak;
+  /** Waarom dit vak. Kort genoeg voor een regel onder de titel. */
+  readonly reden: string;
+  readonly stil: boolean;
+  readonly wacht_soort: TaakItem["wacht_soort"];
+  readonly laatste_beweging: string | null;
+};
+
+/** Eén open risico of blokkade: geen taak, wel iets dat zichtbaar moet blijven. */
+export type IngedeeldRisico = {
+  readonly id: string;
+  readonly project: string;
+  readonly titel: string;
+  readonly soort: AandachtSoort;
+  readonly urgentie: Urgentie;
+};
+
+export type Indeling = {
+  readonly actief: readonly IngedeeldeTaak[];
+  readonly backlog: readonly IngedeeldeTaak[];
+  readonly bij_jou: readonly IngedeeldeTaak[];
+  readonly wacht: readonly IngedeeldeTaak[];
+  readonly geparkeerd: readonly IngedeeldeTaak[];
+  readonly afgerond: readonly IngedeeldeTaak[];
+  readonly risicos: readonly IngedeeldRisico[];
+  /**
+   * Er is geen actief werk. Uitsluitend daarop gebaseerd, niet op "niets te
+   * zien": backlog, wachtend werk en risico's kunnen bestaan en blijven dan
+   * ook staan. Een nulstand is een uitspraak, geen leegte.
+   */
+  readonly nulstand: boolean;
+};
+
+const WACHT_REDEN: Record<NonNullable<TaakItem["wacht_soort"]>, string> = {
+  gebeurtenis: "wacht op een gebeurtenis buiten Jarvis",
+  uitvoerder: "wacht op een andere uitvoerder",
+  taak: "wacht op een andere taak",
+  "pull-request": "wacht op een pull request",
+};
+
+/** In welk vak deze taak valt, en waarom. */
+function vakVan(t: TaakItem): { readonly vak: StandVak; readonly reden: string } {
+  if (t.status === "afgerond") return { vak: "afgerond", reden: "afgerond" };
+  if (t.aan_zet === "eigenaar") return { vak: "bij_jou", reden: t.wacht_op ?? "een handeling van jou" };
+  if (t.aan_zet === "wacht") return { vak: "wacht", reden: t.wacht_soort === null ? "wacht" : WACHT_REDEN[t.wacht_soort] };
+  if (t.aan_zet === "niemand") return { vak: "geparkeerd", reden: `bewust niet actief (status ${t.status})` };
+  // Jarvis is aan zet. Beweging in het venster scheidt werk dat loopt van werk
+  // dat klaarligt: zonder dat onderscheid leest een volle wachtrij als een
+  // druk systeem, ook wanneer er aan geen enkele taak iets gebeurt.
+  return t.laatste_beweging !== null
+    ? { vak: "actief", reden: "Jarvis aan zet; er is aan gewerkt" }
+    : { vak: "backlog", reden: "Jarvis aan zet; nog niemand aan begonnen" };
+}
+
+/**
+ * De indeling, afgeleid uit het overzicht dat er al staat. Puur: geen tweede
+ * bron, geen eigen meting. Een taak die in meer dan één project voorkomt is
+ * hierboven al door `herverdeel` teruggebracht tot één regel.
+ */
+export function deelIn(projecten: readonly ProjectOverzicht[], voor_jou: readonly AandachtItem[]): Indeling {
+  const vakken: Record<StandVak, IngedeeldeTaak[]> = {
+    actief: [],
+    backlog: [],
+    bij_jou: [],
+    wacht: [],
+    geparkeerd: [],
+    afgerond: [],
+  };
+  for (const p of projecten) {
+    for (const t of p.taken) {
+      const { vak, reden } = vakVan(t);
+      vakken[vak].push({
+        id: t.id,
+        titel: t.titel,
+        project: t.project,
+        status: t.status,
+        vak,
+        reden,
+        stil: t.stil,
+        wacht_soort: t.wacht_soort,
+        laatste_beweging: t.laatste_beweging,
+      });
+    }
+  }
+  return {
+    ...vakken,
+    risicos: voor_jou
+      .filter((a) => a.soort === "risico" || a.soort === "blokkade")
+      .map((a) => ({ id: a.id, project: a.project, titel: a.titel, soort: a.soort, urgentie: a.urgentie })),
+    nulstand: vakken.actief.length === 0,
+  };
+}
+
 export function bouwOverzicht(projecten: readonly ProjectInvoer[], nu: Date, centraal: string | null = null): Overzicht {
   const uitgewerkt = verbindAfhankelijkheden(herverdeel(projecten.map((p) => bouwProjectOverzicht(p, nu))));
+  const voor_jou = sorteerAandacht(uitgewerkt.flatMap((p) => p.aandacht));
   return {
     versie: OVERZICHT_VERSIE,
     gegenereerd_op: nu.toISOString(),
     centraal: centraal && uitgewerkt.some((p) => p.id === centraal) ? centraal : null,
     projecten: uitgewerkt,
-    voor_jou: sorteerAandacht(uitgewerkt.flatMap((p) => p.aandacht)),
+    voor_jou,
+    indeling: deelIn(uitgewerkt, voor_jou),
   };
 }

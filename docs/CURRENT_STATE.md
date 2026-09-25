@@ -6,13 +6,13 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-24._
+_Gegenereerd op 2026-09-25._
 
 | Feit | Waarde |
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 36 |
+| Testbestanden | 38 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -31,6 +31,26 @@ _Gegenereerd op 2026-09-24._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Het overzicht deelt het werk in vakken in, en de regie publiceert het mee. Dat
+zijn de twee helften van één klacht: de administratieve nulstand was bereikt,
+maar in de interface niet te zien. `overzicht/huidig` liep achter omdat
+`jarvis regie --schrijf` alleen `regie/huidig` verving en het overzicht van een
+losse tweede opdracht afhing; de regie bouwt dat overzicht al in dezelfde run en
+schrijft het nu mee, zodat de twee documenten niet meer uiteen kunnen lopen.
+Bij een sanitizerbevinding in één van de twee gaat er niets weg — alleen de
+schone helft schrijven zou de scheefstand terugbrengen.
+
+En alles wat niet van de eigenaar was, kwam op één hoop. `deelIn` zet elke taak
+in precies één vak — actief, backlog, bij jou, wachtend, geparkeerd, afgerond —
+en zet de open risico's er apart bij; `nulstand` zegt of er actief werk is, niet
+of er niets te zien valt. Actief en backlog scheiden op beweging in het venster,
+zodat een volle wachtrij niet als een druk systeem leest. De indeling staat in
+de gegevenslaag en niet in de pagina: een tweede kopie van die regel is precies
+hoe overzicht en regie eerder uiteen zijn gelopen. Lege vakken blijven in beeld
+met een nul erbij, want een vak dat verdwijnt zodra het leeg is maakt van een
+nulstand een lege pagina, en dan is niet te zien of er niets is of dat er niets
+gemeten is.
 
 Een run laat sinds deze wijziging één spoor na: `jarvis db run start` schrijft
 bij het begin een regel met startmoment, oorzaak (rooster, signaal,
@@ -215,6 +235,23 @@ de Vault blijft; de engine kent geen leveranciersnaam en spreekt het gangbare
 chat-completions-formaat. Tegelijk bewaakt `jarvis db bericht` de
 eigenaarstaal: een bericht met technische namen wordt geweigerd, de
 technische bron gaat mee in `--technisch` en de app toont hem ingeklapt.
+
+Sinds 2026-09-24 kent het overzicht een vierde antwoord op "wie is aan zet":
+naast `jarvis`, `eigenaar` en `niemand` staat er nu `wacht`. Een open stap die
+op een gebeurtenis, een andere uitvoerder, een taak of een pull request wacht,
+viel daarvoor terug op `jarvis` — de interface meldde dan "JARVIS AAN ZET" over
+werk dat bewust geparkeerd was, en na een paar dagen zelfs "STIL", alsof er een
+storing was waar een keuze stond. De vier patronen die dat bepalen staan nu op
+één plaats in `overzicht.ts` en worden door `regie.ts` geïmporteerd, zodat de
+kaart en de wachtrij niet opnieuw uiteen kunnen lopen; een test vergelijkt de
+twee beelden per geval. In dezelfde ronde levert een dossier dat in meer dan
+één aangesloten repository staat nog maar één taakregel op — de regie had die
+wacht al, het overzicht niet — en kort `wacht_op` de reden af tot één regel in
+plaats van de volledige staptekst. `jarvis overzicht --schrijf` zet het
+overzicht ten slotte zelf in de database, net als `jarvis regie --schrijf`:
+publiceren was een losse tweede opdracht die alleen in de afsluitstap van een
+routine stond, en een ronde die anders eindigde liet de interface zonder
+melding op een oude wereld staan.
 
 ## Volgende stap
 

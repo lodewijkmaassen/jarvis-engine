@@ -59,6 +59,37 @@ p{margin:0}
 .zet b{font-weight:500;color:var(--cyaan)}
 .zet.eigenaar b{color:var(--midden)}
 .zet.stil b{color:var(--hoog)}
+.zet.wacht b{color:var(--laag)}
+.nulstand{display:block;margin-top:6px;font-family:var(--mono);font-size:11.5px;color:var(--ok)}
+/* `kop` is bezet: .kop is de vaste kopbalk van de app (position:fixed).
+   Een paneelkop met die naam kruipt eroverheen. Vandaar .vakkop. */
+.vakkenpaneel{margin-top:12px;border:1px solid var(--lijn);background:var(--vlak)}
+.vakkenpaneel>.vakkop{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--lijn)}
+.vakkenpaneel>.vakkop b{font-family:var(--display);font-size:15px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.vakkenpaneel>.vakkop .wanneer{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--zacht)}
+.vakkenpaneel.leegstand>.vakkop{background:var(--ok-zacht)}.vakkenpaneel.leegstand>.vakkop b{color:var(--ok)}
+.vakkenpaneel.werkstand>.vakkop{background:var(--cyaan-zacht)}.vakkenpaneel.werkstand>.vakkop b{color:var(--cyaan)}
+.vakkenpaneel>.vakkop small{font-size:12px;color:var(--gedempt);font-family:var(--body);letter-spacing:0;text-transform:none}
+.vak{border-top:1px solid var(--lijn)}.vak:first-of-type{border-top:0}
+.vak>summary{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;min-height:42px;list-style:none}
+.vak>summary::-webkit-details-marker{display:none}
+.vak>summary .streep{width:3px;align-self:stretch;margin:-9px 0;background:var(--laag)}
+.vak>summary .naam{font-family:var(--display);font-size:12.5px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:var(--gedempt)}
+.vak>summary .telling{margin-left:auto;font-family:var(--mono);font-size:12.5px;color:var(--inkt)}
+.vak>summary .telling.nul{color:var(--zacht)}
+.vak.v-actief>summary .streep{background:var(--cyaan)}.vak.v-actief>summary .naam{color:var(--cyaan)}
+.vak.v-bij_jou>summary .streep{background:var(--midden)}.vak.v-bij_jou>summary .naam{color:var(--midden)}
+.vak.v-wacht>summary .streep{background:var(--laag)}
+.vak.v-backlog>summary .streep{background:var(--zacht)}
+.vak.v-geparkeerd>summary .streep{background:transparent;border-left:3px dashed var(--zacht)}
+.vak.v-risico>summary .streep{background:var(--hoog)}.vak.v-risico>summary .naam{color:var(--hoog)}
+.vak.v-afgerond>summary .streep{background:var(--ok)}
+.vak .rijen{padding:0 12px 10px 18px}
+.vakrij{display:flex;gap:8px;align-items:baseline;padding:6px 0;border-top:1px dotted var(--lijn);width:100%;text-align:left}
+.vakrij .t{font-size:13.5px;color:var(--inkt)}
+.vakrij .r{font-size:11.5px;color:var(--zacht);font-family:var(--mono)}
+.vakrij .vlag{font-family:var(--mono);font-size:10.5px;color:var(--hoog);border:1px solid var(--hoog);padding:0 4px;margin-left:auto}
+.vak .geenrijen{padding:0 12px 10px 18px;font-size:12px;color:var(--zacht)}
 .scope{max-height:180px;overflow:auto;white-space:pre-wrap;font-family:var(--mono);font-size:11px;line-height:1.45;color:var(--gedempt);background:rgba(6,10,16,.5);border:1px solid var(--lijn);border-radius:8px;padding:8px 10px;margin:6px 0}
 .akkoord{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:8px}
 .knoop.beantwoord text{fill:var(--zacht)}
@@ -327,6 +358,23 @@ function dagLabel(iso) {
   if (verschil < 7) return d.toLocaleDateString("nl-NL", { weekday: "long" }).replace(/^./, (c) => c.toUpperCase());
   return `${d.getDate()} ${MAANDEN[d.getMonth()]}`;
 }
+// Wie is aan zet, in de woorden van de kaart. `wacht` is er sinds 2026-09-24:
+// een taak die op een gebeurtenis, een uitvoerder, een taak of een pull
+// request wacht las daarvoor als "Jarvis aan zet", waardoor de kaart werk
+// toonde dat niemand kon doen.
+const WACHT_WOORD = { gebeurtenis: "wacht op gebeurtenis", uitvoerder: "wacht op uitvoerder", taak: "wacht op taak", "pull-request": "wacht op pull request" };
+function zetKort(t) {
+  if (t.aan_zet === "eigenaar") return "wacht op jou";
+  if (t.aan_zet === "jarvis") return "Jarvis aan zet";
+  if (t.aan_zet === "wacht") return WACHT_WOORD[t.wacht_soort] ?? "wacht";
+  return "";
+}
+function zetTekst(t) {
+  if (t.aan_zet === "eigenaar") return "WACHT OP JOU";
+  if (t.aan_zet === "jarvis") return "JARVIS AAN ZET";
+  if (t.aan_zet === "wacht") return (WACHT_WOORD[t.wacht_soort] ?? "wacht").toUpperCase();
+  return "NIET ACTIEF";
+}
 function relatief(iso) {
   const ms = Date.now() - new Date(iso).getTime();
   const m = Math.round(ms / 6e4), u = Math.round(ms / 36e5), d = Math.round(ms / 864e5);
@@ -550,7 +598,7 @@ function knoopSvg(n) {
       <circle class="schijf" r="${r}"/>
       <text class="sub" y="4" text-anchor="middle" style="font-size:9px">${st.length ? `${gedaan}/${st.length}` : "taak"}</text>
       ${(() => { const L = labelPlek(n, r + 6); return `<text class="blad" x="${L.x}" y="${L.y1}" text-anchor="${L.anchor}" style="font-size:10.5px">${esc(kort(t.titel, 30))}</text>
-      <text class="sub" x="${L.x}" y="${L.y2}" text-anchor="${L.anchor}" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${t.aan_zet === "eigenaar" ? "wacht op jou" : t.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>`; })()}
+      <text class="sub" x="${L.x}" y="${L.y2}" text-anchor="${L.anchor}" style="font-size:8.5px;fill:${t.stil ? "var(--hoog)" : t.aan_zet === "eigenaar" ? "var(--midden)" : t.aan_zet === "wacht" ? "var(--laag)" : "var(--gedempt)"}">${t.stil ? "stil · " : ""}${zetKort(t)}${t.laatste_beweging ? " · " + esc(relatief(t.laatste_beweging)) : ""}</text>`; })()}
       ${!uitgevouwen && n.kinderen.length ? `<text class="plus" x="${r}" y="${r + 4}">+${n.kinderen.length}</text>` : ""}
       ${draad ? `<circle class="praat" cx="${-r - 2}" cy="${-r - 2}" r="3.5"/>` : ""}
       ${open ? `<g class="badge"><circle cx="${r}" cy="${-r}" r="8"/><text x="${r}" y="${-r + 3}" text-anchor="middle" style="font-size:9.5px">${open}</text></g>` : ""}
@@ -800,6 +848,9 @@ function rootHtml(n) {
   const tab = staat.tab === "auto" ? (acties.nu.length ? "voorjou" : "team") : staat.tab;
   let s = `<div class="tabs"><button class="${tab === "voorjou" ? "aan" : ""}" data-actie="tab" data-id="voorjou">Voor jou${acties.nu.length ? ` · ${acties.nu.length}` : ""}</button><button class="${tab === "team" ? "aan" : ""}" data-actie="tab" data-id="team">Team</button></div>`;
   if (tab === "team") return s + teamHtml();
+  // Eerst de stand, dan de acties: de eigenaar moet in één blik kunnen zien of
+  // er werk loopt, zonder dat uit het uitblijven van kaarten af te leiden.
+  s += standHtml(o);
   s += actiesHtml();
   s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${acties.nu.length}<small>${acties.later.length} later</small></div></div><div class="tegel"><span class="eyebrow">Projecten</span><div class="n">${o.projecten.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${o.projecten.reduce((t, p) => t + p.recent.length, 0)}<small>/ ${RECENT_DAGEN} d</small></div></div></div>`;
   s += `<div class="agent ${live.bezig ? "bezig" : live.live ? "actief" : ""}"><span class="naam"><span class="dot"></span>${esc(j?.sessie?.naam ?? "Jarvis")}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(j?.sessie?.rol ?? "orchestrator")}</span><span class="wat">${esc(live.tekst)}</span><span class="meta">${j?.sessie?.model ? esc(j.sessie.model) : ""}${j?.sessie?.laatste ? " · laatste update " + esc(tijd(j.sessie.laatste)) : ""}. Eén model, vijf rollen; geen andere AI.</span></div>`;
@@ -812,7 +863,7 @@ function projectHtml(n) {
   const p = n.project; const open = p.aandacht.filter(isOpen);
   let s = `<div class="itemmeta"><span class="chip project">${p.hoofdbranch ? esc(p.hoofdbranch.naam) + " @ " + esc(p.hoofdbranch.commit) : "geen hoofdbranch"}</span><span class="chip">${p.aangesloten ? "aangesloten" : "niet aangesloten"}</span></div>`;
   s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${open.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${p.recent.length}<small>/ ${RECENT_DAGEN} d</small></div></div><div class="tegel"><span class="eyebrow">Taken</span><div class="n">${p.taken.filter((t) => t.status !== "afgerond").length}</div></div></div>`;
-  if (n.kinderen.length) s += `<div class="blok"><span class="eyebrow">Takken</span>${n.kinderen.map((k) => k.soort === "item" ? lijstRegel(k.item) : `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" ? `<small>${k.taak.stappen?.length ? `${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen · ` : ""}${k.taak.stil ? "stil" : k.taak.aan_zet === "eigenaar" ? "wacht op jou" : k.taak.aan_zet === "jarvis" ? "Jarvis aan zet" : ""}${k.taak.laatste_beweging ? " · " + esc(relatief(k.taak.laatste_beweging)) : ""}</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : `${k.kinderen.length}`}</span></button>`).join("")}</div>`;
+  if (n.kinderen.length) s += `<div class="blok"><span class="eyebrow">Takken</span>${n.kinderen.map((k) => k.soort === "item" ? lijstRegel(k.item) : `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" ? `<small>${k.taak.stappen?.length ? `${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen · ` : ""}${k.taak.stil ? "stil" : zetKort(k.taak)}${k.taak.laatste_beweging ? " · " + esc(relatief(k.taak.laatste_beweging)) : ""}</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : `${k.kinderen.length}`}</span></button>`).join("")}</div>`;
   else s += `<div class="blok"><div class="leeg"><strong>Niets open</strong>${p.aangesloten ? "Geen taak en niets voor jou." : "Sluit dit project aan om hier meer te zien."}</div></div>`;
   if (p.stand?.length) s += `<div class="blok"><span class="eyebrow">Stand</span>${p.stand.map((st, i) => `<details class="stand" ${i === 0 ? "open" : ""}><summary>${esc(st.kop)}</summary><div class="md">${md(st.tekst)}</div></details>`).join("")}</div>`;
   if (p.recent.length) s += `<div class="blok"><span class="eyebrow">Recent</span>${p.recent.slice(0, 8).map((c) => `<div class="commit"><span class="hash">${esc(c.hash)}</span><span class="ond">${esc(c.onderwerp)} <span class="mono" style="font-size:10.5px;color:var(--zacht)">${esc(dagLabel(c.datum))}${c.rol ? " · " + esc(c.rol) : ""}</span></span></div>`).join("")}</div>`;
@@ -821,7 +872,7 @@ function projectHtml(n) {
 function taakHtml(n) {
   const t = n.taak; const st = t.stappen ?? []; const gedaan = st.filter((x) => x.gedaan).length; const eersteOpen = st.findIndex((x) => !x.gedaan);
   let s = `<div class="itemmeta"><span class="chip">${esc(t.status)}</span>${t.klasse ? `<span class="chip">klasse ${esc(t.klasse)}</span>` : ""}<span class="mono" style="font-size:11px;color:var(--zacht)">${esc(t.id)}</span></div>`;
-  s += `<div class="zet ${t.stil ? "stil" : esc(t.aan_zet)}"><b>${t.stil ? "STIL" : t.aan_zet === "eigenaar" ? "WACHT OP JOU" : t.aan_zet === "jarvis" ? "JARVIS AAN ZET" : "NIET ACTIEF"}</b>${t.wacht_op ? `<span>· ${esc(t.wacht_op)}</span>` : ""}</div><div class="zet"><span>laatste beweging: ${t.laatste_beweging ? esc(relatief(t.laatste_beweging)) + " (" + esc(datumKort(t.laatste_beweging)) + " " + esc(tijd(t.laatste_beweging)) + ")" : "geen commit in " + RECENT_DAGEN + " dagen"}</span></div>`;
+  s += `<div class="zet ${t.stil ? "stil" : esc(t.aan_zet)}"><b>${t.stil ? "STIL" : zetTekst(t)}</b>${t.wacht_op ? `<span>· ${esc(t.wacht_op)}</span>` : ""}</div><div class="zet"><span>laatste beweging: ${t.laatste_beweging ? esc(relatief(t.laatste_beweging)) + " (" + esc(datumKort(t.laatste_beweging)) + " " + esc(tijd(t.laatste_beweging)) + ")" : "geen commit in " + RECENT_DAGEN + " dagen"}</span></div>`;
   if (st.length) s += `<div class="blok"><span class="eyebrow">Voortgang · ${gedaan} van ${st.length}</span><div class="balk"><i style="width:${Math.round((gedaan / st.length) * 100)}%"></i></div>${st.map((x, i) => `<div class="stap ${x.gedaan ? "gedaan" : i === eersteOpen ? "nu" : "open"}"><span class="vink">${x.gedaan ? "■" : i === eersteOpen ? "▶" : "□"}</span><span>${inlineMd(x.tekst)}</span></div>`).join("")}</div>`;
   if (t.gastheer && t.gastheer !== n.project.id) s += `<div class="bron">dossier en commits in ${esc(t.gastheer)}</div>`;
   const rg = regieVan(t.id);
@@ -909,6 +960,81 @@ function spreek(tekst) {
   speechSynthesis.cancel(); speechSynthesis.speak(u);
 }
 
+/**
+ * De nulstand: niets voor de eigenaar én geen actieve taak waar Jarvis aan
+ * zet is. Levert de regel die dat bevestigt, of null wanneer er wel werk is.
+ * Wachtend werk telt niet mee — daar is per definitie niets te doen — maar
+ * wordt wel genoemd, zodat "niemand aan zet" niet leest als "niets bestaat".
+ */
+function nulstand(o, acties) {
+  const taken = (o.projecten ?? []).flatMap((p) => p.taken ?? []);
+  const actief = taken.filter((t) => t.aan_zet !== "niemand");
+  if (acties.nu.length || actief.some((t) => t.aan_zet === "jarvis")) return null;
+  const wachtend = actief.filter((t) => t.aan_zet === "wacht").length;
+  const bijJou = actief.filter((t) => t.aan_zet === "eigenaar").length;
+  const rest = [
+    wachtend ? `${wachtend} wachtend` : null,
+    bijJou ? `${bijJou} bij jou, niet dringend` : null,
+  ].filter((x) => x !== null);
+  return `nulstand · niemand aan zet${rest.length ? ` · ${rest.join(" · ")}` : ""}`;
+}
+
+/**
+ * Het standpaneel: elk vak apart, met een eigen kleur en een eigen kop.
+ *
+ * De indeling komt kant-en-klaar uit `overzicht.indeling` — de interface leidt
+ * hem niet zelf af. Dat is met opzet: precies dáár ging het eerder mis, toen de
+ * kaart en de regie elk hun eigen kopie van "wie is aan zet" hadden. Eén bron,
+ * en een oud document (versie 1, zonder `indeling`) laat het paneel weg in
+ * plaats van te gokken.
+ *
+ * De volgorde is vast en loopt van "nu iets doen" naar "klaar": actief, bij
+ * jou, wachtend, backlog, geparkeerd, risico's, afgerond. Lege vakken blijven
+ * staan met een nul erbij — een vak dat verdwijnt zodra het leeg is, maakt van
+ * een nulstand een lege pagina, en dan is niet te zien of er niets is of dat
+ * er niets gemeten is.
+ */
+const VAKKEN = [
+  { sleutel: "actief", naam: "Actief werk", leeg: "Geen taak in uitvoering." },
+  { sleutel: "bij_jou", naam: "Wacht op jou", leeg: "Niets dat jouw handeling vraagt." },
+  { sleutel: "wacht", naam: "Wacht op uitvoerder of gebeurtenis", leeg: "Niets in de wacht." },
+  { sleutel: "backlog", naam: "Backlog", leeg: "Geen werk dat klaarligt." },
+  { sleutel: "geparkeerd", naam: "Geparkeerd", leeg: "Niets geparkeerd." },
+  { sleutel: "risico", naam: "Risico's en blokkades", leeg: "Geen open risico." },
+  { sleutel: "afgerond", naam: "Afgerond", leeg: "Nog niets afgerond." },
+];
+
+function vakRij(t) {
+  return `<button class="vakrij" data-actie="kies" data-id="t:${esc(t.id)}"><span class="t">${esc(t.titel)}<br><span class="r">${esc(t.reden)}</span></span>${t.stil ? `<span class="vlag">stil</span>` : ""}</button>`;
+}
+function risicoRij(r) {
+  return `<button class="vakrij" data-actie="kies" data-id="${esc(r.id)}"><span class="t">${esc(r.titel)}<br><span class="r">${esc(r.soort)} · urgentie ${esc(r.urgentie)}</span></span></button>`;
+}
+
+function standHtml(o) {
+  const ind = o.indeling;
+  // Versie 1 kende de indeling niet. Dan niets tonen: een paneel dat de
+  // interface zelf bij elkaar rekent is de tweede bron die hier net weg is.
+  if (!ind) return "";
+  const actief = ind.actief?.length ?? 0;
+  const kop = ind.nulstand
+    ? `<b>Geen actief werk</b><small>Niemand is aan zet. Wat er verder is, staat hieronder per vak.</small>`
+    : `<b>${actief} ${actief === 1 ? "taak" : "taken"} actief</b><small>Hieronder per vak, van nu tot klaar.</small>`;
+  let s = `<div class="vakkenpaneel ${ind.nulstand ? "leegstand" : "werkstand"}"><div class="vakkop">${kop}<span class="wanneer">stand ${esc(relatief(o.gegenereerd_op))}</span></div>`;
+  for (const v of VAKKEN) {
+    const rijen = v.sleutel === "risico" ? (ind.risicos ?? []) : (ind[v.sleutel] ?? []);
+    const n = rijen.length;
+    // Open wat aandacht vraagt, dicht wat alleen geteld hoeft te worden.
+    const open = n > 0 && (v.sleutel === "actief" || v.sleutel === "bij_jou" || v.sleutel === "risico");
+    s += `<details class="vak v-${v.sleutel}" ${open ? "open" : ""}><summary><span class="streep"></span><span class="naam">${esc(v.naam)}</span><span class="telling ${n ? "" : "nul"}">${n}</span></summary>`;
+    s += n
+      ? `<div class="rijen">${(v.sleutel === "risico" ? rijen.map(risicoRij) : rijen.map(vakRij)).join("")}</div>`
+      : `<div class="geenrijen">${esc(v.leeg)}</div>`;
+    s += `</details>`;
+  }
+  return s + `</div>`;
+}
+
 /* ---------- render ---------- */
 function render() {
   const o = staat.overzicht; if (!o) return;
@@ -919,6 +1045,11 @@ function render() {
   $status.innerHTML = `<span class="dot ${live.bezig || wachten ? "bezig" : live.live ? "" : "uit"}"></span><b>${live.bezig ? esc(kort(live.tekst, 44)) : wachten ? `${wachten} bij Jarvis` : live.live ? "sessie actief" : "geen sessie"}</b><br><span class="${leeftijdDagen > 3 ? "oud" : ""}">stand ${esc(relatief(o.gegenereerd_op))}</span>${staat.signaal ? `<br>${esc(staat.signaal)}` : ""}`;
   const acties = verzamelActies();
   $status.innerHTML += `<button class="acties-knop ${acties.nu.length ? "" : "leeg"}" data-actie="kies" data-id="root" aria-label="Wat bij jou ligt">${acties.nu.length ? `${acties.nu.length} voor jou` : acties.later.length ? `niets dringend · ${acties.later.length} open` : "niets voor jou"}</button>`;
+  // De nulstand met zoveel woorden. Zonder deze regel moest de eigenaar uit
+  // het uitblijven van meldingen afleiden dat er niets liep — en dat is geen
+  // bevestiging maar een vermoeden. Nu staat er wat er is: niemand aan zet.
+  const n = nulstand(o, acties);
+  if (n) $status.innerHTML += `<span class="nulstand">${esc(n)}</span>`;
   document.getElementById("kop-versie").textContent = `v${o.versie ?? 1}`;
 }
 
@@ -1147,7 +1278,12 @@ async function start() {
   if (!bron) { $status.innerHTML = `<span class="dot uit"></span>geen gegevens — open dit op claude.ai of als eigen app`; return; }
   bron.overzicht((data) => {
     if (!data) { $status.innerHTML = `<span class="dot uit"></span>nog geen overzicht`; return; }
-    staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, centraal: data.centraal ?? null, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [] };
+    // Deze lijst moet elk veld van `Overzicht` kennen. Ze is er om ontbrekende
+    // velden een vaste terugval te geven, niet om te filteren: `indeling` viel
+    // er stil uit en het standpaneel bleef daardoor leeg, terwijl het document
+    // hem wél droeg. Nieuw veld in overzicht.ts? Voeg hem hier toe — de
+    // vangrail in interface-indeling.test.ts valt anders om.
+    staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, centraal: data.centraal ?? null, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [], indeling: data.indeling ?? null };
     render();
   }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code ?? err.message}).`; render(); });
   bron.status((data) => { staat.jarvis = data; render(); });

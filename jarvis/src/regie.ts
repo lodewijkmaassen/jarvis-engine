@@ -13,6 +13,7 @@
 // niet te beantwoorden; de controller onderzoekt).
 
 import type { Overzicht, TaakItem } from "./overzicht";
+import { UITVOERDER_STAP, WACHT_OP_GEBEURTENIS, WACHT_OP_PR, WACHT_OP_TAAK } from "./overzicht";
 
 export const ROLLEN = ["orchestrator", "task-controller", "architect", "developer", "reviewer", "qa", "knowledge-manager"] as const;
 export type Rol = (typeof ROLLEN)[number];
@@ -196,27 +197,16 @@ export function rolVoorStap(tekst: string): Rol {
   return "developer";
 }
 
-const WACHT_OP_TAAK = /wacht(?:en)?\s+op\s+(T-\d{8}-[a-z0-9-]+)/i;
-// "wacht op PR #26", "wacht op pull request lodewijkmaassen/jarvis-engine#26".
-const WACHT_OP_PR = /wacht(?:en)?\s+op\s+(?:pr|pull request)\s*(?:([\w.-]+\/[\w.-]+))?#?(\d+)/i;
+// De vier wachtpatronen staan in `overzicht.ts` en worden hier geïmporteerd.
+// Ze stonden eerder hier, als eigen kopie, en het overzicht kende ze helemaal
+// niet: de regie zette een taak op WAITING_FOR_EVENT terwijl de interface
+// "JARVIS AAN ZET" toonde over diezelfde taak. Eén bron voorkomt dat de twee
+// beelden opnieuw uit elkaar lopen; de toelichting per patroon staat bij de
+// definitie.
+//
+// `AKKOORD_STAP` blijft hier: hij werkt samen met `akkoord_nodig` uit het
+// overzicht en hoort bij de eigenaarstak, niet bij de wachtredenen.
 const AKKOORD_STAP = /\bakkoord\b.*\beigenaar\b|\beigenaar\b.*\bakkoord\b/i;
-// "wacht op gebeurtenis: de eigenaar typt de volgende opdracht in de app".
-//
-// Anders dan de drie patronen hierboven is dit een expliciete markering en
-// geen woordpatroon over lopende tekst. Dat is met opzet: een taak die op iets
-// buiten Jarvis wacht valt anders terug op QUEUED en wordt elke run opnieuw
-// aan een uitvoerder aangeboden die er niets mee kan. Wie zo'n stap schrijft
-// zegt daarmee uitdrukkelijk dat er niets te dispatchen valt — dat mag niet
-// per ongeluk uit een zinswending volgen.
-//
-// Dit is nadrukkelijk géén eigenaarswerk: er wordt niets van de eigenaar
-// gevraagd, er is alleen niets te doen tot de gebeurtenis zich voordoet
-// (CON-0016). Daarom blijft de verantwoordelijke de task-controller.
-const WACHT_OP_GEBEURTENIS = /^\s*wacht(?:en)?\s+op\s+gebeurtenis\s*:\s*(.+?)\s*$/i;
-// "**Uitvoerder: laptop.**" — een stap die per ontwerp bij één uitvoerder hoort.
-// Zonder deze markering valt zo'n stap door naar QUEUED en biedt de regie hem
-// aan elke uitvoerder aan, ook aan de uitvoerder die hem niet kán doen.
-const UITVOERDER_STAP = /\bUitvoerder:\s*\*{0,2}\s*([a-z][a-z0-9_-]*)/i;
 
 export type Uitvoering = {
   readonly claim: Activiteit;
