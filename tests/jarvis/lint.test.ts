@@ -752,3 +752,51 @@ describe("de volledige review-body moet uit ack-regels bestaan", () => {
     });
   });
 });
+
+describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", () => {
+  // Deze tests draaien `lint()` zelf, niet alleen de hulpfunctie. Een eerdere
+  // versie toetste uitsluitend de helper en was groen terwijl de regel op de
+  // echte invoerweg nooit vuurde: `lint` krijgt de *toelichting* van een punt
+  // binnen, en daar is het voorvoegsel "Stap 1:" al afgeknipt.
+  it("keurt een keuze af die in de lopende tekst staat", async () => {
+    const l = await lading();
+    const uit = lint({
+      ...basis(l),
+      eigenaarsPunten: [
+        { bestand: "tasks/T-1/resultaat.md", tekst: "kies tussen (a) de ene weg, of (b) de andere weg.", labels: ["Stap 1"] },
+      ],
+    });
+    const b = uit.bevindingen.find((x) => x.code === "eigenaarslijst_keuze_niet_uitgesplitst");
+    expect(b?.severity).toBe("fout");
+    expect(b?.boodschap).toMatch(/Optie A/);
+  });
+
+  it("laat een correct uitgesplitste keuze met rust", async () => {
+    const l = await lading();
+    const uit = lint({
+      ...basis(l),
+      eigenaarsPunten: [
+        { bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", labels: ["Keuze", "Optie A", "Optie B"] },
+      ],
+    });
+    expect(uit.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(false);
+  });
+
+  it("keurt een half geschreven keuze af", async () => {
+    const l = await lading();
+    const uit = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", labels: ["Keuze", "Optie A"] }],
+    });
+    expect(uit.bevindingen.some((x) => x.code === "eigenaarslijst_keuze_half")).toBe(true);
+  });
+
+  it("laat een handeling met twee delen met rust", async () => {
+    const l = await lading();
+    const uit = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "doe (a) het ene en (b) het andere.", labels: [] }],
+    });
+    expect(uit.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(false);
+  });
+});

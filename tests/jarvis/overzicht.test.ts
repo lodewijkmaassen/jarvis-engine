@@ -240,6 +240,10 @@ describe("wat bij de eigenaar ligt", () => {
     // handeling die Jarvis kan aanbieden — ook niet het punt dat toevallig met
     // "Beslissen" begint. Dat is de kern van criterium 1: het eerste woord van
     // een titel bepaalt niets meer. De urgentie blijft wél uit de context komen.
+    // `soort` blijft geassserteerd: de interface rendert er een chip en een
+    // icoon op en sorteert erop (SOORT_VOLGORDE), dus een stille wijziging
+    // daar is zichtbaar voor de eigenaar.
+    expect(items.map((i) => i.soort)).toEqual(["actie", "actie", "actie"]);
     expect(items.map((i) => [i.interactie, i.urgentie])).toEqual([
       ["uitstel", "hoog"],
       ["uitstel", "laag"],

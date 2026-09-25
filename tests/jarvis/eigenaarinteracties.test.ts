@@ -14,7 +14,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { bepaalEigenaarSoort, leesAandacht, leesIngebedeKeuze, type ProjectInvoer } from "@/jarvis/src/overzicht";
-import { keuzeInStapregel } from "@/jarvis/src/lint";
+import { keuzeNietUitgesplitst, keuzeZonderAlternatieven } from "@/jarvis/src/lint";
 
 function dossier(punt: string): ProjectInvoer {
   return {
@@ -126,26 +126,88 @@ describe("criterium 4 — een akkoordknop komt alleen uit de governance", () => 
   });
 
   it("laat een akkoordvraag op de taak niet óók als dossierpunt staan", () => {
-    // Criterium 7: één beslissing levert hoogstens één actuele actie op. De
-    // akkoordkaart neemt hem over; het dossierpunt wordt onderdrukt.
+    // Dit gedrag bestond al vóór deze wijziging (engine-#49) en is hier een
+    // vangrail, geen levering: criterium 7 vraagt méér dan dit ene geval en
+    // wordt door stap 4 van het uitvoeringsplan gedekt, niet door deze
+    // wijziging. De test staat hier om te bewaken dat de nieuwe classificatie
+    // hem niet stukmaakt — en hij is daarom terecht groen op de oude code.
     expect(leesAandacht(dossier("- Stap 1: geef in de Jarvis-app akkoord op deze taak."))).toEqual([]);
   });
 });
 
 describe("de poort bewaakt het dossierformaat van een keuze", () => {
-  it("keurt een keuze in een stapregel af, met de hersteltekst erbij", () => {
-    expect(keuzeInStapregel("- Stap 1: kies tussen (a) een ignoreCommand, of (b) niets doen.")).toBe(true);
-    expect(keuzeInStapregel("- **Stap 2:** (a) dit of (b) dat")).toBe(true);
+  it("herkent een keuze die niet in optieregels is uitgesplitst", () => {
+    expect(keuzeNietUitgesplitst("kies tussen (a) een ignoreCommand, of (b) niets doen.")).toBe(true);
+    expect(keuzeNietUitgesplitst("welke weg: (A) dit of (B) dat")).toBe(true);
   });
 
-  it("laat een gewone stapregel met rust", () => {
-    expect(keuzeInStapregel("- Stap 1: zet de sleutel in de kluis.")).toBe(false);
-    // Eén gemerkt alternatief is geen keuze.
-    expect(keuzeInStapregel("- Stap 1: doe (a) dit en verder niets.")).toBe(false);
+  it("laat een handeling met twee delen met rust", () => {
+    // "en", geen "of": beide dingen moeten gebeuren, dat is geen keuze.
+    expect(keuzeNietUitgesplitst("doe (a) het ene en (b) het andere.")).toBe(false);
+    expect(keuzeNietUitgesplitst("controleer artikel 5 lid (a) en lid (b) van het contract.")).toBe(false);
+    expect(keuzeNietUitgesplitst("zet de sleutel in de kluis.")).toBe(false);
   });
 
-  it("raakt alleen stapregels, niet een correct geschreven keuze", () => {
-    expect(keuzeInStapregel("- Keuze: welke weg kiezen we?")).toBe(false);
-    expect(keuzeInStapregel("- Optie A: een ignoreCommand — scheelt deploys")).toBe(false);
+  it("keurt een half geschreven keuze af", () => {
+    expect(keuzeZonderAlternatieven(["Keuze", "Optie A"])).toBe(true);
+    expect(keuzeZonderAlternatieven(["Keuze", "Optie A", "Optie B"])).toBe(false);
+    expect(keuzeZonderAlternatieven(["Stap 1", "Controle"])).toBe(false);
+  });
+});
+
+describe("de invariant: de knoppen volgen uit het soort", () => {
+  // Niet per geval maar over álle items tegelijk. Een eerdere versie toetste
+  // per geval en miste daardoor dat een enkele extra labelregel de knoppen van
+  // het soort kon verdringen — een externe handeling verloor zijn "Gedaan",
+  // en een punt met een regel "- Gedaan: …" kreeg er juist één.
+  const MET_GEDAAN = new Set(["externe-handeling", "bevestiging"]);
+  const gevallen: readonly string[] = [
+    "- Stap 1: kies tussen (a) de ene weg, of (b) de andere weg.",
+    "- **Sleutel zetten.**\n  - Extern: de sleutelkluis van de database",
+    "- **Sleutel zetten.**\n  - Extern: de sleutelkluis\n  - Let op: vandaag nog",
+    "- **Iets geregeld?**\n  - Bevestig: of de instelling aanstaat\n  - Let op: vandaag nog",
+    "- **Repository aanmaken.**\n  - Stap 1: klik\n  - Controle: het staat er\n  - Gedaan: Jarvis pusht",
+    "- **Losse regels.**\n  - Termijn: morgen\n  - Eigenaar: jij",
+    "**akkoord_pr**\n\n- Stap 1: deze pull request raakt een harde uitzondering.",
+    "**akkoord_pr**\n\n- **Toch opties.**\n  - Optie A: dit — gevolg\n  - Optie B: dat — gevolg",
+    "- Stap 1: wachten tot de klant zich meldt.",
+  ];
+
+  for (const punt of gevallen) {
+    it(`houdt de invariant voor ${JSON.stringify(punt.split("\n")[0].slice(0, 46))}`, () => {
+      const item = eerste(punt);
+      const kn = item.opties.map((o) => o.keuze);
+      expect(kn[kn.length - 1], "Later hoort er altijd bij").toBe("later");
+      if (item.interactie === "keuze") {
+        // Een keuze toont alternatieven en nooit een handeling.
+        expect(kn.length).toBeGreaterThanOrEqual(3);
+        expect(kn).not.toContain("gedaan");
+      } else {
+        // Elk ander soort toont precies de knoppen van zijn soort.
+        expect(kn.slice(0, -1).every((k) => k !== "later")).toBe(true);
+        expect(kn.includes("gedaan")).toBe(MET_GEDAAN.has(String(item.interactie)));
+      }
+    });
+  }
+
+  it("geeft een akkoord altijd akkoordknoppen, ook met optieregels erbij", () => {
+    const item = eerste("**akkoord_pr**\n\n- **Toch opties.**\n  - Optie A: dit — gevolg\n  - Optie B: dat — gevolg");
+    expect(item.interactie).toBe("akkoord");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["akkoord", "niet-akkoord", "later"]);
+  });
+
+  it("laat een externe handeling zijn Gedaan houden naast een andere labelregel", () => {
+    expect(keuzes("- **Sleutel zetten.**\n  - Extern: de kluis\n  - Let op: vandaag nog")).toEqual(["gedaan", "later"]);
+  });
+
+  it("geeft geen Gedaan aan een punt dat er alleen een labelregel voor heeft", () => {
+    const item = eerste("- **Repository aanmaken.**\n  - Stap 1: klik\n  - Gedaan: Jarvis pusht");
+    expect(item.interactie).toBe("uitstel");
+    expect(item.opties.map((o) => o.keuze)).toEqual(["later"]);
+  });
+
+  it("maakt van twee willekeurige labelregels geen keuze", () => {
+    const item = eerste("- **Losse regels.**\n  - Termijn: morgen\n  - Eigenaar: jij");
+    expect(item.interactie).toBe("uitstel");
   });
 });

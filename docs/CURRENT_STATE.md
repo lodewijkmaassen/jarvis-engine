@@ -52,6 +52,16 @@ de titel de hele vraag is. Voor bestaande dossiers herkent de engine daarnaast
 een keuze die in één regel staat. Dat is een migratiepad, geen tweede formaat:
 `jarvis lint` keurt een keuze in een stapregel af en noemt de hersteltekst.
 
+De knoppen volgen strikt uit het soort. Een eerdere opzet liet elke
+`- Label: tekst`-regel vóórgaan op de knoppen van het soort; daardoor verloor
+een externe handeling zijn "Gedaan" zodra er een regel `- Let op: …` bij stond,
+en kon een punt met een regel `- Gedaan: …` juist "Gedaan" tonen terwijl het
+soort dat niet toestaat. Alleen bij een keuze zíjn de alternatieven de knoppen.
+
+Een keuze vraagt een keuzewoord én alternatieven die met "of" gescheiden zijn.
+Twee merken alleen volstaan niet: "doe (a) het ene en (b) het andere" is één
+handeling met twee delen, en "artikel 5 lid (a) en lid (b)" is een verwijzing.
+
 Wat hier nog niet in zit is de weg terug van gesprek naar actie (§3 van het
 uitvoeringsplan): een bericht met een `item_id` sluit de bijbehorende kaart nog
 niet. Zolang die er niet is, valt een bestaand dossierpunt zonder `Extern`- of

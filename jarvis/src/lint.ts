@@ -11,6 +11,7 @@
 //   waarschuwing  — zichtbaar, blokkeert niet
 import { matchtGlob, normaliseerPad } from "./classify";
 import { technischeMarkers } from "./review";
+import { leesIngebedeKeuze } from "./overzicht";
 import type { JarvisConfig } from "./config";
 import { isActiefRecord, type KnowledgeRecord } from "./records";
 import { formatteerBevinding, formatteerLaadFout, type KennisLading } from "./store";
@@ -35,7 +36,8 @@ export const LINT_CODES = [
   "ack_bron_onbetrouwbaar",
   "eigenaarslijst_administratief",
   "eigenaarslijst_technisch",
-  "eigenaarslijst_keuze_in_stap",
+  "eigenaarslijst_keuze_niet_uitgesplitst",
+  "eigenaarslijst_keuze_half",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -85,7 +87,12 @@ export type LintInvoer = {
    * De punten onder "Wat de eigenaar nog moet doen" van de taakdossiers die
    * deze wijziging raakt: bestand en de tekst per punt.
    */
-  readonly eigenaarsPunten?: readonly { readonly bestand: string; readonly tekst: string }[];
+  readonly eigenaarsPunten?: readonly {
+    readonly bestand: string;
+    readonly tekst: string;
+    /** De labels van de regels onder dit punt (`Optie A`, `Keuze`, `Stap 1`, …). */
+    readonly labels?: readonly string[];
+  }[];
   /**
    * De commitlog was niet volledig en eenduidig te lezen (een record zonder
    * geldige vorm, of een verschil met de lijst uit rev-list). Blokkerend: een
@@ -378,12 +385,20 @@ export function toetsRandvoorwaarden(
  * als één knop "Gedaan". De engine herkent zo'n regel nog wel (het vangnet),
  * maar dit is de norm en de poort bewaakt hem.
  */
-export function keuzeInStapregel(tekst: string): boolean {
-  const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "");
-  if (!/^\s*(?:[-*]\s+)?\**stap\s*\d+\**\s*:/i.test(plat)) return false;
-  if (/\bkies\s+tussen\b/i.test(plat)) return true;
-  // Twee gemerkte alternatieven in dezelfde regel is óók een keuze.
-  return [...plat.matchAll(/\([a-z]\)/g)].length >= 2;
+export function keuzeNietUitgesplitst(tekst: string): boolean {
+  // Dezelfde herkenning als de engine gebruikt, niet een tweede kopie ervan:
+  // wat het vangnet als keuze leest, hoort de poort als niet-uitgesplitst af
+  // te keuren. Een eerdere versie ankerde op "Stap N:" en vuurde daarom nooit
+  // — `lint` krijgt de toelichting van een punt binnen, en daar is dat
+  // voorvoegsel al afgeknipt.
+  return leesIngebedeKeuze(tekst).length >= 2;
+}
+
+/** Een `Keuze`-regel zonder minstens twee alternatieven is een half geschreven norm. */
+export function keuzeZonderAlternatieven(labels: readonly string[]): boolean {
+  const heeftKeuze = labels.some((l) => l.trim().toLowerCase() === "keuze");
+  if (!heeftKeuze) return false;
+  return labels.filter((l) => /^optie\b/i.test(l.trim())).length < 2;
 }
 
 export function isAdministratieveBevestiging(tekst: string): boolean {
@@ -417,15 +432,30 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // Een keuze hoort haar alternatieven als eigen optieregels te schrijven; in
   // een stapregel verstopt bereiken ze de knoppen niet.
   for (const punt of invoer.eigenaarsPunten ?? []) {
-    if (!keuzeInStapregel(punt.tekst)) continue;
+    if (!keuzeNietUitgesplitst(punt.tekst)) continue;
     bevindingen.push(
       bevinding(
-        "eigenaarslijst_keuze_in_stap",
+        "eigenaarslijst_keuze_niet_uitgesplitst",
         "fout",
         punt.bestand,
-        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" zet een keuze in een stapregel; ` +
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" zet de alternatieven van een keuze in de lopende tekst; ` +
           `schrijf de vraag als "- Keuze: <vraag>" met daaronder "- Optie A: <gevolg>" en "- Optie B: <gevolg>", ` +
-          `anders bereiken de alternatieven de knoppen niet.`,
+          `anders hangt de kaart van het vangnet af in plaats van van het formaat.`,
+      ),
+    );
+  }
+
+  // Een half geschreven keuze levert stil een onbruikbare kaart: de vraag staat
+  // er, de alternatieven niet, en het punt valt terug op "Later".
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (!keuzeZonderAlternatieven(punt.labels ?? [])) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_keuze_half",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft een "Keuze"-regel maar minder dan twee ` +
+          `"Optie"-regels; zonder alternatieven toont de kaart alleen "Later".`,
       ),
     );
   }

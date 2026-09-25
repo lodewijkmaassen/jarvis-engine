@@ -662,9 +662,6 @@ const eersteZin = (tekst: string) => {
   return m ? m[1] : plat;
 };
 
-const STANDAARD_ACTIE: readonly Optie[] = [
-  { keuze: "gedaan", label: "Gedaan", gevolg: "Jarvis streept dit punt af in het taakdossier en legt vast dat jij het hebt gedaan." },
-];
 const STANDAARD_BESLISSING: readonly Optie[] = [
   { keuze: "beslist", label: "Beslissing vastleggen", gevolg: "Jarvis legt je beslissing vast als besluit en voert de gevolgen ervan uit in de repository." },
 ];
@@ -730,11 +727,24 @@ const KNOPPEN: Record<EigenaarSoort, readonly Optie[]> = {
  * Voor nieuwe dossierpunten is de norm een eigen optieregel, en `jarvis lint`
  * bewaakt dat.
  */
+export const KEUZEWOORD = /\b(kies|kiezen|keuze|bepaal|bepalen|welke|of\b.*\bof)\b/i;
+
 export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
   const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "");
-  // Minstens twee gemerkte alternatieven; één "(a)" zonder "(b)" is geen keuze.
-  const merken = [...plat.matchAll(/\(([a-z])\)\s*/g)];
+  // Twee merken maken nog geen keuze. "doe (a) het ene en (b) het andere" is
+  // één handeling met twee delen, en "artikel 5 lid (a) en lid (b)" is een
+  // verwijzing; allebei werden ze als keuze aangeboden, met onleesbare knoppen
+  // en zonder manier om ze af te sluiten. Er moet een keuzewoord staan én de
+  // alternatieven moeten met "of" gescheiden zijn.
+  if (!KEUZEWOORD.test(plat)) return [];
+  const merken = [...plat.matchAll(/\(([a-zA-Z])\)\s*/g)];
   if (merken.length < 2) return [];
+  // Elk paar opeenvolgende merken hoort door "of" gescheiden te zijn; staat er
+  // "en", dan moeten beide dingen gebeuren en is het geen keuze.
+  for (let i = 0; i + 1 < merken.length; i += 1) {
+    const tussen = plat.slice(merken[i].index + merken[i][0].length, merken[i + 1].index);
+    if (!/\b(of|dan wel)\s*$/i.test(tussen.trim())) return [];
+  }
   const uit: Optie[] = [];
   for (const [i, m] of merken.entries()) {
     const start = m.index + m[0].length;
@@ -744,7 +754,11 @@ export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
     // bij de tekst ervoor.
     deel = deel.replace(/[,;]?\s*(of|dan wel)\s*$/i, "").replace(/[.,;]\s*$/, "").trim();
     if (deel.length === 0) return [];
-    uit.push({ keuze: `optie-${m[1]}`, label: `(${m[1]}) ${kortTitel(deel, 60)}`, gevolg: deel });
+    const sleutel = `optie-${m[1].toLowerCase()}`;
+    // Twee alternatieven met hetzelfde merk zijn niet ondubbelzinnig toe te
+    // wijzen aan een antwoord; dan is het geen bruikbare keuze.
+    if (uit.some((o) => o.keuze === sleutel)) return [];
+    uit.push({ keuze: sleutel, label: `(${m[1].toLowerCase()}) ${kortTitel(deel, 60)}`, gevolg: deel });
   }
   return uit;
 }
@@ -906,7 +920,10 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       const akkoordContext = /akkoord[_ -]?pr/i.test(item.context);
       // De alternatieven komen uit eigen optieregels (de norm) of, voor
       // bestaande dossiers, uit een keuze die in één regel staat.
-      const uitRegels = item.regels.filter((r) => !GERESERVEERDE_LABELS.includes(r.label.toLowerCase()) && !/^stap\s*\d+$/i.test(r.label));
+      // Alleen regels die zich als alternatief aandienen tellen mee. "Termijn"
+      // en "Eigenaar" zijn geen keuzes; die maakten van elk punt met twee
+      // losse labelregels een keuze met die labels als knoppen.
+      const uitRegels = item.regels.filter((r) => /^optie\b/i.test(r.label.trim()));
       const keuzeRegel = item.regels.find((r) => r.label.toLowerCase() === "keuze");
       // Eén bron per keer, niet alles aan elkaar geplakt: dezelfde zin staat
       // vaak in de titel én in de toelichting én in de stapregel, en samen
@@ -927,12 +944,19 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // vraag; anders de titel van het punt zelf.
       const titel = keuzeRegel ? kortTitel(keuzeRegel.tekst, 120) : item.titel;
       const gebouwd = bouwOpties(item.regels, KNOPPEN[interactie]);
-      // Bij een keuze wegen de alternatieven zwaarder dan de standaardknoppen,
-      // en "Gedaan" hoort er nooit bij: een keuze is geen handeling.
+      // De knoppen volgen uit het soort — dat is de hele invariant van deze
+      // verzameling, en hij mag niet van een toevallige labelregel afhangen.
+      // `bouwOpties` laat elke niet-gereserveerde `- Label: tekst`-regel
+      // vóórgaan op de standaardknoppen; daardoor verloor een externe
+      // handeling zijn "Gedaan" zodra er een regel `- Let op: …` bij stond, en
+      // kon een punt met een regel `- Gedaan: …` juist "Gedaan" tonen terwijl
+      // het soort dat niet toestaat. Alleen bij een keuze zíjn de
+      // alternatieven de knoppen; bij elk ander soort zijn ze het nooit.
+      const alternatieveOpties = uitRegels.length >= 2 ? gebouwd.opties.filter((o) => o.keuze !== "later") : ingebed;
       const opties =
-        interactie === "keuze" && ingebed.length >= 2 && uitRegels.length < 2
-          ? [...ingebed, OPTIE_LATER]
-          : gebouwd.opties;
+        interactie === "keuze"
+          ? [...alternatieveOpties, OPTIE_LATER]
+          : [...KNOPPEN[interactie], OPTIE_LATER];
       items.push({
         id: `${p}:${taak.id}:${korteSleutel(item.titel)}`,
         project: taak.opdracht["project"] ?? p,
