@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Overzicht, TaakItem } from "@/jarvis/src/overzicht";
 import { readFileSync } from "node:fs";
-import { HEARTBEAT_MINUTEN, UITVOERDER_TERMIJN_MINUTEN, bepaalRegie, rolVoorStap, uitvoerderToestand, type Activiteit, type UitvoerderItem, type Uitvoerders } from "@/jarvis/src/regie";
+import { HEARTBEAT_MINUTEN, UITVOERDER_TERMIJN_MINUTEN, bepaalRegie, platformtoestandVan, registerBruikbaar, rolVoorStap, uitvoerderToestand, type Activiteit, type UitvoerderItem, type Uitvoerders } from "@/jarvis/src/regie";
 
 const NU = new Date("2026-09-14T22:00:00Z");
 const iso = (minutenGeleden: number) => new Date(NU.getTime() - minutenGeleden * 60_000).toISOString();
@@ -452,5 +452,123 @@ describe("uitvoerderToestand", () => {
     expect(uitvoerderToestand(null, null, NU)).toBe("GEBLOKKEERD");
     expect(uitvoerderToestand(null, iso(5), NU)).toBe("ACTIEF");
     expect(uitvoerderToestand(null, iso(UITVOERDER_TERMIJN_MINUTEN + 1), NU)).toBe("GEBLOKKEERD");
+  });
+});
+
+// T-20260917-uitvoerderbewaking, stap 2 van het ontwerp: het register wordt
+// door een uitvoerder geschreven, niet door de engine. Drie manieren waarop het
+// daardoor stil kon liegen, elk met een test die faalt op de code van vóór deze
+// wijziging.
+describe("regie — het register mag zelf niet de stille schakel worden", () => {
+  const levendeClaim = [act({ soort: "claim", op: iso(20) }), act({ soort: "stap", op: iso(5), tekst: "bezig" })];
+  const reg = (over: Partial<Uitvoerders>, ...items: readonly Partial<UitvoerderItem>[]): Uitvoerders => ({
+    gegenereerd_op: iso(1),
+    uitvoerders: items.map((o) => ({ naam: "cloud", soort: "routine", platformtoestand: "working", laatste_teken: iso(1), ...o }) as UitvoerderItem),
+    ...over,
+  });
+
+  describe("een onbekende platformtoestand leest nooit als in orde", () => {
+    for (const ruw of ["requires-action", "REQUIRES_ACTION", "Needs permissions", "", "  ", "onzin"]) {
+      it(`normaliseert ${JSON.stringify(ruw)} naar een toestand die de engine kent`, () => {
+        const genormaliseerd = platformtoestandVan(ruw);
+        expect(["working", "blocked", "requires_action", "review_ready", "completed", "failed", "onbekend"]).toContain(genormaliseerd);
+      });
+    }
+
+    it("leest een tikfout in een blokkerende toestand niet als ACTIEF", () => {
+      // `requires-action` met een streepje kwam niet in de blokkerende lijst
+      // voor, viel door naar de heartbeat en werd met een vers teken stil
+      // ACTIEF — juist het stille falen dat dit register wegneemt.
+      const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, reg({}, { platformtoestand: "requires-action" as UitvoerderItem["platformtoestand"] }));
+      expect(r.taken[0].toestand).toBe("BLOCKED");
+      expect(r.afwijkingen.length).toBeGreaterThan(0);
+    });
+
+    it("laat een geldige toestand ongemoeid", () => {
+      expect(platformtoestandVan("working")).toBe("working");
+      expect(platformtoestandVan("requires_action")).toBe("requires_action");
+      expect(platformtoestandVan(undefined)).toBe("onbekend");
+    });
+  });
+
+  describe("een register buiten zijn eigen houdbaarheid telt als afwezig", () => {
+    it("gelooft een oud register niet op zijn woord, ook niet met een houdbaar_tot in de toekomst", () => {
+      // De vorm die stil loog: het register is dagen oud, maar per uitvoerder
+      // staat er `working` met een houdbaarheid ver in de toekomst. `gegenereerd_op`
+      // werd gelezen en nooit gebruikt, dus las dat als "alles in orde" terwijl
+      // de schrijver van het register al lang stil lag.
+      const oud = reg(
+        { gegenereerd_op: iso(UITVOERDER_TERMIJN_MINUTEN + 60) },
+        { platformtoestand: "working", laatste_teken: iso(1), houdbaar_tot: new Date(NU.getTime() + 86_400_000).toISOString() },
+      );
+      expect(registerBruikbaar(oud, NU)).toBe(false);
+      // Een dóde claim: de uitvoerder gaf zelf ook geen teken meer. Dan is het
+      // register de enige bron die nog "in orde" beweert, en die bewering telt niet.
+      const doodseClaim = [act({ soort: "claim", op: iso(UITVOERDER_TERMIJN_MINUTEN + 120) })];
+      const r = bepaalRegie(overzicht([taak("T-1")]), doodseClaim, NU, oud);
+      expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+      expect(r.afwijkingen.length).toBeGreaterThan(0);
+      // Met een bruikbaar register dat exact hetzelfde beweert, geldt die
+      // bewering wél en is de uitvoerder niet de blokkade. Het verschil zit
+      // uitsluitend in de leeftijd van het register, niet in de items.
+      const vers = reg({}, { platformtoestand: "working", laatste_teken: iso(1), houdbaar_tot: new Date(NU.getTime() + 86_400_000).toISOString() });
+      expect(bepaalRegie(overzicht([taak("T-1")]), doodseClaim, NU, vers).taken[0].blokkade).not.toBe("uitvoerder_geblokkeerd");
+    });
+
+    it("houdt een verse werkactiviteit een geldig teken van leven, register of geen register", () => {
+      // Geen vals alarm (ontwerp §7): een uitvoerder die net een stap schreef,
+      // is aantoonbaar in leven, ook als het register ontbreekt of oud is.
+      const oud = reg({ gegenereerd_op: iso(UITVOERDER_TERMIJN_MINUTEN + 60) }, { platformtoestand: "working", laatste_teken: iso(1) });
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, oud).taken[0].toestand).toBe("RUNNING");
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, null).taken[0].toestand).toBe("RUNNING");
+    });
+
+    it("houdt een vers register bruikbaar", () => {
+      const vers = reg({}, { platformtoestand: "working", laatste_teken: iso(2) });
+      expect(registerBruikbaar(vers, NU)).toBe(true);
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, vers).taken[0].toestand).toBe("RUNNING");
+    });
+
+    it("telt een register zonder of met een onleesbare datum als afwezig", () => {
+      expect(registerBruikbaar(null, NU)).toBe(false);
+      expect(registerBruikbaar(reg({ gegenereerd_op: "gisteren" }, {}), NU)).toBe(false);
+      expect(registerBruikbaar(reg({ gegenereerd_op: undefined as unknown as string }, {}), NU)).toBe(false);
+    });
+  });
+
+  describe("meer dan één ingang per uitvoerder: het ergste geval wint", () => {
+    it("laat een gepauzeerde routine niet verdwijnen achter een werkende sessie", () => {
+      // Dit is de productievorm: de cloud-uitvoerder is tegelijk een sessie die
+      // nu draait en een roosterroutine die morgen hoort te wekken. Met een
+      // `Map<naam, item>` hield de laatste ingang de andere stil weg, en welke
+      // dat was hing van de schrijfvolgorde in het document af.
+      const beide = reg(
+        {},
+        { soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+        { soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "routine staat op pauze" },
+      );
+      const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, beide);
+      expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+      expect(r.taken[0].waarom).toMatch(/routine staat op pauze/);
+      expect(r.afwijkingen.length).toBeGreaterThan(0);
+    });
+
+    it("geeft dezelfde uitkomst in de omgekeerde schrijfvolgorde", () => {
+      const omgekeerd = reg(
+        {},
+        { soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "routine staat op pauze" },
+        { soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+      );
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, omgekeerd).taken[0].toestand).toBe("BLOCKED");
+    });
+
+    it("laat twee gezonde ingangen de taak gewoon lopen", () => {
+      const gezond = reg(
+        {},
+        { soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+        { soort: "routine", platformtoestand: "completed", laatste_teken: iso(1) },
+      );
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, gezond).taken[0].toestand).toBe("RUNNING");
+    });
   });
 });

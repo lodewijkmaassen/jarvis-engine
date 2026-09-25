@@ -139,9 +139,33 @@ de claim: naast de werkactiviteit leest de regie een tweede bron, het
 uitvoerdersregister `uitvoerders/huidig`, dat zegt welke uitvoerders er bestaan
 en in welke platformtoestand ze staan — ook de uitvoerder die nooit aan
 schrijven toekwam. De engine bevraagt de platformlaag niet zelf: ze kent geen
-tokens en mag die niet leren kennen, dus komt het register als bestand binnen
-(`jarvis regie --uitvoerders <pad>`, standaard `jarvis/uitvoerders.json`), en
-is de parameter optioneel zodat elke bestaande aanroep blijft werken.
+tokens en mag die niet leren kennen, dus komt het register van buiten binnen —
+in deze volgorde: `jarvis regie --uitvoerders <pad>` als dat is meegegeven,
+anders `jarvis/uitvoerders.json` in de werkmap, anders het document
+`uitvoerders/huidig` uit de eigen database. Die derde weg is de bedoelde weg, en
+zij ontbrak: zolang het register alleen van schijf kwam, zag alleen de
+uitvoerder die het zojuist zelf had weggeschreven het, en las elke andere
+uitvoerder elke uitvoerder als `onbekend`. Nu schrijft de uitvoerder die de
+platformlaag mág bevragen het document, en lezen laptop en cloud hetzelfde
+beeld. De parameter blijft optioneel, zodat elke bestaande aanroep blijft werken.
+
+Drie manieren waarop het register zelf stil kon liegen, zijn dicht. Een
+platformtoestand die de engine niet kent — `requires-action` met een streepje,
+`REQUIRES_ACTION`, een leeg veld — viel door de blokkerende lijst heen en werd
+met een vers teken stil `ACTIEF` gelezen; `platformtoestandVan` maakt van elke
+onbekende waarde `onbekend`. `gegenereerd_op` werd gelezen en nooit gebruikt,
+waardoor een register van dagen oud met een `houdbaar_tot` in de toekomst als
+"alles in orde" las terwijl de schrijver ervan al lang stil lag;
+`registerBruikbaar` telt een register buiten zijn eigen houdbaarheid als
+afwezig. En één uitvoerder kan meer dan één ingang hebben — de cloud-uitvoerder
+is tegelijk een sessie die nu draait en een roosterroutine die morgen hoort te
+wekken — waarvan een `Map<naam, item>` stil de laatste overhield, afhankelijk
+van de schrijfvolgorde in het document; alle ingangen worden nu bewaard en het
+ergste geval wint.
+
+Een verse werkactiviteit blijft een geldig teken van leven, register of geen
+register: een uitvoerder die net een stap schreef is aantoonbaar in leven. Dat
+is de grens tegen vals alarm; de bewering van een verlopen register is het niet.
 
 `requires_action`, `blocked` en `failed` blokkeren ongeacht het teken;
 `working` met een verlopen teken ook. Ontbreken is een toestand en geen leegte:

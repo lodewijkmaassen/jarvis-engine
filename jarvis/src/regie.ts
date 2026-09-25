@@ -152,6 +152,40 @@ const BLOKKERENDE_TOESTANDEN: readonly Platformtoestand[] = ["requires_action", 
 const ms = (iso: string): number => new Date(iso).getTime();
 
 /**
+ * De platformtoestand van een item, of `onbekend` als er iets anders staat.
+ *
+ * Het register wordt buiten de engine geschreven, dus een tikfout is een
+ * normaal geval en geen uitzondering. Zonder deze normalisatie viel elke
+ * onbekende waarde (`"requires-action"` met een streepje, `"REQUIRES_ACTION"`,
+ * een leeg veld) door de blokkerende lijst heen en werd zij, met een vers
+ * teken, stil als `ACTIEF` gelezen — precies het stille falen dat dit register
+ * hoort weg te nemen. Een waarde die de engine niet kent is `onbekend`, en
+ * `onbekend` zonder vers teken is een blokkade.
+ */
+export function platformtoestandVan(ruw: unknown): Platformtoestand {
+  if (typeof ruw !== "string") return "onbekend";
+  const k = ruw.trim().toLowerCase().replace(/[\s-]+/g, "_");
+  return (PLATFORMTOESTANDEN as readonly string[]).includes(k) ? (k as Platformtoestand) : "onbekend";
+}
+
+/**
+ * Is dit register nog bruikbaar, of is het zelf de stille schakel geworden?
+ *
+ * `gegenereerd_op` werd tot nu toe gelezen en nooit gebruikt. Een register dat
+ * dagen oud is maar per uitvoerder een `houdbaar_tot` in de toekomst draagt,
+ * las daardoor als "alles in orde" terwijl de schrijver ervan al lang stil
+ * lag. Dat is dezelfde fout als de rolstatus die "beschikbaar" bleef heten:
+ * ontwerp §2.2 en §7 eisen dat een register dat stilvalt luid faalt, en een
+ * register buiten zijn eigen houdbaarheid telt daarom als afwezig.
+ */
+export function registerBruikbaar(uitvoerders: Uitvoerders | null, nu: Date): boolean {
+  if (uitvoerders === null) return false;
+  const op = uitvoerders.gegenereerd_op;
+  if (typeof op !== "string" || Number.isNaN(ms(op))) return false;
+  return nu.getTime() - ms(op) <= UITVOERDER_TERMIJN_MINUTEN * 60_000;
+}
+
+/**
  * De toestand van één uitvoerder volgens het register (ontwerp §2.4). Een
  * ontbrekend of verlopen register is geen leegte maar de toestand `onbekend`;
  * `onbekend` zonder vers teken telt als blokkade, want een register dat
@@ -159,7 +193,7 @@ const ms = (iso: string): number => new Date(iso).getTime();
  * orde" meldt.
  */
 export function uitvoerderToestand(item: UitvoerderItem | null, laatsteTeken: string | null, nu: Date): UitvoerderToestand {
-  const toestand: Platformtoestand = item?.platformtoestand ?? "onbekend";
+  const toestand = item === null ? "onbekend" : platformtoestandVan(item.platformtoestand);
   if (BLOKKERENDE_TOESTANDEN.includes(toestand)) return "GEBLOKKEERD";
   if (toestand === "completed" || toestand === "review_ready") return "ACTIEF";
   const teken = item?.laatste_teken ?? laatsteTeken;
@@ -170,7 +204,7 @@ export function uitvoerderToestand(item: UitvoerderItem | null, laatsteTeken: st
 
 /** Waarom een uitvoerder geblokkeerd heet, in één mensleesbare regel zonder secrets. */
 function blokkadeReden(naam: string, item: UitvoerderItem | null, laatsteTeken: string | null, nu: Date): string {
-  const toestand: Platformtoestand = item?.platformtoestand ?? "onbekend";
+  const toestand = item === null ? "onbekend" : platformtoestandVan(item.platformtoestand);
   if (BLOKKERENDE_TOESTANDEN.includes(toestand)) {
     const toelichting = item?.toelichting != null && item.toelichting !== "" ? `: ${item.toelichting}` : "";
     return `uitvoerder ${naam} staat volgens het uitvoerdersregister op ${toestand}${toelichting}`;
@@ -469,17 +503,33 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
   // Het register is optioneel, zodat bestaande aanroepen blijven werken.
   // Ontbreekt het, dan geldt `onbekend` — en `onbekend` is een toestand, geen
   // leegte: zonder vers teken telt hij als blokkade.
-  const register = new Map<string, UitvoerderItem>();
-  for (const u of uitvoerders?.uitvoerders ?? []) register.set(u.naam, u);
+  // Eén uitvoerder kan meer dan één ingang hebben: de cloud-uitvoerder is
+  // tegelijk een sessie die nu draait en een roosterroutine die morgen wekt.
+  // Een `Map<naam, item>` hield daarvan stil de laatste over, en welke dat was
+  // hing van de schrijfvolgorde af — een gepauzeerde routine verdween zo achter
+  // een werkende sessie. Alle ingangen worden bewaard en het ergste geval wint:
+  // is één ingang geblokkeerd, dan is de uitvoerder geblokkeerd.
+  const register = new Map<string, UitvoerderItem[]>();
+  const bruikbaar = registerBruikbaar(uitvoerders, nu);
+  if (bruikbaar) {
+    for (const u of uitvoerders?.uitvoerders ?? []) {
+      const rij = register.get(u.naam);
+      if (rij === undefined) register.set(u.naam, [u]);
+      else rij.push(u);
+    }
+  }
   const tekenVan = (naam: string): string | null => {
     let best: string | null = null;
     for (const a of activiteit) if (a.uitvoerder === naam && (best === null || ms(a.op) > ms(best))) best = a.op;
     return best;
   };
   const oordeel: UitvoerderOordeel = (naam) => {
-    const item = register.get(naam) ?? null;
+    const rij = register.get(naam) ?? [];
     const teken = tekenVan(naam);
-    return { toestand: uitvoerderToestand(item, teken, nu), reden: blokkadeReden(naam, item, teken, nu) };
+    if (rij.length === 0) return { toestand: uitvoerderToestand(null, teken, nu), reden: blokkadeReden(naam, null, teken, nu) };
+    const slechtste = rij.find((item) => uitvoerderToestand(item, teken, nu) === "GEBLOKKEERD");
+    if (slechtste !== undefined) return { toestand: "GEBLOKKEERD", reden: blokkadeReden(naam, slechtste, teken, nu) };
+    return { toestand: "ACTIEF", reden: blokkadeReden(naam, rij[0], teken, nu) };
   };
 
   const taken: TaakRegie[] = [];
