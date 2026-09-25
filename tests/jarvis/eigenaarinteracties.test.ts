@@ -13,7 +13,7 @@
  * De nummers verwijzen naar de acceptatiecriteria van T-20260917-eigenaarinteracties.
  */
 import { describe, expect, it } from "vitest";
-import { bepaalEigenaarSoort, leesAandacht, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze, type ProjectInvoer } from "@/jarvis/src/overzicht";
+import { bepaalEigenaarSoort, leesAandacht, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze, lijktOpVraag, type ProjectInvoer } from "@/jarvis/src/overzicht";
 import { keuzeNietUitgesplitst, keuzeZonderAlternatieven, wachtNaastKeuze } from "@/jarvis/src/lint";
 
 function dossier(punt: string): ProjectInvoer {
@@ -945,6 +945,104 @@ describe("QA-ronde 9 — de asymmetrie was verplaatst, niet weg", () => {
       const item = eerste(`- Bepaal de weg voor de nieuwe koppeling.\n  - ${a}: duurt twee weken, geen kosten per maand\n  - ${b}: klaar in twee dagen, kost 40 euro per maand`);
       expect(item.interactie).toBe("keuze");
       expect(item.opties.map((o) => o.gevolg)[0]).toContain("twee weken");
+    });
+  });
+});
+
+describe("QA-ronde 10 — de gewoonste Nederlandse formulering", () => {
+  const r = (...paren: readonly (readonly [string, string])[]) => paren.map(([label, tekst]) => ({ label, tekst }));
+
+  describe("bevinding 1: een keuze met één \"of\" en zonder merken", () => {
+    for (const tekst of [
+      "Beslissen wat de engine doet met een taakdossier waarvan de status niet te lezen is of een onbekend woord draagt.",
+      "Kies de laptop of de cloud voor de eerste uitrol.",
+      "kies A, B of C in de Jarvis-app",
+      "Beslissing: welke lezing van de trailereis geldt, breed of alleen voor de review-flow?",
+      "kiezen of het publieke nummer in de documentatie mag blijven",
+    ]) {
+      it(`herkent "${tekst.slice(0, 44)}…" als vraag`, () => {
+        expect(lijktOpVraag(tekst)).toBe(true);
+      });
+    }
+
+    for (const tekst of [
+      "Zet de sleutel in de kluis.",
+      "doe (a) het ene en (b) het andere.",
+      "Lees punt (a) of (b) van het contract door voordat je betaalt.",
+      "kies tussen (a) de ene weg, of (b) de andere weg.",
+    ]) {
+      it(`zwijgt over "${tekst.slice(0, 44)}…"`, () => {
+        expect(lijktOpVraag(tekst)).toBe(false);
+      });
+    }
+
+    it("meldt de vraag in de poort, uit de punttekst", () => {
+      expect(keuzeNietUitgesplitst({ tekst: "Kies de laptop of de cloud voor de eerste uitrol.", regels: [] })).toBe(false);
+      // De vraagtoets loopt via `eigenaarslijst_keuze_bijna`, niet via
+      // `niet_uitgesplitst`; die laatste eist een leesbare ingebedde keuze.
+      expect(lijktOpVraag("Kies de laptop of de cloud voor de eerste uitrol.")).toBe(true);
+    });
+  });
+
+  describe("bevinding 8: een label met een dubbele punt wordt niet afgekapt", () => {
+    it("houdt de hele knop, met de tijd erin", () => {
+      const item = eerste(
+        "- Beslissen of Jarvis een cloud-routine krijgt.\n" +
+          "  - Ja, elk uur (07:00–23:00): een sessie per uur, meer doorstroom\n" +
+          "  - Nee: alleen op de vaste tijden",
+      );
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.label)).toEqual(["Ja, elk uur (07:00–23:00)", "Nee", "Later"]);
+      expect(item.opties[0].gevolg).toBe("een sessie per uur, meer doorstroom");
+    });
+
+    it("laat een lege labelregel nog steeds een leeg gevolg hebben", () => {
+      const item = eerste("- **Het beslispunt.**\n  - Optie A: de ene weg\n  - Optie B:");
+      expect(item.interactie).toBe("uitstel");
+    });
+  });
+
+  describe("bevinding 4: `Stap` is alleen annotatie met een nummer erachter", () => {
+    it("leest `Stap voor stap invoeren` / `Alles tegelijk` als twee knoppen", () => {
+      const item = eerste(
+        "- Bepaal hoe we de nieuwe regel invoeren.\n  - Stap voor stap invoeren: eerst één project, dan de rest\n  - Alles tegelijk: in één keer, met meer risico",
+      );
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["stap-voor-stap-invoeren", "alles-tegelijk", "later"]);
+    });
+
+    it("houdt `Stap 3 (cloud)` / `Stap 4 (laptop)` annotatie", () => {
+      const item = eerste("- Zet de verbindingsreeks.\n  - Stap 3 (cloud): zet de reeks\n  - Stap 4 (laptop): zet de reeks");
+      expect(item.interactie).not.toBe("keuze");
+    });
+  });
+
+  describe("bevinding 6: de status komt uit dezelfde parser als de kaart", () => {
+    it("laat `status: afgerond` in de body van een actieve taak de poort niet misleiden", async () => {
+      const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const path = await import("node:path");
+      const { leesEigenaarsPunten } = await import("@/jarvis/src/opdrachten");
+      const wortel = await mkdtemp(path.join(tmpdir(), "jarvis-fm-"));
+      await mkdir(path.join(wortel, "tasks", "T-1"), { recursive: true });
+      const punt = "# Resultaat\n\n## Wat de eigenaar nog moet doen\n\n- **Het punt.**\n  - Keuze: welke weg?\n";
+      await writeFile(path.join(wortel, "tasks", "T-1", "resultaat.md"), punt, "utf8");
+      // Een citaat in de body mag de status niet zetten.
+      await writeFile(
+        path.join(wortel, "tasks", "T-1", "opdracht.md"),
+        "---\nid: T-1\nstatus: actief\n---\n\nEerder stond hier `status: afgerond`, dat was voorbarig.\n",
+        "utf8",
+      );
+      const actief = await leesEigenaarsPunten(wortel, { taken_map: "tasks" } as never, ["tasks/T-1/resultaat.md"]);
+      expect(actief[0].buitenDeKaart).toBe(false);
+      // En een echte afgeronde taak wordt wél overgeslagen, ook met commentaar erachter.
+      await writeFile(
+        path.join(wortel, "tasks", "T-1", "opdracht.md"),
+        "---\nid: T-1\nstatus: afgerond\n---\n\nKlaar.\n",
+        "utf8",
+      );
+      const klaar = await leesEigenaarsPunten(wortel, { taken_map: "tasks" } as never, ["tasks/T-1/resultaat.md"]);
+      expect(klaar[0].buitenDeKaart).toBe(true);
     });
   });
 });

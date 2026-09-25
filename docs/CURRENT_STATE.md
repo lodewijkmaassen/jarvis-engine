@@ -87,8 +87,42 @@ eigen label: `- Publiek:` / `- Privé:`, `- Laten staan:` / `- Herschrijven:`,
 `- Ja:` / `- Nee:`, `- Dagelijks:` / `- Alleen bij een sessie:`. Alle zestien waren
 een echte vraag aan de eigenaar, en alle zestien kwamen bij hem aan als één knop
 "Gedaan" met de alternatieven volledig van de kaart verdwenen. Na deze wijziging
-leveren dezelfde dossiers negentien keuzekaarten met werkelijke knoppen op, en geen
-enkele kaart met alleen "Later".
+leveren dezelfde dossiers **tweeëntwintig** keuzekaarten met werkelijke knoppen op,
+en geen enkele kaart met alleen "Later".
+
+Die toets is **geankerd**: alleen het hele label telt, niet een label dat er
+toevallig mee begint. Ongeankerd verdwenen twee échte alternatieven samen —
+`- Bevestigd:` viel onder `bevestig`, `- Termijn 30 dagen:` onder `termijn`,
+`- Controle door mij:` onder `controle` — en drie historische punten schrijven hun
+keuze als `- Bevestigd:` / `- Correcties nodig:`. Drie woorden mogen wél een
+toevoeging dragen omdat zij juist ín die toevoeging annoteren: `Stap <nummer>`,
+`Waarom …` en `Gevolg …`. `Stap` vraagt een nummer, want `- Stap voor stap
+invoeren:` naast `- Alles tegelijk:` is een keuze en geen stap.
+
+De labelgrens van de parser is **tachtig** tekens, niet veertig, en het label mag
+zelf een dubbele punt dragen: de scheiding is een dubbele punt met witruimte
+erachter. Op veertig sneed de grens echte alternatieven weg (de langste in de
+eigenaarssecties is zevenenveertig tekens), en op `[^:*]` brak het label op de
+eerste dubbele punt — waardoor de eigenaar knoppen als "Ja, elk uur (07" kreeg met
+de rest in het gevolg. Dat was een echte kaart in dit project.
+
+Wat de kaart niet leest, dwingt de poort af, en dat gaat verder dan merken. Een
+keuze tussen benoemde mogelijkheden met één "of" en zonder merken — "kies A, B of
+C in de Jarvis-app", "beslissen wat er met X of Y gebeurt" — kwam bij de eigenaar
+aan als "Gedaan / Nog niet / Later" met een groene poort, en staat zo in echte
+dossiers. `lijktOpVraag` vraagt een keuzewoord en één voegwoord, en `KEUZEWOORD`
+kent nu ook de beslis-familie. Omdat die toets losser is, leest de poort haar op
+mínder bronnen: alleen de tekst van het punt zelf en de `- Keuze:`-regel, nooit de
+stapregels, en niet bij een punt met een `- Extern:`- of `- Bevestig:`-regel. Anders
+keurt zij een instructie af waarin "kies X of Y" over een knop in iemand anders'
+scherm gaat, en dat staat óók in de dossiers. Gemeten over de historie: acht
+treffers, alle acht een echte vraag aan de eigenaar, en nul op de huidige boom.
+
+`taakIsAfgerond` leest de status met dezelfde front-matterparser als de kaart, niet
+met een eigen regex over de eerste vierduizend tekens. Die regex liep op vier
+vormen anders, waarvan één de gevaarlijke richting op: `status: afgerond` in een
+citaat in de body liet de poort een punt overslaan dat de eigenaar wél op zijn
+kaart heeft.
 
 Wat nooit een alternatief is, staat in `ANNOTATIELABELS`: `Stap N`, `Controle`,
 `Advies`, `Waarom`, `Let op`, `Termijn`, `Gevolg`, `Bron`, `Toelichting`,

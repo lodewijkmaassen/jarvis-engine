@@ -505,9 +505,14 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
     // langer label was geen labelregel meer maar liep door in de punttekst — dan
     // zwijgen álle poortregels en krijgt de eigenaar "Gedaan" onder een open vraag
     // (QA-ronde 9, bevinding 3).
-    const sub = huidig ? /^\s{2,}[-*]\s+\**([^:*]{1,80})\**:\s*(.*)$/.exec(regel) : null;
+    // Het label mag zélf een dubbele punt dragen; de scheiding is een dubbele punt
+    // met witruimte erachter, of het einde van de regel. Op `[^:*]` brak het label
+    // op de eerste dubbele punt, en dan kreeg de eigenaar knoppen als
+    // "Ja, elk uur (07" met de rest in het gevolg — een echte kaart in dit project
+    // (QA-ronde 10, bevinding 8).
+    const sub = huidig ? /^\s{2,}[-*]\s+\**([^*]{1,80}?)\**:(?:\s+(.*))?$/.exec(regel) : null;
     if (sub) {
-      regels.push({ label: sub[1].trim(), tekst: sub[2].trim() });
+      regels.push({ label: sub[1].trim(), tekst: (sub[2] ?? "").trim() });
       continue;
     }
     if (huidig && /^\s{2,}\S/.test(regel)) {
@@ -615,8 +620,8 @@ export function leesOptieRegels(tekst: string | undefined | null): readonly { la
   if (!tekst) return [];
   const uit: { label: string; tekst: string }[] = [];
   for (const regel of tekst.replace(/\r\n/g, "\n").split("\n")) {
-    const m = /^\s*[-*]\s+\**([^:*]{1,80})\**:\s*(.*)$/.exec(regel);
-    if (m) uit.push({ label: m[1].trim(), tekst: m[2].trim() });
+    const m = /^\s*[-*]\s+\**([^*]{1,80}?)\**:(?:\s+(.*))?$/.exec(regel);
+    if (m) uit.push({ label: m[1].trim(), tekst: (m[2] ?? "").trim() });
     else if (uit.length > 0 && /^\s+\S/.test(regel)) uit[uit.length - 1].tekst = `${uit[uit.length - 1].tekst} ${regel.trim()}`.trim();
   }
   return uit;
@@ -775,7 +780,7 @@ const KNOPPEN: Record<EigenaarSoort, readonly Optie[]> = {
  * Voor nieuwe dossierpunten is de norm een eigen optieregel, en `jarvis lint`
  * bewaakt dat.
  */
-export const KEUZEWOORD = /\b(kies|kiezen|keuze|bepaal|bepalen|welke|of\b.*\bof)\b/i;
+export const KEUZEWOORD = /\b(kies|kiezen|keuze|bepaal|bepalen|beslis|beslist|beslissen|beslissing|welke|of\b.*\bof)\b/i;
 
 /**
  * Een merk voor een alternatief: `(a)`, `(B)`, `(1)`. Cijfers horen erbij —
@@ -806,6 +811,31 @@ const MERK = /\(([a-zA-Z0-9])\)\s*/g;
  * Een tekst met twee merken en géén keuzewoord is vaker een verwijzing dan een
  * vraag; die vorm valt daarom buiten deze regel.
  */
+/**
+ * Stelt deze tekst een vraag met benoemde mogelijkheden, zonder merken?
+ *
+ * `lijktOpKeuze` eist twee merken of twee keer "of", en daar glipte de meest
+ * gewone Nederlandse formulering door: "kies A, B of C in de Jarvis-app",
+ * "beslissen wat er gebeurt met X of Y". Die kwamen bij de eigenaar aan als
+ * "Gedaan / Nog niet / Later" met een groene poort, en staan zo in echte dossiers
+ * (QA-ronde 10, bevinding 1).
+ *
+ * Deze toets is losser — een keuzewoord en één voegwoord volstaan — en daarom
+ * leest de poort haar op minder bronnen: alleen de tekst van het punt zelf en de
+ * `- Keuze:`-regel, nooit de stapregels, en niet bij een punt dat een `- Extern:`-
+ * of `- Bevestig:`-regel draagt. Anders keurt zij een instructie af waarin "kies
+ * X of Y" over een knop in iemand anders' scherm gaat ("kies *Continue with
+ * Email* of GitHub"), en dat staat óók in de dossiers. Gemeten over de volledige
+ * historie levert de regel drie treffers, alle drie een echte vraag aan de
+ * eigenaar, en nul valse.
+ */
+export function lijktOpVraag(tekst: string): boolean {
+  if (leesIngebedeKeuze(tekst).length >= 2) return false;
+  const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "");
+  if (!KEUZEWOORD.test(plat)) return false;
+  return (plat.match(/\b(of|ofwel|dan wel)\b/gi) ?? []).length >= 1;
+}
+
 export function lijktOpKeuze(tekst: string): boolean {
   // Al leesbaar als keuze? Dan valt er niets af te dwingen.
   if (leesIngebedeKeuze(tekst).length >= 2) return false;
@@ -890,7 +920,7 @@ export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
  * negentien naar tweeëntwintig.
  */
 export const ANNOTATIELABELS =
-  /^(stap\b.*|waarom\b.*|gevolg\b.*|controle|advies|let op|termijn|bron|toelichting|voorwaarde|keuze|optie|extern|bevestig|wacht|later|gedaan)$/i;
+  /^(stap\s*\d.*|waarom\b.*|gevolg\b.*|controle|advies|let op|termijn|bron|toelichting|voorwaarde|keuze|optie|extern|bevestig|wacht|later|gedaan)$/i;
 
 /**
  * Is dit label een alternatief? `Optie A` en `Keuze B` zijn de uitgeschreven

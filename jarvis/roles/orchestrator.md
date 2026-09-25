@@ -84,10 +84,21 @@ geen lintregel. Reken daar dus niet op. Per punt:
   <gevolg>` / `- Herschrijven: <gevolg>`. Labels moeten van elkaar verschillen ná
   normalisatie — `Optie A` en `Optie-A` zijn hetzelfde label — en elk alternatief
   heeft een gevolg in woorden, geen opmaakteken. Eén alternatief is geen keuze;
-- annoteer met een label dat géén alternatief is, anders wordt het een knop:
-  `- Let op:`, `- Termijn:`, `- Gevolg:`, `- Bron:`, `- Toelichting:`,
-  `- Voorwaarde:` en `- Controle:` zijn daarvoor. Twee stappen die beide moeten
-  gebeuren schrijf je als `- Stap 1:` en `- Stap 2:`, niet als twee eigen labels;
+- annoteer met een label dat géén alternatief is, anders wordt het een knop zodra
+  er twee van staan. Die labels zijn precies `Let op`, `Termijn`, `Bron`,
+  `Toelichting`, `Voorwaarde`, `Controle`, `Advies`, `Keuze`, `Optie`, `Extern`,
+  `Bevestig`, `Wacht`, `Later` en `Gedaan` — als **heel** label. `- Bevestigd:` en
+  `- Termijn 30 dagen:` zijn dus alternatieven en geen annotaties; dat is met opzet,
+  want zo schrijft dit project zijn keuzes. Alleen `Stap <nummer>`, `Waarom …` en
+  `Gevolg …` mogen een toevoeging dragen en blijven annotatie. Twee stappen die
+  beide moeten gebeuren schrijf je als `- Stap 1:` en `- Stap 2:` (een toevoeging
+  mag: `- Stap 3 (cloud):`), niet als twee eigen labels — `- Stap voor stap
+  invoeren:` naast `- Alles tegelijk:` is een kéuze en wordt ook zo gelezen;
+- schrijf een vraag nooit alleen in de lopende tekst, ook niet in de gewone
+  Nederlandse vorm. "Kies A, B of C in de app" en "beslissen of X of Y" geven de
+  eigenaar geen knop om te antwoorden; de poort keurt ze af als
+  `eigenaarslijst_keuze_bijna`. Zet de vraag in `- Keuze:` en de mogelijkheden
+  eronder;
 - een handeling die de eigenaar buiten Jarvis verricht, krijgt `- Extern: <wat>`;
   dan verschijnt "Gedaan" — mits er geen keuze in hetzelfde punt staat. Staan er
   twee alternatieven bij, dan wint de keuze en verdwijnt die "Gedaan"; de poort

@@ -1283,11 +1283,23 @@ export async function leesEigenaarsPunten(
 }
 const KOP_EIGENAAR_LIJST = /^## Wat de eigenaar nog moet doen\s*$/m;
 
-/** Staat de taak in deze map op `afgerond`? Dan toont de kaart haar niet. */
+/**
+ * Staat de taak in deze map op `afgerond`? Dan toont de kaart haar niet.
+ *
+ * Met dezelfde parser als de kaart, niet met een eigen regex. Een eigen regex over
+ * de eerste vierduizend tekens liep op vier vormen anders: `status: afgerond` in
+ * een citaat of codeblok in de body (dan slaat de poort een punt over dat de
+ * eigenaar wél op zijn kaart heeft — de gevaarlijke richting), een commentaar
+ * achter de waarde, aanhalingstekens eromheen, en front matter langer dan de
+ * afkapgrens (QA-ronde 10, bevinding 6).
+ */
 async function taakIsAfgerond(map: string): Promise<boolean> {
   const opdracht = await leesOfNull(path.join(map, "opdracht.md"));
   if (opdracht === null) return false;
-  return /^status:\s*afgerond\s*$/m.test(opdracht.slice(0, 4000));
+  const fm = parseFrontMatter(opdracht.replace(/\r\n/g, "\n"));
+  if (!fm.ok) return false;
+  const status = fm.data["status"];
+  return typeof status === "string" && status.trim().toLowerCase() === "afgerond";
 }
 function normaliseerPadTekst(p: string): string {
   return p.replace(/\\/g, "/");

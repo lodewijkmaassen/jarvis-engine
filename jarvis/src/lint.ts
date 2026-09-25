@@ -11,7 +11,7 @@
 //   waarschuwing  — zichtbaar, blokkeert niet
 import { matchtGlob, normaliseerPad } from "./classify";
 import { technischeMarkers } from "./review";
-import { alternatiefRegels, isExplicietAlternatief, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze } from "./overzicht";
+import { alternatiefRegels, isExplicietAlternatief, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze, lijktOpVraag } from "./overzicht";
 import type { JarvisConfig } from "./config";
 import { isActiefRecord, type KnowledgeRecord } from "./records";
 import { formatteerBevinding, formatteerLaadFout, type KennisLading } from "./store";
@@ -562,7 +562,18 @@ export function lint(invoer: LintInvoer): LintResultaat {
     if (punt.buitenDeKaart) continue;
     const regels = punt.regels ?? [];
     if (leesAlternatieven(regels).length >= 2) continue;
-    if (!keuzeBronnen(punt.tekst, regels, punt.context ?? "").some((t) => lijktOpKeuze(t))) continue;
+    // Twee toetsen met elk hun eigen bronnen. De strenge (`lijktOpKeuze`: twee
+    // merken of twee keer "of") mag over álle tekst van het punt; de losse
+    // (`lijktOpVraag`: een keuzewoord en één voegwoord) alleen over de punttekst en
+    // de `- Keuze:`-regel, en niet bij een punt dat een `- Extern:`- of
+    // `- Bevestig:`-regel draagt. Zie `lijktOpVraag` voor de meting waarop dat
+    // verschil rust: over de strengere bronnen zou de losse toets een instructie
+    // afkeuren waarin "kies X of Y" over een knop in iemand anders' scherm gaat.
+    const breed = keuzeBronnen(punt.tekst, regels, punt.context ?? "").some((t) => lijktOpKeuze(t));
+    const isHandeling = regels.some((r) => /^(extern|bevestig)$/i.test(r.label.trim()));
+    const smalleBronnen = [punt.tekst, regels.find((r) => r.label.trim().toLowerCase() === "keuze")?.tekst ?? ""];
+    const smal = !isHandeling && smalleBronnen.some((t) => t.trim().length > 0 && lijktOpVraag(t));
+    if (!breed && !smal) continue;
     bevindingen.push(
       bevinding(
         "eigenaarslijst_keuze_bijna",
