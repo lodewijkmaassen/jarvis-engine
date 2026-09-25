@@ -5,6 +5,7 @@
 // wat "recent" is - is met een paar strings te toetsen zonder repository.
 import { describe, expect, it } from "vitest";
 import {
+  OVERZICHT_VERSIE,
   RECENT_DAGEN,
   bouwOverzicht,
   korteSleutel,
@@ -336,7 +337,7 @@ describe("het hele overzicht", () => {
       ],
       NU,
     );
-    expect(o.versie).toBe(1);
+    expect(o.versie).toBe(OVERZICHT_VERSIE);
     expect(o.gegenereerd_op).toBe("2026-09-11T12:00:00.000Z");
     expect(o.projecten.map((p) => p.id)).toEqual(["a", "b"]);
     expect(o.voor_jou.map((i) => [i.project, i.urgentie])).toEqual([

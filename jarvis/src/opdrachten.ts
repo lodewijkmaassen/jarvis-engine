@@ -2062,8 +2062,9 @@ async function opdrachtWerk(losse: readonly string[], vlaggen: ReadonlyMap<strin
  * uitvoerder deze ronde draait (standaard de uitvoerder van deze omgeving);
  * een stap die aan een ándere uitvoerder is toegewezen telt dan niet als
  * uitvoerbaar werk. Met --schrijf
- * gaat het als document regie/huidig naar de database en meldt de controller
- * zijn ronde als activiteit.
+ * gaat het als document regie/huidig naar de database, samen met
+ * overzicht/huidig uit dezelfde run, en meldt de controller zijn ronde als
+ * activiteit.
  */
 async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<number> {
   const { wortel, wortels, overzicht } = await bouwOverzichtVanuit(vlaggen);
@@ -2090,10 +2091,23 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   const regie = bepaalRegie(overzicht, activiteit, new Date(), uitvoerders, vlaggen.get("door") ?? dezeUitvoerder());
   const json = `${JSON.stringify(regie, null, 2)}\n`;
 
+  // Het overzicht komt uit DEZELFDE run als de regie hierboven, en gaat mee
+  // naar de database. Dat is de reparatie van de scheefstand die de eigenaar
+  // zag: `regie --schrijf` verving elke ronde `regie/huidig`, terwijl
+  // `overzicht/huidig` alleen door een losse tweede opdracht werd bijgewerkt.
+  // Eindigde een ronde anders dan in de afsluitstap, dan bleef de interface op
+  // een oude wereld staan terwijl de wachtrij wél verse was. Eén run, één
+  // stand: de twee documenten kunnen niet meer uiteenlopen.
+  const overzichtJson = `${JSON.stringify(overzicht, null, 2)}\n`;
+
   const allowlist = await refNamenAlsAllowlist(wortels, await laadAllowlistVanSchijf(wortel));
-  const bevindingen = scanTekst(json, allowlist, "regie.json");
+  // Beide documenten langs de sanitizer, en bij een bevinding in één van de
+  // twee gaat er niets weg. Alleen de schone helft schrijven zou precies de
+  // scheefstand terugbrengen die deze opdracht wegneemt.
+  const bevindingen = [...scanTekst(json, allowlist, "regie.json"), ...scanTekst(overzichtJson, allowlist, "overzicht.json")];
   if (bevindingen.length > 0) {
     console.error(`jarvis regie: ${bevindingen.length} bevinding(en) in de uitvoer; niets geschreven.`);
+    for (const b of bevindingen) console.error(`  ${b.severity.toUpperCase()} regel ${b.regel} [${b.patroon}] ${b.fragment}`);
     return 1;
   }
 
@@ -2105,11 +2119,12 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
   if (vlaggen.has("schrijf")) {
     const v2 = await verbindDb();
     if (v2 === null) {
-      console.error("jarvis regie: geen database bereikbaar; regie/huidig niet geschreven.");
+      console.error("jarvis regie: geen database bereikbaar; regie/huidig en overzicht/huidig niet geschreven.");
       return 1;
     }
     try {
       await v2.sql.unsafe(DOCUMENT_SQL, ["regie/huidig", json]);
+      await v2.sql.unsafe(DOCUMENT_SQL, ["overzicht/huidig", overzichtJson]);
     } finally {
       await v2.sql.end({ timeout: 2 });
     }
@@ -2130,7 +2145,7 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
     console.log(`${t.toestand.padEnd(22)} ${t.id.padEnd(36)} ${t.verantwoordelijke.padEnd(18)} ${t.waarom}`);
   }
   const geblokkeerd = regie.taken.filter((t) => t.toestand === "BLOCKED").length;
-  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig gezet" : ""}.`);
+  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
   return 0;
 }
 

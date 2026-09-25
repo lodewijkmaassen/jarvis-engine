@@ -17,7 +17,7 @@ import { scopeHash } from "./attestatie";
 import type { KnowledgeRecord, RecordType } from "./records";
 import type { OpenTaak } from "./state";
 
-export const OVERZICHT_VERSIE = 1;
+export const OVERZICHT_VERSIE = 2;
 
 /** Hoeveel dagen "recent" is. Twee weken: een vakantie mag geen gat slaan. */
 export const RECENT_DAGEN = 14;
@@ -252,6 +252,13 @@ export type Overzicht = {
   readonly projecten: readonly ProjectOverzicht[];
   /** Alles wat bij de eigenaar ligt, over alle projecten heen, urgentste eerst. */
   readonly voor_jou: readonly AandachtItem[];
+  /**
+   * Elke taak in precies één vak, en de open risico's apart. De interface
+   * toont deze indeling en leidt hem niet zelf af: dat was de fout die
+   * `aan_zet` en de regie uiteen liet lopen — twee beelden van dezelfde vraag,
+   * elk met een eigen kopie van de regel.
+   */
+  readonly indeling: Indeling;
 };
 
 // ---------------------------------------------------------------------------
@@ -1143,13 +1150,123 @@ export function verbindAfhankelijkheden(projecten: readonly ProjectOverzicht[]):
   return projecten.map((p) => ({ ...p, taken: p.taken.map((t) => los(t)) }));
 }
 
+/**
+ * De vakken waarin het werk uiteenvalt. Ze zijn wederzijds uitsluitend en
+ * samen volledig: elke taak valt in precies één vak. Dat is de hele reden dat
+ * ze bestaan — de eigenaar kon actief werk, backlog, geparkeerd werk en
+ * wachtend werk niet uit elkaar houden, omdat alles wat niet van hem was als
+ * "Jarvis aan zet" op één hoop kwam.
+ */
+export type StandVak = "actief" | "backlog" | "bij_jou" | "wacht" | "geparkeerd" | "afgerond";
+
+/** Eén taak, ingedeeld, met de reden in de woorden van de kaart. */
+export type IngedeeldeTaak = {
+  readonly id: string;
+  readonly titel: string;
+  readonly project: string;
+  readonly status: string;
+  readonly vak: StandVak;
+  /** Waarom dit vak. Kort genoeg voor een regel onder de titel. */
+  readonly reden: string;
+  readonly stil: boolean;
+  readonly wacht_soort: TaakItem["wacht_soort"];
+  readonly laatste_beweging: string | null;
+};
+
+/** Eén open risico of blokkade: geen taak, wel iets dat zichtbaar moet blijven. */
+export type IngedeeldRisico = {
+  readonly id: string;
+  readonly project: string;
+  readonly titel: string;
+  readonly soort: AandachtSoort;
+  readonly urgentie: Urgentie;
+};
+
+export type Indeling = {
+  readonly actief: readonly IngedeeldeTaak[];
+  readonly backlog: readonly IngedeeldeTaak[];
+  readonly bij_jou: readonly IngedeeldeTaak[];
+  readonly wacht: readonly IngedeeldeTaak[];
+  readonly geparkeerd: readonly IngedeeldeTaak[];
+  readonly afgerond: readonly IngedeeldeTaak[];
+  readonly risicos: readonly IngedeeldRisico[];
+  /**
+   * Er is geen actief werk. Uitsluitend daarop gebaseerd, niet op "niets te
+   * zien": backlog, wachtend werk en risico's kunnen bestaan en blijven dan
+   * ook staan. Een nulstand is een uitspraak, geen leegte.
+   */
+  readonly nulstand: boolean;
+};
+
+const WACHT_REDEN: Record<NonNullable<TaakItem["wacht_soort"]>, string> = {
+  gebeurtenis: "wacht op een gebeurtenis buiten Jarvis",
+  uitvoerder: "wacht op een andere uitvoerder",
+  taak: "wacht op een andere taak",
+  "pull-request": "wacht op een pull request",
+};
+
+/** In welk vak deze taak valt, en waarom. */
+function vakVan(t: TaakItem): { readonly vak: StandVak; readonly reden: string } {
+  if (t.status === "afgerond") return { vak: "afgerond", reden: "afgerond" };
+  if (t.aan_zet === "eigenaar") return { vak: "bij_jou", reden: t.wacht_op ?? "een handeling van jou" };
+  if (t.aan_zet === "wacht") return { vak: "wacht", reden: t.wacht_soort === null ? "wacht" : WACHT_REDEN[t.wacht_soort] };
+  if (t.aan_zet === "niemand") return { vak: "geparkeerd", reden: `bewust niet actief (status ${t.status})` };
+  // Jarvis is aan zet. Beweging in het venster scheidt werk dat loopt van werk
+  // dat klaarligt: zonder dat onderscheid leest een volle wachtrij als een
+  // druk systeem, ook wanneer er aan geen enkele taak iets gebeurt.
+  return t.laatste_beweging !== null
+    ? { vak: "actief", reden: "Jarvis aan zet; er is aan gewerkt" }
+    : { vak: "backlog", reden: "Jarvis aan zet; nog niemand aan begonnen" };
+}
+
+/**
+ * De indeling, afgeleid uit het overzicht dat er al staat. Puur: geen tweede
+ * bron, geen eigen meting. Een taak die in meer dan één project voorkomt is
+ * hierboven al door `herverdeel` teruggebracht tot één regel.
+ */
+export function deelIn(projecten: readonly ProjectOverzicht[], voor_jou: readonly AandachtItem[]): Indeling {
+  const vakken: Record<StandVak, IngedeeldeTaak[]> = {
+    actief: [],
+    backlog: [],
+    bij_jou: [],
+    wacht: [],
+    geparkeerd: [],
+    afgerond: [],
+  };
+  for (const p of projecten) {
+    for (const t of p.taken) {
+      const { vak, reden } = vakVan(t);
+      vakken[vak].push({
+        id: t.id,
+        titel: t.titel,
+        project: t.project,
+        status: t.status,
+        vak,
+        reden,
+        stil: t.stil,
+        wacht_soort: t.wacht_soort,
+        laatste_beweging: t.laatste_beweging,
+      });
+    }
+  }
+  return {
+    ...vakken,
+    risicos: voor_jou
+      .filter((a) => a.soort === "risico" || a.soort === "blokkade")
+      .map((a) => ({ id: a.id, project: a.project, titel: a.titel, soort: a.soort, urgentie: a.urgentie })),
+    nulstand: vakken.actief.length === 0,
+  };
+}
+
 export function bouwOverzicht(projecten: readonly ProjectInvoer[], nu: Date, centraal: string | null = null): Overzicht {
   const uitgewerkt = verbindAfhankelijkheden(herverdeel(projecten.map((p) => bouwProjectOverzicht(p, nu))));
+  const voor_jou = sorteerAandacht(uitgewerkt.flatMap((p) => p.aandacht));
   return {
     versie: OVERZICHT_VERSIE,
     gegenereerd_op: nu.toISOString(),
     centraal: centraal && uitgewerkt.some((p) => p.id === centraal) ? centraal : null,
     projecten: uitgewerkt,
-    voor_jou: sorteerAandacht(uitgewerkt.flatMap((p) => p.aandacht)),
+    voor_jou,
+    indeling: deelIn(uitgewerkt, voor_jou),
   };
 }
