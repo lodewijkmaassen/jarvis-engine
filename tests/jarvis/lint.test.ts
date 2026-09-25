@@ -782,6 +782,42 @@ describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", 
     expect(uit.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(false);
   });
 
+  it("meldt een handeling naast een keuze (QA-ronde 8, bevinding 7)", async () => {
+    const l = await lading();
+    const regels = [
+      { label: "Extern", tekst: "zet de sleutel in de kluis" },
+      { label: "Optie A", tekst: "de ene weg" },
+      { label: "Optie B", tekst: "de andere weg" },
+    ];
+    const uit = lint({ ...basis(l), eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Het punt.", regels }] });
+    expect(uit.bevindingen.some((x) => x.code === "eigenaarslijst_handeling_en_keuze" && x.severity === "fout")).toBe(true);
+    // Zonder de keuze is er niets te melden, en zonder de handeling ook niet.
+    const zonderKeuze = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Het punt.", regels: [regels[0]] }],
+    });
+    expect(zonderKeuze.bevindingen.some((x) => x.code === "eigenaarslijst_handeling_en_keuze")).toBe(false);
+    const zonderHandeling = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Het punt.", regels: regels.slice(1) }],
+    });
+    expect(zonderHandeling.bevindingen.some((x) => x.code === "eigenaarslijst_handeling_en_keuze")).toBe(false);
+  });
+
+  it("beoordeelt geen punt dat de kaart niet toont (QA-ronde 8, bevinding 8)", async () => {
+    // Een afgevinkt punt is gedaan en een akkoordvraag loopt over de akkoordkaart.
+    // De poort keurde die af met een hersteltekst die voor een akkoord niet klopt.
+    const l = await lading();
+    const punt = {
+      bestand: "tasks/T-1/resultaat.md",
+      tekst: "kies tussen (a) de ene weg, of (b) de andere weg.",
+      regels: [] as readonly { label: string; tekst: string }[],
+    };
+    expect(lint({ ...basis(l), eigenaarsPunten: [punt] }).bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(true);
+    const buiten = lint({ ...basis(l), eigenaarsPunten: [{ ...punt, buitenDeKaart: true }] });
+    expect(buiten.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst"))).toBe(false);
+  });
+
   it("meldt optieregels onder een akkoordcontext (QA-ronde 7, bevinding 6)", async () => {
     const l = await lading();
     const regels = [{ label: "Optie A", tekst: "dit" }, { label: "Optie B", tekst: "dat" }];

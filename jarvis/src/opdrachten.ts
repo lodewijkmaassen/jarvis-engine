@@ -36,6 +36,8 @@ import {
   RECENT_DAGEN,
   bouwOverzicht,
   dossiersZonderBekendeStatus,
+  isAfgevinkt,
+  isAkkoordVraag,
   leesItemsOnder,
   openTakenUitDossiers,
   type Overzicht,
@@ -145,12 +147,75 @@ export function padenUitPorcelain(uitvoer: string): readonly string[] {
   const uit: string[] = [];
   for (const regel of uitvoer.replace(/\r\n/g, "\n").split("\n")) {
     if (regel.length <= 3) continue;
-    const rest = regel.slice(3);
-    const pijl = rest.indexOf(" -> ");
-    const pad = (pijl >= 0 ? rest.slice(pijl + 4) : rest).trim().replace(/^"(.*)"$/, "$1");
-    if (pad.length > 0) uit.push(pad);
+    // Eén pad per veld, en de aanhalingstekens gaan er eerst af: met
+    // `core.quotepath` staat een pad met een niet-ASCII-teken tussen
+    // aanhalingstekens, en een " -> " binnen die aanhalingstekens is dan deel van
+    // de naam en geen herbenoeming. Zocht je de pijl eerst, dan hield je `b.md"`
+    // over en bestond het pad niet (QA-ronde 8, bevinding 9).
+    const velden = splitsPorcelainVelden(regel.slice(3));
+    const pad = velden[velden.length - 1];
+    if (pad !== undefined && pad.length > 0) uit.push(pad);
   }
   return uit;
+}
+
+/**
+ * De velden van één porcelain-regel: bij een herbenoeming twee, anders één. Een
+ * veld tussen aanhalingstekens wordt ontdaan van zijn aanhalingstekens en van de
+ * octale escapes die `core.quotepath` erin zet (`caf\303\251` → `café`).
+ */
+function splitsPorcelainVelden(rest: string): readonly string[] {
+  const velden: string[] = [];
+  let i = 0;
+  while (i < rest.length) {
+    while (rest[i] === " ") i += 1;
+    if (i >= rest.length) break;
+    if (rest[i] === '"') {
+      let j = i + 1;
+      while (j < rest.length && !(rest[j] === '"' && rest[j - 1] !== "\\")) j += 1;
+      velden.push(ontescape(rest.slice(i + 1, j)));
+      i = j + 1;
+    } else {
+      const pijl = rest.indexOf(" -> ", i);
+      if (pijl >= 0) {
+        velden.push(rest.slice(i, pijl).trim());
+        i = pijl + 4;
+      } else {
+        velden.push(rest.slice(i).trim());
+        break;
+      }
+    }
+    // Een " -> " tussen twee velden is de scheiding en hoort bij geen van beide.
+    if (rest.slice(i, i + 4) === " -> ") i += 4;
+  }
+  return velden.filter((v) => v.length > 0);
+}
+
+/** Octale en gewone escapes zoals git ze schrijft, terug naar bytes en dan naar UTF-8. */
+function ontescape(tekst: string): string {
+  if (!/\\/.test(tekst)) return tekst;
+  const bytes: number[] = [];
+  for (let i = 0; i < tekst.length; i += 1) {
+    if (tekst[i] !== "\\") {
+      bytes.push(...Buffer.from(tekst[i], "utf8"));
+      continue;
+    }
+    const octaal = /^[0-7]{3}/.exec(tekst.slice(i + 1));
+    if (octaal) {
+      bytes.push(parseInt(octaal[0], 8));
+      i += 3;
+      continue;
+    }
+    const enkel: Record<string, number> = { n: 10, t: 9, r: 13, '"': 34, "\\": 92 };
+    const code = enkel[tekst[i + 1] ?? ""];
+    if (code !== undefined) {
+      bytes.push(code);
+      i += 1;
+      continue;
+    }
+    bytes.push(92);
+  }
+  return Buffer.from(bytes).toString("utf8");
 }
 
 // Formaat voor één `git log` over de hele branch: recordscheiding (0x1e) per
@@ -1171,6 +1236,8 @@ export async function leesEigenaarsPunten(
     tekst: string;
     regels: readonly { label: string; tekst: string }[];
     akkoordContext: boolean;
+    context: string;
+    buitenDeKaart: boolean;
   }[]
 > {
   const takenMap = normaliseerPadTekst(config.taken_map).replace(/\/+$/, "");
@@ -1179,6 +1246,8 @@ export async function leesEigenaarsPunten(
     tekst: string;
     regels: readonly { label: string; tekst: string }[];
     akkoordContext: boolean;
+    context: string;
+    buitenDeKaart: boolean;
   }[] = [];
   for (const b of bestanden) {
     const pad = normaliseerPadTekst(b);
@@ -1193,8 +1262,17 @@ export async function leesEigenaarsPunten(
       uit.push({
         bestand: pad,
         tekst: item.toelichting,
+        // De vette tussenkop hoort erbij: de kaart plakt haar vóór de toelichting,
+        // dus een keuze die in die kop staat is voor de eigenaar zichtbaar. Zonder
+        // haar zweeg de poort erover (QA-ronde 8, bevinding 3).
+        context: item.context,
         regels: item.regels.map((r) => ({ label: r.label, tekst: r.tekst })),
         akkoordContext: /akkoord[_ -]?pr/i.test(item.context),
+        // Wat de kaart niet toont, beoordeelt de poort niet: een afgevinkt punt is
+        // gedaan en een akkoordvraag loopt over de akkoordkaart. Anders keurde de
+        // poort punten af die de eigenaar nooit ziet, met een hersteltekst die voor
+        // een akkoord niet eens klopt (QA-ronde 8, bevinding 8).
+        buitenDeKaart: isAfgevinkt(item.titel) || isAkkoordVraag(item.titel),
       });
   }
   return uit;

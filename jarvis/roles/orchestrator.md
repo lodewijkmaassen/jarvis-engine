@@ -68,7 +68,8 @@ Onder `## Wat de eigenaar nog moet doen` geldt een vorm, en die staat hier omdat
 jij de schrijver van dit bestand bent. De poort controleert daarvan de keuzevorm
 (`eigenaarslijst_keuze_half`, `eigenaarslijst_keuze_niet_uitgesplitst`,
 `eigenaarslijst_keuze_bijna`, `eigenaarslijst_wacht_en_keuze`,
-`eigenaarslijst_akkoord_en_keuze`), of het punt geen administratieve bevestiging
+`eigenaarslijst_akkoord_en_keuze`, `eigenaarslijst_handeling_en_keuze`), of het
+punt geen administratieve bevestiging
 is die Jarvis zelf hoort te doen (`eigenaarslijst_administratief`, fout), en of
 het in gewone taal staat (`eigenaarslijst_technisch`, waarschuwing). Verder
 niets: of een handeling werkelijk `- Stap N:` en `- Controle:` draagt, controleert
@@ -77,11 +78,20 @@ geen lintregel. Reken daar dus niet op. Per punt:
 - een handeling schrijf je als `- Stap N: <wat>` met een `- Controle: <hoe je
   ziet dat het gelukt is>` (`LRN-0014`);
 - een vraag schrijf je als `- Keuze: <de vraag>` met daaronder minstens twee
-  alternatieven `- Optie A: <gevolg>` en `- Optie B: <gevolg>`. Labels moeten
-  van elkaar verschillen ná normalisatie — `Optie A` en `Optie-A` zijn hetzelfde
-  label — en elk alternatief heeft een gevolg in woorden, geen opmaakteken;
+  alternatieven. `- Optie A: <gevolg>` en `- Optie B: <gevolg>` is de uitgeschreven
+  vorm en die gaat vóór; een sprekend eigen label mag ook en is voor de eigenaar
+  duidelijker: `- Publiek: <gevolg>` / `- Privé: <gevolg>`, `- Laten staan:
+  <gevolg>` / `- Herschrijven: <gevolg>`. Labels moeten van elkaar verschillen ná
+  normalisatie — `Optie A` en `Optie-A` zijn hetzelfde label — en elk alternatief
+  heeft een gevolg in woorden, geen opmaakteken. Eén alternatief is geen keuze;
+- annoteer met een label dat géén alternatief is, anders wordt het een knop:
+  `- Let op:`, `- Termijn:`, `- Gevolg:`, `- Bron:`, `- Toelichting:`,
+  `- Voorwaarde:` en `- Controle:` zijn daarvoor. Twee stappen die beide moeten
+  gebeuren schrijf je als `- Stap 1:` en `- Stap 2:`, niet als twee eigen labels;
 - een handeling die de eigenaar buiten Jarvis verricht, krijgt `- Extern: <wat>`;
-  dan verschijnt "Gedaan". Een punt dat hij alleen hoeft te bevestigen krijgt
+  dan verschijnt "Gedaan" — mits er geen keuze in hetzelfde punt staat. Staan er
+  twee alternatieven bij, dan wint de keuze en verdwijnt die "Gedaan"; de poort
+  meldt dat als `eigenaarslijst_handeling_en_keuze`. Maak er dan twee punten van. Een punt dat hij alleen hoeft te bevestigen krijgt
   `- Bevestig: <wat>`. Dat zijn de enige twee ingangen naar die twee soorten:
   schrijf je alleen `- Stap N:` en `- Controle:`, dan komt het punt op de veilige
   terugval `bevestiging` uit, met dezelfde knoppen als `- Bevestig:`;

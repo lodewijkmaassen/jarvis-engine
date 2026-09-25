@@ -41,6 +41,7 @@ export const LINT_CODES = [
   "eigenaarslijst_keuze_bijna",
   "eigenaarslijst_wacht_en_keuze",
   "eigenaarslijst_akkoord_en_keuze",
+  "eigenaarslijst_handeling_en_keuze",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -101,6 +102,10 @@ export type LintInvoer = {
     readonly regels?: readonly { readonly label: string; readonly tekst: string }[];
     /** Staat dit punt onder een governancecontext die een autorisatie vraagt? */
     readonly akkoordContext?: boolean;
+    /** De vette tussenkop waaronder dit punt staat; de kaart toont haar, dus leest de poort haar ook. */
+    readonly context?: string;
+    /** Is het punt afgevinkt, of vraagt het het akkoord op de taak? Dan toont de kaart het niet en beoordeelt de poort het niet. */
+    readonly buitenDeKaart?: boolean;
   }[];
   /**
    * De commitlog was niet volledig en eenduidig te lezen (een record zonder
@@ -395,30 +400,33 @@ export function toetsRandvoorwaarden(
  * maar dit is de norm en de poort bewaakt hem.
  */
 /**
- * De regels waarin een keuze kan schuilen: de tekst van het punt zelf, de
- * `Keuze`-regel, de stapregels, en de regels die het soort bepalen.
+ * Alle tekst waarin een keuze kan schuilen: de vette tussenkop, de tekst van het
+ * punt zelf, en élke labelregel.
  *
- * Die laatste drie stonden er niet bij, en daardoor zweeg de poort over een
- * keuze in `- Extern:` of `- Bevestig:` terwijl zij dezelfde keuze in
- * `- Stap 1:` wel meldde. Dat verschil was willekeurig: de eigenaar kreeg één
- * knop "Gedaan" en zag zijn alternatieven nergens (QA-ronde 7, bevinding 2).
- * `Let op` en `Controle` blijven eruit: een waarschuwing hoort geen kaart met
- * knoppen te worden, en een controle is werk van Jarvis (CON-0016).
+ * Dit was drie rondes lang een opsomming van labels, en dat is precies waarom er
+ * elke ronde een volgend label overbleef. Ronde 7 vond een keuze in `- Extern:`,
+ * ronde 8 in `- Voorwaarde:` en in de vette tussenkop. De motivering om
+ * `- Let op:` en `- Controle:` uit te sluiten ("een waarschuwing hoort geen kaart
+ * met knoppen te worden") is meetbaar onjuist: de kaart krijgt haar knoppen uit
+ * het soort, niet uit deze lijst, dus uitsluiten verhindert geen knoppen — alleen
+ * dat de poort de tegenspraak meldt.
+ *
+ * De omkering kost niets. Gemeten over de volledige historie van de drie
+ * projecten, 140 unieke eigenaarspunten: acht bevindingen met de oude
+ * labellijst, acht met deze — **nul** nieuwe treffers. Wat de kaart als tekst
+ * toont, leest de poort.
  */
 export function keuzeBronnen(
   tekst: string,
   regels: readonly { readonly label: string; readonly tekst: string }[],
+  context = "",
 ): readonly string[] {
-  return [
-    tekst,
-    ...regels
-      .filter((r) => /^(keuze|extern|bevestig|wacht|stap\s*\d+)$/i.test(r.label.trim()))
-      .map((r) => r.tekst),
-  ];
+  return [context, tekst, ...regels.map((r) => r.tekst)].filter((t) => t.trim().length > 0);
 }
 
 export function keuzeNietUitgesplitst(punt: {
   readonly tekst: string;
+  readonly context?: string;
   readonly regels?: readonly { readonly label: string; readonly tekst: string }[];
 }): boolean {
   const regels = punt.regels ?? [];
@@ -431,7 +439,7 @@ export function keuzeNietUitgesplitst(punt: {
   // "Stap N:" in de toelichting, en daarna keek zij alleen naar de toelichting
   // terwijl de stapregels van een LRN-0014-punt in `regels` zitten en de
   // toelichting alleen de vette kop draagt (QA-ronde 5, N3).
-  return keuzeBronnen(punt.tekst, regels).some((t) => leesIngebedeKeuze(t).length >= 2);
+  return keuzeBronnen(punt.tekst, regels, punt.context).some((t) => leesIngebedeKeuze(t).length >= 2);
 }
 
 /**
@@ -489,6 +497,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // doen (CON-0016). Een documentatie- of statusbevestiging die daar belandt,
   // komt als actie op zijn telefoon; de poort houdt dat tegen.
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     if (!isAdministratieveBevestiging(punt.tekst)) continue;
     bevindingen.push(
       bevinding(
@@ -504,6 +513,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // Een keuze hoort haar alternatieven als eigen optieregels te schrijven; in
   // een stapregel verstopt bereiken ze de knoppen niet.
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     if (!keuzeNietUitgesplitst(punt)) continue;
     bevindingen.push(
       bevinding(
@@ -520,6 +530,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // Een half geschreven keuze levert stil een onbruikbare kaart: de vraag staat
   // er, de alternatieven niet, en het punt valt terug op "Later".
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     if (!keuzeZonderAlternatieven(punt.regels ?? [])) continue;
     bevindingen.push(
       bevinding(
@@ -539,9 +550,10 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // afdwingen — anders krijgt de eigenaar "Gedaan" onder een open vraag zonder
   // dat iets dat meldt (QA-ronde 6, B3).
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     const regels = punt.regels ?? [];
     if (leesAlternatieven(regels).length >= 2) continue;
-    if (!keuzeBronnen(punt.tekst, regels).some((t) => lijktOpKeuze(t))) continue;
+    if (!keuzeBronnen(punt.tekst, regels, punt.context ?? "").some((t) => lijktOpKeuze(t))) continue;
     bevindingen.push(
       bevinding(
         "eigenaarslijst_keuze_bijna",
@@ -558,6 +570,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // Een wachtregel naast een uitgeschreven keuze: het dossier zegt twee dingen
   // tegelijk, en de code hoort dat niet stil voor de eigenaar te beslissen.
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     if (!wachtNaastKeuze(punt.regels ?? [])) continue;
     bevindingen.push(
       bevinding(
@@ -577,6 +590,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // zegt daarmee twee dingen tegelijk, net als bij een wachtregel. Symmetrisch
   // met `eigenaarslijst_wacht_en_keuze` (QA-ronde 7, bevinding 6).
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     const regels = punt.regels ?? [];
     if (!punt.akkoordContext) continue;
     if (regels.some((r) => r.label.trim().toLowerCase() === "keuze")) continue;
@@ -593,10 +607,34 @@ export function lint(invoer: LintInvoer): LintResultaat {
     );
   }
 
+  // Een `- Extern:`- of `- Bevestig:`-regel naast een uitgeschreven keuze: de
+  // keuze wint, en daarmee verliest de eigenaar de "Gedaan" waarmee hij een
+  // handeling die hij wél heeft verricht zou melden. `wacht_en_keuze` en
+  // `akkoord_en_keuze` bestonden al; dit is de derde van dezelfde soort, en hij
+  // ontbrak nog (QA-ronde 8, bevinding 7).
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
+    const regels = punt.regels ?? [];
+    const soort = regels.find((r) => /^(extern|bevestig)$/i.test(r.label.trim()));
+    if (soort === undefined) continue;
+    if (leesAlternatieven(regels).length < 2) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_handeling_en_keuze",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft een "${soort.label.trim()}"-regel en ` +
+          `tegelijk twee alternatieven. De keuze wint, en daarmee verdwijnt de knop waarmee je de handeling zou ` +
+          `melden; maak er twee punten van.`,
+      ),
+    );
+  }
+
   // Wat bij de eigenaar ligt leest hij op zijn telefoon: kort en zonder
   // technische namen (DEC-0046). Een technisch punt blijft staan — het kan
   // een echte handeling zijn — maar de poort zegt dat het herschreven hoort.
   for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (punt.buitenDeKaart) continue;
     const markers = technischeMarkers(punt.tekst);
     if (markers.length === 0) continue;
     bevindingen.push(

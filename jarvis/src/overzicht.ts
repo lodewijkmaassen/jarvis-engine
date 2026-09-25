@@ -850,15 +850,36 @@ export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
  * fout: een keuze die met "kies" begon werd een handeling met één knop.
  */
 /**
- * Is dit label een alternatief (`Optie A`, `Keuze B`) of de aankondiging van de
- * vraag (`Optie`, `Keuze`)? Twee labelwoorden, want een dossier schrijft beide:
- * QA-ronde 5 (N1) mat dat `- Keuze A:` / `- Keuze B:` als gewone labelregels
- * verdwenen en de eigenaar "Gedaan" kreeg onder een vraag met twee genoemde
- * alternatieven.
+ * Labels die nooit een alternatief zijn: zij annoteren het punt, dragen het soort
+ * of zijn een vaste knop van de interface.
+ *
+ * Dit is de grens die acht QA-rondes heeft gekost. Tot ronde 8 was de regel
+ * omgekeerd — alleen `Optie …` en `Keuze …` golden als alternatief — en dat bleek
+ * het formaat van de poort, niet dat van de dossiers. Gemeten over de volledige
+ * historie van de drie projecten: 140 unieke eigenaarspunten, waarvan er 16 hun
+ * alternatieven als eigen label schreven (`- Publiek:` / `- Privé:`,
+ * `- Laten staan:` / `- Herschrijven:`, `- Ja:` / `- Nee:`). Alle zestien waren een
+ * echte vraag aan de eigenaar, en alle zestien kwamen bij hem aan als één knop
+ * "Gedaan" met de alternatieven volledig van de kaart verdwenen.
+ *
+ * Met deze uitsluitingslijst levert dezelfde meting **nul** valse treffers: geen
+ * enkel punt met een annotatie (`- Let op:`, `- Termijn:`, `- Gevolg voor nu:`) of
+ * met stappen die allebei moeten gebeuren (`- Stap 3 (cloud):` /
+ * `- Stap 4 (laptop):`) haalt de drempel. `later` en `gedaan` staan erin omdat zij
+ * in de interface een vaste betekenis hebben, waar het label ook staat.
+ */
+export const ANNOTATIELABELS = /^(stap\b|controle|advies|waarom|let op|termijn|gevolg|bron|toelichting|voorwaarde|keuze$|optie$|extern|bevestig|wacht|later|gedaan)/i;
+
+/**
+ * Is dit label een alternatief? `Optie A` en `Keuze B` zijn de uitgeschreven
+ * vorm; elk ander label dat geen annotatie is, telt ook — zie ANNOTATIELABELS
+ * voor de meting waarop die grens rust.
  */
 export function isAlternatiefLabel(label: string): boolean {
-  if (!/^(optie|keuze)\b/i.test(label.trim())) return false;
-  return sleutelVan(label).replace(/^(optie|keuze)-?/, "").length > 0;
+  const l = label.trim();
+  if (l.length === 0) return false;
+  if (ANNOTATIELABELS.test(l)) return false;
+  return sleutelVan(l).length > 0;
 }
 
 /**
@@ -883,10 +904,30 @@ export function heeftGevolg(tekst: string): boolean {
  * punt wordt dan een halve keuze — alleen "Later" — en de poort keurt het af.
  * Dezelfde strengheid als `leesIngebedeKeuze` hierboven.
  */
+/** De uitgeschreven vorm: `- Optie A:`, `- Keuze B:`. Die gaat vóór op elk ander label. */
+export function isExplicietAlternatief(label: string): boolean {
+  const l = label.trim();
+  return /^(optie|keuze)\b/i.test(l) && sleutelVan(l).replace(/^(optie|keuze)-?/, "").length > 0;
+}
+
+/** De regels die zich als alternatief aandienen, bruikbaar of niet. */
+export function alternatiefRegels(
+  regels: readonly { label: string; tekst: string }[],
+): readonly { label: string; tekst: string }[] {
+  // Staat er ergens een uitgeschreven `- Optie A:`, dan zijn díe de alternatieven
+  // en niets anders. Anders zou een `- Eigenaar: jij` ernaast een derde knop
+  // opleveren; de uitgeschreven vorm is de norm en hoort te winnen.
+  const expliciet = regels.filter((r) => isExplicietAlternatief(r.label));
+  return expliciet.length > 0 ? expliciet : regels.filter((r) => isAlternatiefLabel(r.label));
+}
+
 export function leesAlternatieven(regels: readonly { label: string; tekst: string }[]): readonly Optie[] {
+  const kandidaten = alternatiefRegels(regels);
+  // Eén kandidaat is geen keuze; dat is een losse labelregel en die mag de vaste
+  // knoppen van het soort niet verdringen (QA-ronde 3).
+  if (kandidaten.length < 2) return [];
   const uit: Optie[] = [];
-  for (const r of regels) {
-    if (!isAlternatiefLabel(r.label)) continue;
+  for (const r of kandidaten) {
     if (!heeftGevolg(r.tekst)) return [];
     const keuze = sleutelVan(r.label);
     if (uit.some((o) => o.keuze === keuze)) return [];
@@ -1133,11 +1174,16 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         uitOptieregels.length >= 2 ? [] : (vangnetBronnen.map((t) => leesIngebedeKeuze(t)).find((o) => o.length >= 2) ?? []);
       const alternatieveOpties = uitOptieregels.length >= 2 ? uitOptieregels : ingebed;
       const alternatieven = alternatieveOpties.length;
-      const alternatiefRegels = item.regels.filter((r) => isAlternatiefLabel(r.label)).length;
+      const aandienend = alternatiefRegels(item.regels).length;
+      const explicieteRegels = item.regels.filter((r) => isExplicietAlternatief(r.label)).length;
       const interactie = bepaalEigenaarSoort({
         akkoordContext,
         alternatieven,
-        alternatiefRegels,
+        // Een halve keuze vraagt een aankondiging: een `- Keuze:`-regel, een
+        // uitgeschreven `- Optie A:`, of ten minste twéé regels die zich als
+        // alternatief aandienen. Eén los label (`- Eigenaar: jij`) is dat niet en
+        // hoort het punt niet op "alleen Later" te zetten.
+        alternatiefRegels: explicieteRegels >= 1 ? Math.max(aandienend, 1) : aandienend >= 2 ? aandienend : 0,
         labels: item.regels.map((r) => r.label),
       });
       // De titel is de hele vraag. Staat er een `Keuze`-regel, dan is dát de
@@ -1171,18 +1217,36 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // zag dan een vraag zonder antwoord én zonder de tekst die het dossier
       // voor hem had opgeschreven.
       const staart = vraag !== null && vraag !== titel ? [vraag] : [];
-      const verloren = wordenKnoppen ? [] : alternatieveOpties.map((o) => `${o.label}: ${o.gevolg}`);
+      // De alternatieven die geen knop werden, staan in `restRegels` al als
+      // labelregel; alleen een ingebedde keuze (die geen eigen regel heeft) hoort
+      // hier apart bij.
+      const verloren = wordenKnoppen || uitOptieregels.length >= 2 ? [] : alternatieveOpties.map((o) => `${o.label}: ${o.gevolg}`);
       // `Extern`, `Bevestig` en `Wacht` bepalen het soort en worden daarom door
       // `bouwOpties` overgeslagen — maar hun tekst zegt wél wat de eigenaar moet
       // doen, of waarop gewacht wordt. Die verdween volledig: een punt met
       // `- Extern: log in op het platform en zet de sleutel onder deze naam`
       // kwam aan als een kop met één knop "Gedaan" en zonder de instructie
       // (QA-ronde 7, bevinding 3).
-      const soortRegels = item.regels
-        .filter((r) => ["extern", "bevestig", "wacht"].includes(r.label.trim().toLowerCase()) && heeftGevolg(r.tekst))
+      // Elke labelregel waarvan de tekst nergens anders op de kaart terechtkomt.
+      // `Stap N`, `Advies`, `Waarom` en `Controle` hebben hun eigen veld; de rest
+      // verdween volledig, want een label dat het soort bepaalt of dat geen
+      // alternatief is, wordt als knop overgeslagen. Een punt met
+      // `- Extern: log in op het platform en zet de sleutel onder deze naam` kwam
+      // daardoor aan als een kop met één knop "Gedaan" en zonder de instructie, en
+      // `- Termijn: vóór 1 oktober, anders vervalt de licentie` kwam nergens aan
+      // (QA-ronde 7 bevinding 3, QA-ronde 8 bevinding 5).
+      const eigenVeld = /^(stap\b|advies$|waarom$|controle$)/i;
+      const alKnop = new Set(wordenKnoppen ? alternatieveOpties.map((o) => o.keuze) : []);
+      const restRegels = item.regels
+        .filter((r) => !eigenVeld.test(r.label.trim()) && heeftGevolg(r.tekst) && !alKnop.has(sleutelVan(r.label)))
+        .filter((r) => r.label.trim().toLowerCase() !== "keuze" || vraag === null)
         .map((r) => `${r.label.trim()}: ${r.tekst.trim()}`);
-      const extraTekst = [...staart, ...soortRegels, ...verloren];
-      const basisToelichting = item.context ? `${item.context}. ${item.toelichting}` : item.toelichting;
+      const extraTekst = [...staart, ...restRegels, ...verloren];
+      // De kop staat al vooraan in `toelichting` wanneer het punt met haar is
+      // geopend; er nog eens vóór plakken zette haar twee keer op de kaart
+      // (QA-ronde 8, bevinding 12).
+      const basisToelichting =
+        item.context && !item.toelichting.startsWith(item.context) ? `${item.context}. ${item.toelichting}` : item.toelichting;
       items.push({
         id: `${p}:${taak.id}:${korteSleutel(item.titel)}`,
         project: taak.opdracht["project"] ?? p,

@@ -13,7 +13,7 @@
  * De nummers verwijzen naar de acceptatiecriteria van T-20260917-eigenaarinteracties.
  */
 import { describe, expect, it } from "vitest";
-import { bepaalEigenaarSoort, leesAandacht, leesIngebedeKeuze, lijktOpKeuze, type ProjectInvoer } from "@/jarvis/src/overzicht";
+import { bepaalEigenaarSoort, leesAandacht, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze, type ProjectInvoer } from "@/jarvis/src/overzicht";
 import { keuzeNietUitgesplitst, keuzeZonderAlternatieven, wachtNaastKeuze } from "@/jarvis/src/lint";
 
 function dossier(punt: string): ProjectInvoer {
@@ -696,11 +696,29 @@ describe("QA-ronde 7 — de laatste twee paden, en een oude fout in de poort", (
       });
     }
 
-    it("laat `Let op` en `Controle` er buiten: een waarschuwing is geen kaart met knoppen", () => {
-      for (const label of ["Let op", "Controle"]) {
+    it("leest ook `Let op` en `Controle` (QA-ronde 8, bevinding 2)", () => {
+      // De oude motivering — "een waarschuwing hoort geen kaart met knoppen te
+      // worden" — is meetbaar onjuist: de kaart krijgt haar knoppen uit het
+      // soort, niet uit deze lijst. Uitsluiten verhinderde geen knoppen, alleen
+      // dat de poort de tegenspraak meldde. Over de hele historie van de drie
+      // projecten kost de verbreding nul nieuwe bevindingen.
+      for (const label of ["Let op", "Controle", "Voorwaarde", "Toelichting"]) {
         const regels = r([label, "kies tussen (a) de ene weg, of (b) de andere weg."]);
-        expect(keuzeNietUitgesplitst({ tekst: "Er ligt iets bij jou.", regels })).toBe(false);
+        expect(keuzeNietUitgesplitst({ tekst: "Er ligt iets bij jou.", regels })).toBe(true);
       }
+    });
+
+    it("leest de keuze ook in de vette tussenkop (QA-ronde 8, bevinding 3)", () => {
+      // De kaart plakt de kop vóór de toelichting, dus de eigenaar ziet de vraag;
+      // de poort zag haar niet, want `leesEigenaarsPunten` gaf haar niet door.
+      expect(
+        keuzeNietUitgesplitst({
+          tekst: "Leg de termijn vast in het contract.",
+          context: "Kies tussen (a) nu betalen, of (b) na levering",
+          regels: [],
+        }),
+      ).toBe(true);
+      expect(keuzeNietUitgesplitst({ tekst: "Leg de termijn vast in het contract.", context: "Betaaltermijn", regels: [] })).toBe(false);
     });
   });
 
@@ -743,6 +761,108 @@ describe("QA-ronde 7 — de laatste twee paden, en een oude fout in de poort", (
       const { padenUitPorcelain } = await import("@/jarvis/src/opdrachten");
       expect(padenUitPorcelain("")).toEqual([]);
       expect(padenUitPorcelain("\n\n")).toEqual([]);
+    });
+  });
+});
+
+describe("QA-ronde 8 — het formaat van de dossiers, niet dat van de poort", () => {
+  const r = (...paren: readonly (readonly [string, string])[]) => paren.map(([label, tekst]) => ({ label, tekst }));
+
+  describe("bevinding 1: alternatieven onder een eigen label zijn alternatieven", () => {
+    it("leest `- Laten staan:` / `- Herschrijven:` als twee knoppen", () => {
+      // Deze vorm staat letterlijk in de dossiers van dit project. Gemeten over de
+      // hele historie: 16 van de 140 eigenaarspunten schreven hun alternatieven zo,
+      // en alle zestien kwamen bij de eigenaar aan als één knop "Gedaan".
+      const item = eerste(
+        "- **Bepaal wat er met de vier bootstrapcommits gebeurt.**\n" +
+          "  - Laten staan: de historie blijft zoals zij is, met LRN-0012 als verklaring\n" +
+          "  - Herschrijven: Jarvis legt een plan voor; dat vraagt een force-push",
+      );
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["laten-staan", "herschrijven", "later"]);
+      expect(item.opties[0].gevolg).toContain("LRN-0012");
+    });
+
+    it("leest `- Publiek:` / `- Privé:` als twee knoppen, met accent", () => {
+      const item = eerste("- **Beslissen of de engine publiek of privé wordt.**\n  - Publiek: geen tokens nodig\n  - Privé: een leestoken per consumer");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["publiek", "prive", "later"]);
+    });
+
+    it("laat de uitgeschreven vorm winnen boven een los label ernaast", () => {
+      const item = eerste(
+        "- **Het beslispunt.**\n  - Optie A: dit — gevolg\n  - Optie B: dat — gevolg\n  - Eigenaar: jij",
+      );
+      expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+    });
+
+    for (const [wat, regels] of [
+      ["annotaties", "  - Let op: morgen vervalt de licentie\n  - Termijn: vóór 1 oktober"],
+      ["stappen die beide moeten gebeuren", "  - Stap 3 (cloud): zet de reeks\n  - Stap 4 (laptop): zet de reeks"],
+      ["één los label", "  - Eigenaar: jij"],
+    ] as const) {
+      it(`maakt van ${wat} geen keuze`, () => {
+        const item = eerste(`- **Zet de verbindingsreeks.**\n${regels}`);
+        expect(item.interactie).not.toBe("keuze");
+        expect(item.opties.map((o) => o.keuze)).toContain("gedaan");
+      });
+    }
+  });
+
+  describe("bevinding 5: elke labelregel staat op de kaart", () => {
+    it("zet de tekst van een annotatie in de toelichting", () => {
+      const item = eerste(
+        "- **Zet de sleutel in de kluis.**\n  - Extern: log in op het platform\n  - Termijn: vóór 1 oktober, anders vervalt de licentie",
+      );
+      expect(item.toelichting).toContain("log in op het platform");
+      expect(item.toelichting).toContain("vóór 1 oktober");
+    });
+
+    it("zet een alternatief dat al knop is niet nóg eens in de tekst", () => {
+      const item = eerste("- **Het beslispunt.**\n  - Optie A: de ene weg\n  - Optie B: de andere weg");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+      expect(item.toelichting).not.toContain("Optie A: de ene weg");
+    });
+  });
+
+  describe("bevinding 12: de vette kop staat één keer op de kaart", () => {
+    it("plakt de kop er niet nog eens voor als het punt met haar is geopend", () => {
+      const item = eerste("- **Zet de sleutel in de kluis.**\n  - Stap 1: log in\n  - Controle: de naam staat in de lijst");
+      const aantal = item.toelichting.split("Zet de sleutel in de kluis.").length - 1;
+      expect(aantal).toBe(1);
+    });
+  });
+
+  describe("bevinding 9: de porcelain-uitvoer in al zijn vormen", () => {
+    it("leest een pad met aanhalingstekens, octale escapes en een pijl in de naam", async () => {
+      const { padenUitPorcelain } = await import("@/jarvis/src/opdrachten");
+      expect(padenUitPorcelain(' M "tasks/caf\\303\\251.md"\n')).toEqual(["tasks/café.md"]);
+      expect(padenUitPorcelain('?? "tasks/a -> b.md"\n')).toEqual(["tasks/a -> b.md"]);
+      expect(padenUitPorcelain('R  "tasks/a -> b.md" -> "tasks/c.md"\n')).toEqual(["tasks/c.md"]);
+      expect(padenUitPorcelain(" M map met spaties/bestand.md\n")).toEqual(["map met spaties/bestand.md"]);
+      expect(padenUitPorcelain("C  van.md -> naar.md\nUU conflict.md\n!! genegeerd.md\n")).toEqual([
+        "naar.md",
+        "conflict.md",
+        "genegeerd.md",
+      ]);
+    });
+  });
+
+  describe("bevinding 7: een handeling naast een keuze wordt gemeld", () => {
+    it("verliest zijn Gedaan aan de keuze, en de poort zegt dat", () => {
+      const regels = r(["Extern", "zet de sleutel"], ["Optie A", "de ene weg"], ["Optie B", "de andere weg"]);
+      const item = eerste(
+        "- **Het punt.**\n  - Extern: zet de sleutel\n  - Optie A: de ene weg\n  - Optie B: de andere weg",
+      );
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).not.toContain("gedaan");
+      expect(leesAlternatieven(regels).length).toBe(2);
+    });
+  });
+
+  describe("de vroege terugval van lijktOpKeuze (QA-ronde 8, bevinding 10)", () => {
+    it("zwijgt over een tekst die het vangnet wél kan lezen", () => {
+      // Anders stond er een dubbele bevinding op één punt.
+      expect(lijktOpKeuze("kies tussen (a) de ene weg, of (b) de andere weg.")).toBe(false);
     });
   });
 });
