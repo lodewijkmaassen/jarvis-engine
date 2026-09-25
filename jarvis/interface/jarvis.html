@@ -325,7 +325,10 @@ details.stand .md{padding:0 12px 10px}
   <div class="inhoud" id="paneel-inhoud"></div>
 </div>
 
-<script src="config.js" onerror="void 0"></script>
+<!-- Ontbreekt config.js, dan mag dat niet stil blijven: de pagina viel
+     terug op "geen gegevens — open dit op claude.ai", wat naar de
+     verkeerde oorzaak wijst als je juist wél de eigen app draait. -->
+<script src="config.js" onerror="window.JARVIS_CONFIG_ONTBREEKT = true"></script>
 <script>
 (() => {
 "use strict";
@@ -1250,6 +1253,19 @@ function bronProef(gegevens) {
     antwoord: weiger, bericht: weiger, intrekken: weiger, autoriseer: weiger, async wek() {},
   };
 }
+/**
+ * Waarom er geen bron is, in de woorden van de oorzaak.
+ *
+ * `config.js` ontbrak één keer in een uitrol naar Vercel. De pagina meldde toen
+ * "open dit op claude.ai of als eigen app" — terwijl dit juist de eigen app
+ * was, alleen zonder haar configuratie. Die tekst wees naar de verkeerde
+ * oorzaak en kostte een ronde.
+ */
+function geenBronTekst() {
+  if (window.JARVIS_CONFIG_ONTBREEKT) return "config.js ontbreekt in deze uitrol — de pagina weet niet welke database ze moet lezen";
+  return "geen gegevens — open dit op claude.ai of als eigen app";
+}
+
 async function maakBron() {
   if (window.JARVIS_PROEF) return bronProef(window.JARVIS_PROEF);
   const cfg = window.JARVIS_SUPABASE;
@@ -1275,7 +1291,7 @@ async function start() {
   const bron = await maakBron();
   staat.bron = bron; staat.db = bron;
   if (!staat.gekozen) staat.gekozen = "root";
-  if (!bron) { $status.innerHTML = `<span class="dot uit"></span>geen gegevens — open dit op claude.ai of als eigen app`; return; }
+  if (!bron) { $status.innerHTML = `<span class="dot uit"></span>${geenBronTekst()}`; return; }
   bron.overzicht((data) => {
     if (!data) { $status.innerHTML = `<span class="dot uit"></span>nog geen overzicht`; return; }
     // Deze lijst moet elk veld van `Overzicht` kennen. Ze is er om ontbrekende

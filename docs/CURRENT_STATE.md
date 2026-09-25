@@ -32,6 +32,23 @@ _Gegenereerd op 2026-09-25._
 
 ## Waar staan we
 
+Een uitrol zonder `config.js` kan niet meer stil slagen. De app kreeg haar
+bron uit een `config.js` die buiten de repository in de doelmap hoorde te
+staan; ontbrak hij, dan meldde `bouw.mjs` dat met een waarschuwing en eindigde
+met 0, en rolde de uitrol door. De pagina slikte de laadfout ook door
+(`onerror="void 0"`) en viel terug op "geen gegevens — open dit op claude.ai of
+als eigen app" — een tekst die naar de verkeerde oorzaak wijst wanneer je juist
+wél de eigen app draait. Zo stond er na een uitrol een lege interface zonder
+dat iets de echte reden noemde.
+
+Nu faalt de bouw met exitcode 1 en schrijft hij niets, want een halve doelmap
+is erger dan een lege: die zou alsnog uitgerold worden. Met `--url` en
+`--sleutel` schrijft hij de `config.js` zelf, zodat de uitrol één opdracht is
+en niemand het bestand met de hand hoeft te zetten; een bestaande `config.js`
+blijft staan. De twee waarden zijn publieke identifiers — ze staan in elke
+browser die de interface opent — en komen van de aanroeper, niet uit een
+bestand in de engine.
+
 Het overzicht deelt het werk in vakken in, en de regie publiceert het mee. Dat
 zijn de twee helften van één klacht: de administratieve nulstand was bereikt,
 maar in de interface niet te zien. `overzicht/huidig` liep achter omdat
