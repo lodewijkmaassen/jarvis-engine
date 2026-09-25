@@ -1258,6 +1258,10 @@ export async function leesEigenaarsPunten(
     } catch {
       continue; // verwijderd in deze wijziging
     }
+    // Een afgeronde taak levert geen kaarten, dus beoordeelt de poort haar niet:
+    // anders keurde zij een commit af om een kaart die niet bestaat (QA-ronde 9,
+    // bevinding 4). De status staat in `opdracht.md` naast dit bestand.
+    const afgerond = await taakIsAfgerond(path.join(wortel, path.dirname(pad)));
     for (const item of leesItemsOnder(inhoud, KOP_EIGENAAR_LIJST))
       uit.push({
         bestand: pad,
@@ -1272,12 +1276,19 @@ export async function leesEigenaarsPunten(
         // gedaan en een akkoordvraag loopt over de akkoordkaart. Anders keurde de
         // poort punten af die de eigenaar nooit ziet, met een hersteltekst die voor
         // een akkoord niet eens klopt (QA-ronde 8, bevinding 8).
-        buitenDeKaart: isAfgevinkt(item.titel) || isAkkoordVraag(item.titel),
+        buitenDeKaart: afgerond || isAfgevinkt(item.titel) || isAkkoordVraag(item.titel),
       });
   }
   return uit;
 }
 const KOP_EIGENAAR_LIJST = /^## Wat de eigenaar nog moet doen\s*$/m;
+
+/** Staat de taak in deze map op `afgerond`? Dan toont de kaart haar niet. */
+async function taakIsAfgerond(map: string): Promise<boolean> {
+  const opdracht = await leesOfNull(path.join(map, "opdracht.md"));
+  if (opdracht === null) return false;
+  return /^status:\s*afgerond\s*$/m.test(opdracht.slice(0, 4000));
+}
 function normaliseerPadTekst(p: string): string {
   return p.replace(/\\/g, "/");
 }

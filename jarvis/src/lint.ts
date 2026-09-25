@@ -11,7 +11,7 @@
 //   waarschuwing  — zichtbaar, blokkeert niet
 import { matchtGlob, normaliseerPad } from "./classify";
 import { technischeMarkers } from "./review";
-import { isAlternatiefLabel, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze } from "./overzicht";
+import { alternatiefRegels, isExplicietAlternatief, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze } from "./overzicht";
 import type { JarvisConfig } from "./config";
 import { isActiefRecord, type KnowledgeRecord } from "./records";
 import { formatteerBevinding, formatteerLaadFout, type KennisLading } from "./store";
@@ -456,7 +456,16 @@ export function keuzeZonderAlternatieven(regels: readonly { label: string; tekst
   // gevolg — viel stil terug op `bevestiging` en kreeg "Gedaan" onder een
   // beslissing die nooit is genomen (QA-ronde 6, B2). Wie alternatieven
   // aandraagt, draagt er twee bruikbare aan of de poort zegt het.
-  if (!heeftKeuze && !regels.some((r) => isAlternatiefLabel(r.label))) return false;
+  //
+  // Maar "aandraagt" is precies wat de kaart eronder verstaat, niet minder. Deze
+  // regel vuurde al bij één niet-annotatielabel terwijl de kaart er twee eist, en
+  // keurde daarmee vijf echte historische dossierpunten af die niets met een keuze
+  // te maken hadden — een punt met alleen `- Rotatie/intrekking: …` of alleen
+  // `- Volgorde: …` naast zijn stappen. De boodschap sprak daarbij over een
+  // `Keuze`-regel die er niet was. Dat is dezelfde asymmetrie tussen kaart en poort
+  // die deze taak wegneemt, gespiegeld (QA-ronde 9, bevinding 1).
+  const expliciet = regels.some((r) => isExplicietAlternatief(r.label));
+  if (!heeftKeuze && !expliciet && alternatiefRegels(regels).length < 2) return false;
   // Letterlijk de functie van de engine, niet een tweede telling ernaast: zolang
   // de lint op `label.trim().toLowerCase()` ontdubbelde en de engine op
   // `sleutelVan`, ging `- Optie A:` naast `- Optie-A:` groen door de poort
@@ -537,9 +546,9 @@ export function lint(invoer: LintInvoer): LintResultaat {
         "eigenaarslijst_keuze_half",
         "fout",
         punt.bestand,
-        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft een "Keuze"-regel maar minder dan twee ` +
-          `bruikbare "Optie"-regels; elk alternatief heeft een eigen label én een gevolg nodig, anders kan de eigenaar ` +
-          `de vraag niet beantwoorden.`,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" kondigt alternatieven aan maar draagt er ` +
+          `minder dan twee bruikbare: elk alternatief heeft een eigen label én een gevolg nodig, en twee labels die na ` +
+          `normalisatie hetzelfde zijn tellen als één. Zonder die twee kan de eigenaar de vraag niet beantwoorden.`,
       ),
     );
   }

@@ -499,7 +499,13 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
     // Een ingesprongen "- Label: tekst" onder het punt is een optie, advies of
     // toelichting; een ingesprongen regel zonder streepje loopt door in wat
     // ervoor stond (het punt zelf, of de laatste optie).
-    const sub = huidig ? /^\s{2,}[-*]\s+\**([^:*]{1,40})\**:\s*(.*)$/.exec(regel) : null;
+    // De labelgrens is tachtig tekens, niet veertig. Het langste label in de
+    // historie van de drie projecten is negenendertig tekens; op veertig stond de
+    // grens dus één teken boven het werkelijke maximum, en een alternatief met een
+    // langer label was geen labelregel meer maar liep door in de punttekst — dan
+    // zwijgen álle poortregels en krijgt de eigenaar "Gedaan" onder een open vraag
+    // (QA-ronde 9, bevinding 3).
+    const sub = huidig ? /^\s{2,}[-*]\s+\**([^:*]{1,80})\**:\s*(.*)$/.exec(regel) : null;
     if (sub) {
       regels.push({ label: sub[1].trim(), tekst: sub[2].trim() });
       continue;
@@ -609,7 +615,7 @@ export function leesOptieRegels(tekst: string | undefined | null): readonly { la
   if (!tekst) return [];
   const uit: { label: string; tekst: string }[] = [];
   for (const regel of tekst.replace(/\r\n/g, "\n").split("\n")) {
-    const m = /^\s*[-*]\s+\**([^:*]{1,40})\**:\s*(.*)$/.exec(regel);
+    const m = /^\s*[-*]\s+\**([^:*]{1,80})\**:\s*(.*)$/.exec(regel);
     if (m) uit.push({ label: m[1].trim(), tekst: m[2].trim() });
     else if (uit.length > 0 && /^\s+\S/.test(regel)) uit[uit.length - 1].tekst = `${uit[uit.length - 1].tekst} ${regel.trim()}`.trim();
   }
@@ -867,8 +873,24 @@ export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
  * met stappen die allebei moeten gebeuren (`- Stap 3 (cloud):` /
  * `- Stap 4 (laptop):`) haalt de drempel. `later` en `gedaan` staan erin omdat zij
  * in de interface een vaste betekenis hebben, waar het label ook staat.
+ *
+ * De toets is **geankerd**, op drie uitzonderingen na. Ongeankerd slikte zij elk
+ * langer label dat met een annotatiewoord begint, en dan verdwijnen twee échte
+ * alternatieven samen: `- Bevestigd:` viel onder `bevestig`, `- Termijn 30 dagen:`
+ * onder `termijn`, `- Controle door mij:` onder `controle`, `- Advies volgen:`
+ * onder `advies`. Drie historische punten schrijven hun keuze als `- Bevestigd:` /
+ * `- Correcties nodig:` en kwamen daardoor met "Gedaan" bij de eigenaar aan, met
+ * een groene poort (QA-ronde 9, bevinding 2).
+ *
+ * De drie uitzonderingen mogen wél een toevoeging dragen, want zij annoteren juist
+ * ín die toevoeging: `Stap 3 (cloud)` en `Stap 4 (laptop)` zijn stappen die allebei
+ * moeten gebeuren, `Waarom deze volgorde` legt uit, en `Gevolg voor nu` beschrijft.
+ * Gemeten op dezelfde 140 punten verandert precies één label van betekenis —
+ * `Bevestigd` — en dat is het label dat het moest zijn; de keuzekaarten gaan van
+ * negentien naar tweeëntwintig.
  */
-export const ANNOTATIELABELS = /^(stap\b|controle|advies|waarom|let op|termijn|gevolg|bron|toelichting|voorwaarde|keuze$|optie$|extern|bevestig|wacht|later|gedaan)/i;
+export const ANNOTATIELABELS =
+  /^(stap\b.*|waarom\b.*|gevolg\b.*|controle|advies|let op|termijn|bron|toelichting|voorwaarde|keuze|optie|extern|bevestig|wacht|later|gedaan)$/i;
 
 /**
  * Is dit label een alternatief? `Optie A` en `Keuze B` zijn de uitgeschreven

@@ -140,12 +140,15 @@ ronde 8 een keuze in `- Voorwaarde:` en in de vette tussenkop. De motivering om
 knoppen te worden" — is meetbaar onjuist: de kaart krijgt haar knoppen uit het
 soort, niet uit die lijst, dus uitsluiten verhinderde geen knoppen, alleen dat de
 poort de tegenspraak meldde. De omkering kost niets: dezelfde meting over de
-historie geeft acht bevindingen met de oude lijst en acht met deze, nul nieuwe
-treffers.
+historie geeft vijf keuzebevindingen met de oude lijst en vijf met deze, nul nieuwe
+treffers. (Hier stond eerder het getal acht; dat was inclusief een code die
+inmiddels op nul staat, en onafhankelijke QA kon het niet reproduceren.)
 
 Omgekeerd geldt ook: **wat de kaart niet toont, beoordeelt de poort niet.** Een
-afgevinkt punt is gedaan en een akkoordvraag loopt over de akkoordkaart; die keurde
-de poort af met een hersteltekst die voor een akkoord niet eens klopte.
+afgevinkt punt is gedaan, een akkoordvraag loopt over de akkoordkaart, en het
+dossier van een afgeronde taak levert geen kaarten; alle drie keurde de poort af —
+de eerste twee met een hersteltekst die voor een akkoord niet eens klopte, de derde
+om een kaart die niet bestaat.
 
 Naast `eigenaarslijst_wacht_en_keuze` en `eigenaarslijst_akkoord_en_keuze` staat een
 derde tegenspraakregel: `eigenaarslijst_handeling_en_keuze`. Een `- Extern:`- of

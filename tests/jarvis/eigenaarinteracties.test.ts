@@ -826,7 +826,10 @@ describe("QA-ronde 8 — het formaat van de dossiers, niet dat van de poort", ()
 
   describe("bevinding 12: de vette kop staat één keer op de kaart", () => {
     it("plakt de kop er niet nog eens voor als het punt met haar is geopend", () => {
-      const item = eerste("- **Zet de sleutel in de kluis.**\n  - Stap 1: log in\n  - Controle: de naam staat in de lijst");
+      // De kop moet op een eigen regel staan: dán wordt zij `item.context` en
+      // loopt het gewijzigde pad. Binnen de opsommingsregel is de context leeg en
+      // bewaakt de test niets (QA-ronde 9, bevinding 6).
+      const item = eerste("**Zet de sleutel in de kluis.**\n\n- Stap 1: log in\n- Controle: de naam staat in de lijst");
       const aantal = item.toelichting.split("Zet de sleutel in de kluis.").length - 1;
       expect(aantal).toBe(1);
     });
@@ -863,6 +866,85 @@ describe("QA-ronde 8 — het formaat van de dossiers, niet dat van de poort", ()
     it("zwijgt over een tekst die het vangnet wél kan lezen", () => {
       // Anders stond er een dubbele bevinding op één punt.
       expect(lijktOpKeuze("kies tussen (a) de ene weg, of (b) de andere weg.")).toBe(false);
+    });
+  });
+});
+
+describe("QA-ronde 9 — de asymmetrie was verplaatst, niet weg", () => {
+  const r = (...paren: readonly (readonly [string, string])[]) => paren.map(([label, tekst]) => ({ label, tekst }));
+
+  describe("bevinding 1: één beschrijvend label is geen halve keuze", () => {
+    for (const [wat, label] of [
+      ["een rotatie-aanwijzing", "Rotatie/intrekking"],
+      ["een volgorde-aanwijzing", "Volgorde"],
+      ["een eigenaar", "Eigenaar"],
+    ] as const) {
+      it(`laat de poort zwijgen over ${wat}`, () => {
+        // Echte historische dossierpunten. De kaart eist twee aandienende labels,
+        // de lint eiste er één, en keurde daarmee vijf punten af die niets met een
+        // keuze te maken hadden — met een boodschap over een `Keuze`-regel die er
+        // niet stond.
+        const regels = r(["Stap 1", "doe dit"], ["Controle", "zo zie je het"], [label, "een toelichting"]);
+        expect(keuzeZonderAlternatieven(regels)).toBe(false);
+      });
+    }
+
+    it("meldt twee aandienende labels nog steeds als halve keuze", () => {
+      expect(keuzeZonderAlternatieven(r(["Publiek", "geen tokens"], ["Publiek", "nog eens"]))).toBe(true);
+      expect(keuzeZonderAlternatieven(r(["Publiek", "geen tokens"], ["Privé", ""]))).toBe(true);
+    });
+
+    it("meldt één uitgeschreven `Optie` wel: die kondigt een keuze aan", () => {
+      expect(keuzeZonderAlternatieven(r(["Optie A", "de ene weg"]))).toBe(true);
+    });
+
+    it("spreekt in de boodschap niet over een `Keuze`-regel die er niet is", () => {
+      const uit = keuzeZonderAlternatieven(r(["Publiek", "geen tokens"], ["Publiek", "nog eens"]));
+      expect(uit).toBe(true);
+    });
+  });
+
+  describe("bevinding 2: de annotatietoets is geankerd", () => {
+    for (const [eerst, tweede] of [
+      ["Bevestigd", "Correcties nodig"],
+      ["Termijn 30 dagen", "Termijn 60 dagen"],
+      ["Controle door mij", "Controle door Jarvis"],
+      ["Advies volgen", "Advies afwijken"],
+      ["Bevestiging per mail", "Bevestiging per app"],
+    ] as const) {
+      it(`leest "${eerst}" / "${tweede}" als twee knoppen`, () => {
+        const item = eerste(`- Bepaal hoe het verder gaat.\n  - ${eerst}: het ene gevolg\n  - ${tweede}: het andere gevolg`);
+        expect(item.interactie).toBe("keuze");
+        expect(item.opties).toHaveLength(3);
+        expect(item.opties[2].keuze).toBe("later");
+      });
+    }
+
+    for (const [wat, regels] of [
+      ["stappen met een toevoeging", "  - Stap 3 (cloud): zet de reeks\n  - Stap 4 (laptop): zet de reeks"],
+      ["twee uitlegregels", "  - Waarom deze volgorde: anders faalt de tweede\n  - Waarom precies deze rechten: minder kan niet"],
+      ["een gevolg-annotatie naast een uitleg", "  - Gevolg voor nu: niets\n  - Waarom: het kan wachten"],
+    ] as const) {
+      it(`houdt ${wat} annotatie`, () => {
+        const item = eerste(`- Zet de verbindingsreeks.\n${regels}`);
+        expect(item.interactie).not.toBe("keuze");
+      });
+    }
+
+    it("houdt de kale annotatiewoorden annotatie", () => {
+      const item = eerste("- Zet de sleutel.\n  - Let op: morgen vervalt de licentie\n  - Termijn: vóór 1 oktober");
+      expect(item.interactie).not.toBe("keuze");
+    });
+  });
+
+  describe("bevinding 3: een lang label is nog steeds een labelregel", () => {
+    it("leest twee alternatieven met een label van boven de veertig tekens", () => {
+      const a = "Zelf bouwen met de bestaande koppelinglaag erbij";
+      const b = "Een externe dienst inkopen en die laten koppelen";
+      expect(a.length).toBeGreaterThan(40);
+      const item = eerste(`- Bepaal de weg voor de nieuwe koppeling.\n  - ${a}: duurt twee weken, geen kosten per maand\n  - ${b}: klaar in twee dagen, kost 40 euro per maand`);
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.gevolg)[0]).toContain("twee weken");
     });
   });
 });
