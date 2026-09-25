@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Overzicht, TaakItem } from "@/jarvis/src/overzicht";
 import { readFileSync } from "node:fs";
-import { HEARTBEAT_MINUTEN, UITVOERDER_TERMIJN_MINUTEN, bepaalRegie, rolVoorStap, uitvoerderToestand, type Activiteit, type UitvoerderItem, type Uitvoerders } from "@/jarvis/src/regie";
+import { HEARTBEAT_MINUTEN, UITVOERDER_TERMIJN_MINUTEN, bepaalRegie, platformtoestandVan, registerBruikbaar, rolVoorStap, telAfwijkingen, uitvoerderToestand, type Activiteit, type UitvoerderItem, type Uitvoerders } from "@/jarvis/src/regie";
 
 const NU = new Date("2026-09-14T22:00:00Z");
 const iso = (minutenGeleden: number) => new Date(NU.getTime() - minutenGeleden * 60_000).toISOString();
@@ -452,5 +452,319 @@ describe("uitvoerderToestand", () => {
     expect(uitvoerderToestand(null, null, NU)).toBe("GEBLOKKEERD");
     expect(uitvoerderToestand(null, iso(5), NU)).toBe("ACTIEF");
     expect(uitvoerderToestand(null, iso(UITVOERDER_TERMIJN_MINUTEN + 1), NU)).toBe("GEBLOKKEERD");
+  });
+});
+
+// T-20260917-uitvoerderbewaking, stap 2 van het ontwerp: het register wordt
+// door een uitvoerder geschreven, niet door de engine. Drie manieren waarop het
+// daardoor stil kon liegen, elk met een test die faalt op de code van vóór deze
+// wijziging.
+describe("regie — het register mag zelf niet de stille schakel worden", () => {
+  const levendeClaim = [act({ soort: "claim", op: iso(20) }), act({ soort: "stap", op: iso(5), tekst: "bezig" })];
+  const reg = (over: Partial<Uitvoerders>, ...items: readonly Partial<UitvoerderItem>[]): Uitvoerders => ({
+    gegenereerd_op: iso(1),
+    uitvoerders: items.map((o) => ({ naam: "cloud", soort: "routine", platformtoestand: "working", laatste_teken: iso(1), ...o }) as UitvoerderItem),
+    ...over,
+  });
+
+  describe("een onbekende platformtoestand leest nooit als in orde", () => {
+    for (const ruw of ["requires-action", "REQUIRES_ACTION", "Needs permissions", "", "  ", "onzin"]) {
+      it(`normaliseert ${JSON.stringify(ruw)} naar een toestand die de engine kent`, () => {
+        const genormaliseerd = platformtoestandVan(ruw);
+        expect(["working", "blocked", "requires_action", "review_ready", "completed", "failed", "onbekend"]).toContain(genormaliseerd);
+      });
+    }
+
+    it("leest een tikfout in een blokkerende toestand niet als ACTIEF", () => {
+      // `requires-action` met een streepje kwam niet in de blokkerende lijst
+      // voor, viel door naar de heartbeat en werd met een vers teken stil
+      // ACTIEF — juist het stille falen dat dit register wegneemt.
+      const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, reg({}, { platformtoestand: "requires-action" as UitvoerderItem["platformtoestand"] }));
+      expect(r.taken[0].toestand).toBe("BLOCKED");
+      expect(r.afwijkingen.length).toBeGreaterThan(0);
+    });
+
+    it("laat een geldige toestand ongemoeid", () => {
+      expect(platformtoestandVan("working")).toBe("working");
+      expect(platformtoestandVan("requires_action")).toBe("requires_action");
+      expect(platformtoestandVan(undefined)).toBe("onbekend");
+    });
+  });
+
+  describe("een register buiten zijn eigen houdbaarheid telt als afwezig", () => {
+    it("gelooft een oud register niet op zijn woord, ook niet met een houdbaar_tot in de toekomst", () => {
+      // De vorm die stil loog: het register is dagen oud, maar per uitvoerder
+      // staat er `working` met een houdbaarheid ver in de toekomst. `gegenereerd_op`
+      // werd gelezen en nooit gebruikt, dus las dat als "alles in orde" terwijl
+      // de schrijver van het register al lang stil lag.
+      const oud = reg(
+        { gegenereerd_op: iso(UITVOERDER_TERMIJN_MINUTEN + 60) },
+        { platformtoestand: "working", laatste_teken: iso(1), houdbaar_tot: new Date(NU.getTime() + 86_400_000).toISOString() },
+      );
+      expect(registerBruikbaar(oud, NU)).toBe(false);
+      // Een dóde claim: de uitvoerder gaf zelf ook geen teken meer. Dan is het
+      // register de enige bron die nog "in orde" beweert, en die bewering telt niet.
+      const doodseClaim = [act({ soort: "claim", op: iso(UITVOERDER_TERMIJN_MINUTEN + 120) })];
+      const r = bepaalRegie(overzicht([taak("T-1")]), doodseClaim, NU, oud);
+      expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+      expect(r.afwijkingen.length).toBeGreaterThan(0);
+      // Met een bruikbaar register dat exact hetzelfde beweert, geldt die
+      // bewering wél en is de uitvoerder niet de blokkade. Het verschil zit
+      // uitsluitend in de leeftijd van het register, niet in de items.
+      const vers = reg({}, { platformtoestand: "working", laatste_teken: iso(1), houdbaar_tot: new Date(NU.getTime() + 86_400_000).toISOString() });
+      expect(bepaalRegie(overzicht([taak("T-1")]), doodseClaim, NU, vers).taken[0].blokkade).not.toBe("uitvoerder_geblokkeerd");
+    });
+
+    it("houdt een verse werkactiviteit een geldig teken van leven, register of geen register", () => {
+      // Geen vals alarm (ontwerp §7): een uitvoerder die net een stap schreef,
+      // is aantoonbaar in leven, ook als het register ontbreekt of oud is.
+      const oud = reg({ gegenereerd_op: iso(UITVOERDER_TERMIJN_MINUTEN + 60) }, { platformtoestand: "working", laatste_teken: iso(1) });
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, oud).taken[0].toestand).toBe("RUNNING");
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, null).taken[0].toestand).toBe("RUNNING");
+    });
+
+    it("houdt een vers register bruikbaar", () => {
+      const vers = reg({}, { platformtoestand: "working", laatste_teken: iso(2) });
+      expect(registerBruikbaar(vers, NU)).toBe(true);
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, vers).taken[0].toestand).toBe("RUNNING");
+    });
+
+    it("telt een register zonder of met een onleesbare datum als afwezig", () => {
+      expect(registerBruikbaar(null, NU)).toBe(false);
+      expect(registerBruikbaar(reg({ gegenereerd_op: "gisteren" }, {}), NU)).toBe(false);
+      expect(registerBruikbaar(reg({ gegenereerd_op: undefined as unknown as string }, {}), NU)).toBe(false);
+    });
+  });
+
+  describe("meer dan één ingang per uitvoerder: continuïteit en dispatch zijn twee vragen", () => {
+    // Dit is de productievorm: de cloud-uitvoerder is tegelijk een sessie die nu
+    // draait en een roosterroutine die morgen hoort te wekken. Met een
+    // `Map<naam, item>` hield de laatste ingang de andere stil weg, en welke dat
+    // was hing van de schrijfvolgorde in het document af.
+    //
+    // Deze twee toetsen legden eerst vast dat de gepauzeerde routine de geclaimde
+    // taak blokkeert. Dat is het valse alarm van QA op AC-11, ronde 2, bevinding
+    // 4: de uitvoerder die de regieronde op dat moment zelf draait, blokkeerde zo
+    // zijn eigen werk. Wat de toetsen bewaken blijft hetzelfde — de routine mag
+    // niet stil verdwijnen, en de schrijfvolgorde mag niet uitmaken — maar het
+    // gevolg is nu het juiste: zichtbaar in `uitvoerders` en `blokkades`, en geen
+    // rem op werk waarover een sessie zegt dat het loopt.
+    const beide = reg(
+      {},
+      { soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+      { soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "routine staat op pauze" },
+    );
+    const omgekeerd = reg(
+      {},
+      { soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "routine staat op pauze" },
+      { soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+    );
+
+    it("laat een gepauzeerde routine niet verdwijnen achter een werkende sessie", () => {
+      const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, beide);
+      // Zichtbaar, met de reden van de routine en niet die van de sessie.
+      const cloud = r.uitvoerders.find((u) => u.naam === "cloud");
+      expect(cloud?.toestand).toBe("GEBLOKKEERD");
+      expect(cloud?.reden).toMatch(/routine staat op pauze/);
+      expect(r.blokkades.map((u) => u.naam)).toContain("cloud");
+      expect(telAfwijkingen(r)).toBeGreaterThan(0);
+      // En geen rem op het werk waarover de sessie van nú spreekt.
+      expect(r.taken[0].toestand).toBe("RUNNING");
+      expect(r.taken[0].blokkade).toBeNull();
+    });
+
+    it("geeft dezelfde uitkomst in de omgekeerde schrijfvolgorde", () => {
+      const a = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, beide);
+      const b = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, omgekeerd);
+      expect(b.taken[0].toestand).toBe(a.taken[0].toestand);
+      expect(b.uitvoerders.find((u) => u.naam === "cloud")).toEqual(a.uitvoerders.find((u) => u.naam === "cloud"));
+      expect(b.blokkades.map((u) => u.naam)).toEqual(a.blokkades.map((u) => u.naam));
+    });
+
+    it("blokkeert wel zodra de routine het enige is wat het register over hem zegt", () => {
+      // Een filter zonder terugval gooide de énige uitspraak weg die het
+      // register over deze uitvoerder deed, en dan las hij met een vers teken
+      // weer stil als ACTIEF.
+      const alleenRoutine = reg({}, { soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "routine staat op pauze" });
+      const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, alleenRoutine);
+      expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+      expect(r.taken[0].waarom).toMatch(/routine staat op pauze/);
+      expect(r.afwijkingen.length).toBeGreaterThan(0);
+    });
+
+    it("laat twee gezonde ingangen de taak gewoon lopen", () => {
+      const gezond = reg(
+        {},
+        { soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+        { soort: "routine", platformtoestand: "completed", laatste_teken: iso(1) },
+      );
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, gezond).taken[0].toestand).toBe("RUNNING");
+    });
+  });
+});
+
+// AC-11 van T-20260917-uitvoerderbewaking: de acceptatie A t/m H op de
+// productiecasus. Onafhankelijke QA mat dat de regie-uitvoer vóór en na, op
+// `gegenereerd_op` na, byte-identiek was — nul geblokkeerd, nul afwijkingen —
+// terwijl het register twee van de drie ingangen als geblokkeerd kende. Twee
+// oorzaken, beide hier vastgelegd.
+describe("regie — een geblokkeerde uitvoerder wordt gezien, ook zonder claim", () => {
+  const reg = (naam: string, over: Partial<UitvoerderItem> = {}): Uitvoerders => ({
+    gegenereerd_op: iso(1),
+    uitvoerders: [{ naam, soort: "laptop", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "de brug is onbereikbaar", ...over }],
+  });
+  const toegewezen = (naam: string) =>
+    taak("T-1", { stappen: [{ tekst: `Iets doen. **Uitvoerder: ${naam}.** De cloud kan dit niet.`, gedaan: false }], wacht_op: null });
+
+  it("blokkeert een taak die aan een geblokkeerde uitvoerder is toegewezen (bevinding 1)", () => {
+    // Dit was de productiecasus: drie taken stonden aan de onbereikbare laptop
+    // toegewezen als WAITING_FOR_DEPENDENCY met `blokkade: null`, en de regie
+    // meldde nul afwijkingen. Deze tak vroeg het register nooit.
+    const r = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("laptop"), "cloud");
+    expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd", uitvoerder: "laptop" });
+    expect(r.taken[0].wacht_op).toMatch(/onbereikbaar/);
+    expect(r.afwijkingen.length).toBeGreaterThan(0);
+  });
+
+  it("laat een toegewezen stap een wachttoestand zonder register (geen vals alarm)", () => {
+    // Zonder register mag een uitvoerder tussen twee taken door stil zijn; anders
+    // wordt elke toegewezen stap een blokkade (ontwerp §7).
+    const r = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, null, "cloud");
+    expect(r.taken[0]).toMatchObject({ toestand: "WAITING_FOR_DEPENDENCY", blokkade: null });
+    const ander = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("cloud"), "cloud");
+    expect(ander.taken[0].toestand).toBe("WAITING_FOR_DEPENDENCY");
+  });
+
+  it("hervat zodra het register de uitvoerder weer actief meldt (AC-7)", () => {
+    const r = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("laptop", { platformtoestand: "working", laatste_teken: iso(2) }), "cloud");
+    expect(r.taken[0].toestand).toBe("WAITING_FOR_DEPENDENCY");
+    expect(r.taken[0].blokkade).toBeNull();
+  });
+
+  it("noemt elke uitvoerder met zijn toestand, ook zonder taken (bevinding 2, criterium H)", () => {
+    // De gepauzeerde roosterroutine hangt aan geen enkele taak. Zonder deze lijst
+    // was zij onzichtbaar: niets wekt de keten nog en de regie meldde nul
+    // afwijkingen.
+    const twee: Uitvoerders = {
+      gegenereerd_op: iso(1),
+      uitvoerders: [
+        { naam: "cloud", soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+        { naam: "cloud", soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "de roosterroutine staat op pauze" },
+      ],
+    };
+    const r = bepaalRegie(overzicht([taak("T-1")]), [], NU, twee, "cloud");
+    const cloud = r.uitvoerders.find((u) => u.naam === "cloud");
+    expect(cloud).toMatchObject({ toestand: "GEBLOKKEERD" });
+    expect(cloud?.reden).toMatch(/op pauze/);
+    expect(r.uitvoerders.every((u) => Array.isArray(u.taken))).toBe(true);
+  });
+
+  it("noemt ook een uitvoerder die alleen in de werkactiviteit voorkomt", () => {
+    const r = bepaalRegie(overzicht([taak("T-1")]), [act({ uitvoerder: "laptop", op: iso(5) })], NU, null, "cloud");
+    expect(r.uitvoerders.map((u) => u.naam)).toContain("laptop");
+  });
+
+  it("zet de taken van een uitvoerder bij zijn regel", () => {
+    const r = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("laptop"), "cloud");
+    expect(r.uitvoerders.find((u) => u.naam === "laptop")?.taken).toEqual(["T-1"]);
+  });
+
+  // QA-ronde 3 op AC-11. Drie vormen waarin de uitvoer zichzelf tegensprak of
+  // stil bleef, alle drie gemeten op de echte dossiers, en alle drie met de klok
+  // of een tikfout als enige variabele.
+  describe("leeftijd en spelling mogen een blokkade niet wegnemen (ronde 3)", () => {
+    const stilgevallen = (gegenereerd: string): Uitvoerders => ({
+      gegenereerd_op: gegenereerd,
+      // Niet `blocked`: de brug meldt hem als `working` en laat hem stilvallen.
+      // Zijn blokkade zit in het verlopen teken, niet in zijn platformtoestand.
+      uitvoerders: [{ naam: "laptop", soort: "laptop", platformtoestand: "working",
+        laatste_teken: iso(UITVOERDER_TERMIJN_MINUTEN + 600), houdbaar_tot: iso(600) }],
+    });
+
+    it("laat een stilgevallen uitvoerder niet verdwijnen zodra het register zelf verloopt", () => {
+      // Het register gooide zijn niet-blokkerende ingangen weg, en dan verdween
+      // deze uitvoerder volledig — naam en al — uit `uitvoerders`, `blokkades` en
+      // het totaal. Leeftijd nam zo een blokkade wég.
+      const vers = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, stilgevallen(iso(1)), "cloud");
+      const verlopen = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, stilgevallen(iso(UITVOERDER_TERMIJN_MINUTEN + 120)), "cloud");
+      for (const [wat, r] of [["vers", vers], ["verlopen", verlopen]] as const) {
+        expect(r.uitvoerders.map((u) => u.naam), wat).toContain("laptop");
+        expect(r.blokkades.map((u) => u.naam), wat).toContain("laptop");
+        expect(telAfwijkingen(r), wat).toBeGreaterThan(0);
+        expect(r.taken[0], wat).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+      }
+    });
+
+    it("laat een verlopen register de lopende sessie niet op de gepauzeerde routine blokkeren", () => {
+      // De productievorm. Met de sessie-ingang weggegooid bleef alleen de routine
+      // over, vond de dispatch-terugval geen ingang over nú meer, en droeg de regie
+      // de lopende sessie op haar eigen claim vrij te geven — met een reden die
+      // over de routine gaat. De klok was het enige verschil.
+      const echt = (gegenereerd: string): Uitvoerders => ({
+        gegenereerd_op: gegenereerd,
+        uitvoerders: [
+          { naam: "cloud", soort: "sessie", platformtoestand: "working", laatste_teken: iso(2) },
+          { naam: "cloud", soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "op pauze" },
+        ],
+      });
+      const claim = [act({ soort: "claim", op: iso(20) }), act({ soort: "stap", op: iso(2), tekst: "bezig" })];
+      for (const [wat, reg2] of [["vers", echt(iso(1))], ["verlopen", echt(iso(UITVOERDER_TERMIJN_MINUTEN + 120))]] as const) {
+        const r = bepaalRegie(overzicht([taak("T-1")]), claim, NU, reg2, "cloud");
+        expect(r.taken[0].toestand, wat).toBe("RUNNING");
+        expect(r.taken[0].blokkade, wat).toBeNull();
+        // En de gepauzeerde routine blijft zichtbaar: niets verdwijnt, het gevolg verschuift.
+        expect(r.blokkades.map((u) => u.naam), wat).toContain("cloud");
+      }
+    });
+
+    it("kent één uitvoerder onder één naam, wat de hoofdletters en de witruimte ook doen", () => {
+      // `Laptop` in register én activiteit gaf twee regels in `uitvoerders` met
+      // tegengestelde oordelen, waarvan de spookregel meetelde in het totaal; en
+      // `"laptop "` liet de taakkant stil terugvallen op "niets aan de hand"
+      // terwijl dezelfde ronde riep dat hij geblokkeerd was.
+      const vormen = ["laptop", "Laptop", " laptop", "laptop "];
+      for (const naam of vormen) {
+        const r = bepaalRegie(overzicht([toegewezen("laptop")]), [act({ uitvoerder: naam, op: iso(4) })], NU, reg(naam), "cloud");
+        // Eén regel, niet twee met tegengestelde oordelen. De weergavenaam houdt de
+        // spelling van het register — dat is geen tegenspraak, alleen de omringende
+        // witruimte gaat eraf.
+        expect(r.uitvoerders, naam).toHaveLength(1);
+        expect(r.uitvoerders[0].naam, naam).toBe(naam.trim());
+        expect(r.taken[0], naam).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+        expect(r.blokkades.map((u) => u.naam), naam).toEqual([naam.trim()]);
+        expect(r.blokkades[0].taken, naam).toEqual(["T-1"]);
+      }
+    });
+  });
+
+  // De invariant van ontwerp §5 zelf, in één toets over elke vorm die QA vond:
+  // er bestaat geen regie-uitkomst waarin een uitvoerder geblokkeerd is en het
+  // getal dat de rapportage noemt nul is. Tot nu toe werd dat per casus
+  // afgeleid uit `afwijkingen`, en juist de casussen waarin die lijst leeg
+  // blijft — een geblokkeerde uitvoerder zonder taken — waren de gaten.
+  it("kent geen uitkomst met een geblokkeerde uitvoerder en een totaal van nul", () => {
+    const zonderTaken = taak("T-1", { stappen: [{ tekst: "Iets doen", gedaan: false }], wacht_op: null });
+    const vormen: readonly { wat: string; regie: ReturnType<typeof bepaalRegie> }[] = [
+      { wat: "een geblokkeerde laptop zonder enige taak", regie: bepaalRegie(overzicht([zonderTaken]), [], NU, reg("laptop"), "cloud") },
+      { wat: "een gepauzeerde routine achter een werkende sessie", regie: bepaalRegie(overzicht([zonderTaken]), [], NU,
+        { gegenereerd_op: iso(1), uitvoerders: [
+          { naam: "cloud", soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+          { naam: "cloud", soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "op pauze" }] }, "cloud") },
+      { wat: "een register buiten zijn eigen houdbaarheid", regie: bepaalRegie(overzicht([zonderTaken]), [], NU,
+        reg("laptop", {}), "cloud") },
+      { wat: "een verlopen register dat een blokkade meldt", regie: bepaalRegie(overzicht([zonderTaken]), [], NU,
+        { ...reg("laptop"), gegenereerd_op: iso(UITVOERDER_TERMIJN_MINUTEN + 120) }, "cloud") },
+      { wat: "een tikfout in de toestand", regie: bepaalRegie(overzicht([zonderTaken]), [], NU,
+        reg("laptop", { platformtoestand: "requires-action" as UitvoerderItem["platformtoestand"] }), "cloud") },
+      { wat: "een uitvoerder met een hoofdletter in zijn naam", regie: bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("Laptop"), "cloud") },
+      { wat: "een uitvoerder met witruimte in zijn naam", regie: bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("laptop "), "cloud") },
+      { wat: "een stilgevallen uitvoerder in een verlopen register", regie: bepaalRegie(overzicht([toegewezen("laptop")]), [], NU,
+        { gegenereerd_op: iso(UITVOERDER_TERMIJN_MINUTEN + 120), uitvoerders: [{ naam: "laptop", soort: "laptop",
+          platformtoestand: "working", laatste_teken: iso(UITVOERDER_TERMIJN_MINUTEN + 600), houdbaar_tot: iso(600) }] }, "cloud") },
+    ];
+    for (const { wat, regie } of vormen) {
+      expect(regie.blokkades.length, wat).toBeGreaterThan(0);
+      expect(telAfwijkingen(regie), wat).toBeGreaterThan(0);
+    }
   });
 });

@@ -45,7 +45,7 @@ import {
   type TaakDossier,
 } from "./overzicht";
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
-import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
+import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, telAfwijkingen, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
@@ -2092,10 +2092,11 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
       await verbinding.sql.end({ timeout: 2 });
     }
   }
-  // Het uitvoerdersregister komt als bestand binnen, nooit uit de platformlaag
-  // zelf: de engine kent geen tokens en mag die niet leren kennen. Ontbreekt
-  // het of is het onleesbaar, dan gaat de regie door met `onbekend` — dat is
-  // een toestand, geen leegte, en telt zonder vers teken als blokkade.
+  // Het uitvoerdersregister komt als bestand of als document binnen, nooit uit
+  // de platformlaag zelf: de engine kent geen tokens en mag die niet leren
+  // kennen. Ontbreekt het of is het onleesbaar, dan gaat de regie door met
+  // `onbekend` — dat is een toestand, geen leegte, en telt zonder vers teken
+  // als blokkade.
   const uitvoerders = await leesUitvoerdersregister(wortel, vlaggen.get("uitvoerders") ?? null);
   // Twee verschillende dingen, allebei nodig: het register zegt of een
   // uitvoerder nog leeft, `door` zegt wie deze ronde draait — dat laatste
@@ -2146,7 +2147,9 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
       taak: null,
       project: null,
       soort: "regie",
-      tekst: `ronde: ${regie.taken.length} open, ${regie.uitvoerbaar.length} uitvoerbaar, ${regie.afwijkingen.length} afwijking(en)`,
+      // Het totaal, net als de slotregel: een geblokkeerde uitvoerder zonder taken
+      // mag ook in de activiteit niet als "0 afwijking(en)" worden weggeschreven.
+      tekst: `ronde: ${regie.taken.length} open, ${regie.uitvoerbaar.length} uitvoerbaar, ${regie.blokkades.length} uitvoerder(s) geblokkeerd, ${telAfwijkingen(regie)} afwijking(en)`,
     });
   }
   if (vlaggen.has("json") || (!uit && !vlaggen.has("schrijf"))) {
@@ -2157,33 +2160,69 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
     console.log(`${t.toestand.padEnd(22)} ${t.id.padEnd(36)} ${t.verantwoordelijke.padEnd(18)} ${t.waarom}`);
   }
   const geblokkeerd = regie.taken.filter((t) => t.toestand === "BLOCKED").length;
-  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
+  for (const u of regie.blokkades) console.error(`jarvis regie: uitvoerder ${u.naam} is GEBLOKKEERD — ${u.reden}`);
+  // Het totaal, niet alleen de taken: een geblokkeerde uitvoerder zonder taken mag
+  // niet naast "0 afwijking(en)" staan.
+  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.blokkades.length} uitvoerder(s) geblokkeerd, ${telAfwijkingen(regie)} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
   return 0;
 }
 
-/**
- * Het uitvoerdersregister van schijf: `--uitvoerders <pad>`, anders
- * `jarvis/uitvoerders.json` in de werkmap. Een ontbrekend of kapot bestand is
- * geen fout — de regie leidt dan `onbekend` af — maar een kapot bestand meldt
- * zich wel, want stille degradatie is precies wat deze taak wegneemt.
- */
-async function leesUitvoerdersregister(wortel: string, pad: string | null): Promise<Uitvoerders | null> {
-  const bestand = path.resolve(wortel, pad ?? "jarvis/uitvoerders.json");
-  let ruw: string;
-  try {
-    ruw = await readFile(bestand, "utf8");
-  } catch {
-    if (pad !== null) console.error(`jarvis regie: uitvoerdersregister ${pad} niet gevonden; toestand onbekend.`);
-    return null;
-  }
+/** De inhoud van een register als `Uitvoerders`, of null met de reden op stderr. */
+export function ontleedUitvoerdersregister(ruw: string, waar: string): Uitvoerders | null {
   try {
     const gelezen = JSON.parse(ruw) as Uitvoerders;
     if (!Array.isArray(gelezen?.uitvoerders)) throw new Error("geen lijst uitvoerders");
     return gelezen;
   } catch (fout) {
     const tekst = fout instanceof Error ? fout.message : String(fout);
-    console.error(`jarvis regie: uitvoerdersregister onleesbaar (${tekst.slice(0, 80)}); toestand onbekend.`);
+    console.error(`jarvis regie: uitvoerdersregister ${waar} onleesbaar (${tekst.slice(0, 80)}); toestand onbekend.`);
     return null;
+  }
+}
+
+/** Het document waaronder het uitvoerdersregister in de eigen database staat. */
+export const UITVOERDERS_DOC = "uitvoerders/huidig";
+
+/**
+ * Het uitvoerdersregister, in deze volgorde: `--uitvoerders <pad>` als die
+ * gegeven is, anders `jarvis/uitvoerders.json` in de werkmap, anders het
+ * document `uitvoerders/huidig` uit de eigen database.
+ *
+ * Die derde weg is de bedoelde weg. Het register wordt geschreven door de
+ * uitvoerder die de platformlaag mág bevragen, en gelezen door elke uitvoerder
+ * die de regie berekent — laptop en cloud zien dan hetzelfde beeld. Zolang het
+ * alleen van schijf kwam, zag alleen de uitvoerder die het zelf net had
+ * weggeschreven het, en voor elke andere was elke uitvoerder `onbekend`.
+ *
+ * Een ontbrekend register is geen fout: de regie leidt dan `onbekend` af. Een
+ * kapot register meldt zich wel, want stille degradatie is precies wat deze
+ * taak wegneemt.
+ */
+async function leesUitvoerdersregister(wortel: string, pad: string | null): Promise<Uitvoerders | null> {
+  const bestand = path.resolve(wortel, pad ?? "jarvis/uitvoerders.json");
+  try {
+    return ontleedUitvoerdersregister(await readFile(bestand, "utf8"), bestand);
+  } catch {
+    // Een expliciet meegegeven pad dat niet bestaat is een gebruiksfout en
+    // hoort zich te melden; het standaardpad ontbreekt normaal gesproken.
+    if (pad !== null) {
+      console.error(`jarvis regie: uitvoerdersregister ${pad} niet gevonden; toestand onbekend.`);
+      return null;
+    }
+  }
+  const verbinding = await verbindDb();
+  if (verbinding === null) return null;
+  try {
+    const rijen = await verbinding.sql.unsafe(DOCUMENT_LEES_SQL, [UITVOERDERS_DOC]);
+    const inhoud = (rijen as readonly { inhoud?: unknown }[])[0]?.inhoud;
+    if (inhoud === undefined || inhoud === null) return null;
+    return ontleedUitvoerdersregister(typeof inhoud === "string" ? inhoud : JSON.stringify(inhoud), UITVOERDERS_DOC);
+  } catch (fout) {
+    const tekst = fout instanceof Error ? fout.message : String(fout);
+    console.error(`jarvis regie: uitvoerdersregister ${UITVOERDERS_DOC} niet te lezen (${tekst.slice(0, 80)}); toestand onbekend.`);
+    return null;
+  } finally {
+    await verbinding.sql.end({ timeout: 2 });
   }
 }
 

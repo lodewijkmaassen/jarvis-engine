@@ -139,9 +139,123 @@ de claim: naast de werkactiviteit leest de regie een tweede bron, het
 uitvoerdersregister `uitvoerders/huidig`, dat zegt welke uitvoerders er bestaan
 en in welke platformtoestand ze staan — ook de uitvoerder die nooit aan
 schrijven toekwam. De engine bevraagt de platformlaag niet zelf: ze kent geen
-tokens en mag die niet leren kennen, dus komt het register als bestand binnen
-(`jarvis regie --uitvoerders <pad>`, standaard `jarvis/uitvoerders.json`), en
-is de parameter optioneel zodat elke bestaande aanroep blijft werken.
+tokens en mag die niet leren kennen, dus komt het register van buiten binnen —
+in deze volgorde: `jarvis regie --uitvoerders <pad>` als dat is meegegeven,
+anders `jarvis/uitvoerders.json` in de werkmap, anders het document
+`uitvoerders/huidig` uit de eigen database. Die derde weg is de bedoelde weg, en
+zij ontbrak: zolang het register alleen van schijf kwam, zag alleen de
+uitvoerder die het zojuist zelf had weggeschreven het, en las elke andere
+uitvoerder elke uitvoerder als `onbekend`. Nu schrijft de uitvoerder die de
+platformlaag mág bevragen het document, en lezen laptop en cloud hetzelfde
+beeld. De parameter blijft optioneel, zodat elke bestaande aanroep blijft werken.
+
+Drie manieren waarop het register zelf stil kon liegen, zijn dicht. Een
+platformtoestand die de engine niet kent — `requires-action` met een streepje,
+`REQUIRES_ACTION`, een leeg veld — viel door de blokkerende lijst heen en werd
+met een vers teken stil `ACTIEF` gelezen; `platformtoestandVan` maakt van elke
+onbekende waarde `onbekend`. `gegenereerd_op` werd gelezen en nooit gebruikt,
+waardoor een register van dagen oud met een `houdbaar_tot` in de toekomst als
+"alles in orde" las terwijl de schrijver ervan al lang stil lag;
+`registerBruikbaar` telt een register buiten zijn eigen houdbaarheid als
+afwezig. Leeftijd mag daarbij twijfel tóevoegen en nooit een gemelde blokkade
+wegnemen: een verlopen register werd eerst in zijn geheel weggegooid, en daarna
+las elke uitvoerder met een vers activiteitsteken weer `ACTIEF` — ook een
+uitvoerder die het register letterlijk als `blocked` beschrijft. Dat is het
+omgekeerde van luid falen, en het was als verscherping bedoeld. Van een verlopen
+register blijven daarom de blokkerende ingangen staan.
+
+Wat "niet meer vouchen" betekent, is nauwkeuriger dan "weggooien". Het register
+gooide bij verlopen zijn niet-blokkerende ingangen weg, en dan verdween een
+uitvoerder die geblokkeerd is omdat zijn *teken* verlopen is — niet zijn
+platformtoestand — volledig uit de uitvoer, naam en al. Zo nam leeftijd alsnog
+een blokkade weg, en de invariant brak op de echte dossiers: nul geblokkeerd, nul
+afwijkingen, terwijl de laptop negen dagen stil lag met drie taken aan zich
+toegewezen. Elke ingang blijft nu bewaard; wat een verlopen register verliest is
+alleen het recht om voor leven in te staan. Zijn `laatste_teken` en
+`houdbaar_tot` zijn dan beweringen van een schrijver die zelf stilligt, en wat
+overblijft is de werkactiviteit.
+
+En één uitvoerder kan meer dan één ingang hebben — de cloud-uitvoerder is
+tegelijk een sessie die nu draait en een roosterroutine die morgen hoort te
+wekken — waarvan een `Map<naam, item>` stil de laatste overhield, afhankelijk
+van de schrijfvolgorde in het document; alle ingangen worden nu bewaard.
+
+Eén sleutel voor álle plekken die een uitvoerder opzoeken: de naam zonder
+omringende witruimte en in kleine letters (`uitvoerderSleutel`). Stond die
+normalisatie maar op het register en niet ook op de tekenopzoeking, de namenlijst
+en de taken per uitvoerder, dan sprak de uitvoer zichzelf tegen: met `Laptop` in
+register én activiteit stond dezelfde uitvoerder twee keer in `uitvoerders` met
+tegengestelde oordelen, waarvan de spookregel in het totaal meetelde; en met
+`"laptop "` viel de taakkant stil terug op "niets aan de hand" terwijl dezelfde
+ronde riep dat hij geblokkeerd was.
+
+Met meer dan één ingang zijn het twee vragen, niet één. *Wekt er nog iets de
+keten?* telt alle ingangen en het ergste geval wint; dat is het oordeel voor de
+lijst `uitvoerders` en voor `blokkades`. *Kan deze uitvoerder nú werk doen?*
+telt alleen de ingangen die daarover gaan — een sessie of een laptop. Waren die
+twee samengevoegd, dan blokkeerde elke stap met `Uitvoerder: cloud` op de
+gepauzeerde routine als reden: de uitvoerder die de regieronde op dat moment
+zelf draait, zou zijn eigen geclaimde werk blokkeren. Dat is het valse alarm van
+§7. Een routine mag echter alleen wijken voor een ingang die wél over nú gaat:
+kent het register voor een uitvoerder geen sessie en geen laptop, dan tellen al
+zijn ingangen, want de énige uitspraak weggooien die het register over hem doet
+is hetzelfde stille falen, een laag dieper.
+
+Een verse werkactiviteit blijft een geldig teken van leven, register of geen
+register: een uitvoerder die net een stap schreef is aantoonbaar in leven. Dat
+is de grens tegen vals alarm; de bewering van een verlopen register is het niet.
+
+Het register wordt op twéé plekken gevraagd, niet op één. De blokkade hing eerst
+volledig aan een lópende claim, en daardoor bleef de productiecasus buiten beeld:
+onafhankelijke QA mat dat de regie-uitvoer vóór en na, op `gegenereerd_op` na,
+byte-identiek was — nul geblokkeerd, nul afwijkingen — terwijl het register twee
+van de drie ingangen als geblokkeerd kende. Twee oorzaken.
+
+Een stap die aan een uitvoerder is *toegewezen* (`**Uitvoerder: laptop.**`) is werk
+dat aan hém hangt, ook zonder claim. Die tak vroeg het register nooit: drie taken
+stonden aan de onbereikbare laptop toegewezen als `WAITING_FOR_DEPENDENCY` met
+`blokkade: null`. Nu is zo'n taak `BLOCKED` met de reden uit het register. Alleen
+als het register de uitvoerder **kent**: zonder register mag hij tussen twee taken
+door legitiem stil zijn, en anders wordt elke toegewezen stap een blokkade — het
+valse alarm van §7.
+
+En de regie draagt nu een lijst `uitvoerders` met per uitvoerder zijn toestand, de
+reden en zijn taken. Zonder die lijst was een geblokkeerde uitvoerder alleen via
+zijn taken zichtbaar, en dus onzichtbaar zodra hij er geen had. Dat is het geval
+van de gepauzeerde roosterroutine: niets wekt de keten nog, geen enkele taak hangt
+eraan. De slotregel van `jarvis regie` noemt hen bij naam met hun reden en telt ze
+apart. Eis 9 verbiedt een tweede wekker; zíen dat de wekker uit staat is er geen.
+
+Het getal in de rapportage is het tótaal — `afwijkingen` plus `blokkades` — en
+niet alleen de taken. `afwijkingen` filtert taken, en een geblokkeerde uitvoerder
+zonder taken leverde er dus nul: precies de casus van de gepauzeerde routine.
+Hier wijkt de uitvoering bewust af van de létter van §5, die een takenlijst
+eist; de gárantie is wat telt, en die luidt nu dat er geen regie-uitkomst bestaat
+waarin een uitvoerder geblokkeerd is en het getal nul. Dat staat als één toets
+over elke vorm die QA vond, en de slotregel én de weggeschreven activiteit
+noemen hetzelfde totaal.
+
+Gemeten op de productiecasus van 2026-09-25: vóór `16 open, 0 geblokkeerd, 0
+afwijking(en)`; na `16 open, 3 geblokkeerd, 2 uitvoerder(s) geblokkeerd, 5
+afwijking(en)`, met beide geblokkeerde uitvoerders bij naam en met reden. De drie
+geblokkeerde taken zijn de taken van de onbereikbare laptop; de cloud-sessie die
+de ronde draait blokkeert haar eigen werk niet. Ander werk gaat door.
+
+Diezelfde uitkomst geldt nu ook als de klok verschuift of de schrijver zich
+vertypt: met een register van vijf minuten oud, met hetzelfde register van
+vijfentwintig uur oud, met `Laptop` met een hoofdletter en met `"laptop "` met een
+spatie erachter staat er telkens `3 geblokkeerd, 2 uitvoerder(s) geblokkeerd, 5
+afwijking(en)`. Vóór deze ronde gaven diezelfde vier metingen achtereenvolgens 3,
+0, 3 en 0 geblokkeerde taken — de klok en een spatie waren het enige verschil.
+
+**Wat nog niet werkt: het documentpad in de cloud.** De gepubliceerde Edge Function
+`jarvis-db` staat op versie 7 en haar allowlist kent `DOCUMENT_LEES_SQL` niet, dus
+`jarvis regie` krijgt daar `HTTP 400 — statement niet toegestaan` en valt terug op
+`onbekend`. Dat is gemeten, en het weerspreekt wat hier eerder stond: het statement
+staat in de allowlist van de engine (`db.ts`), niet in die van de uitgerolde
+functie. Tot versie 8 is uitgerold werkt alleen `jarvis regie --uitvoerders <pad>`.
+Uitrollen is een deployment en valt buiten de randvoorwaarden van de
+cloud-uitvoerder (DEC-0049).
 
 `requires_action`, `blocked` en `failed` blokkeren ongeacht het teken;
 `working` met een verlopen teken ook. Ontbreken is een toestand en geen leegte:
