@@ -234,15 +234,40 @@ export function registerBruikbaar(uitvoerders: Uitvoerders | null, nu: Date): bo
  * `onbekend` zonder vers teken telt als blokkade, want een register dat
  * stilvalt mag niet hetzelfde effect hebben als een register dat "alles in
  * orde" meldt.
+ *
+ * `vouchen` zegt of dit item nog voor leven mág instaan. Een verlopen register
+ * mag dat niet: zijn `laatste_teken` en `houdbaar_tot` zijn beweringen van een
+ * schrijver die zelf stilligt, en die beweringen hielden een uitvoerder die al
+ * dagen niets meer deed op `ACTIEF`. Wat dan overblijft is de werkactiviteit —
+ * een uitvoerder die net een stap schreef is aantoonbaar in leven, en dat blijft
+ * de grens tegen vals alarm (ontwerp §7). Een gemelde blokkáde blijft ook uit een
+ * verlopen register gewoon een blokkade: leeftijd voegt twijfel toe en neemt niets weg.
  */
-export function uitvoerderToestand(item: UitvoerderItem | null, laatsteTeken: string | null, nu: Date): UitvoerderToestand {
+export function uitvoerderToestand(item: UitvoerderItem | null, laatsteTeken: string | null, nu: Date, vouchen = true): UitvoerderToestand {
   const toestand = item === null ? "onbekend" : platformtoestandVan(item.platformtoestand);
   if (BLOKKERENDE_TOESTANDEN.includes(toestand)) return "GEBLOKKEERD";
-  if (toestand === "completed" || toestand === "review_ready") return "ACTIEF";
-  const teken = item?.laatste_teken ?? laatsteTeken;
+  if (vouchen && (toestand === "completed" || toestand === "review_ready")) return "ACTIEF";
+  const teken = vouchen ? item?.laatste_teken ?? laatsteTeken : laatsteTeken;
   if (teken === null || teken === undefined) return "GEBLOKKEERD";
-  const grens = item?.houdbaar_tot != null ? ms(item.houdbaar_tot) : ms(teken) + UITVOERDER_TERMIJN_MINUTEN * 60_000;
+  const grens =
+    vouchen && item?.houdbaar_tot != null ? ms(item.houdbaar_tot) : ms(teken) + UITVOERDER_TERMIJN_MINUTEN * 60_000;
   return nu.getTime() <= grens ? "ACTIEF" : "GEBLOKKEERD";
+}
+
+/**
+ * De sleutel waaronder een uitvoerder bekend is: zijn naam zonder omringende
+ * witruimte en in kleine letters.
+ *
+ * Eén sleutel voor álle plekken die een uitvoerder opzoeken — het register, de
+ * tekenopzoeking in de werkactiviteit, de namenlijst en de taken per uitvoerder.
+ * Stond de normalisatie maar op één van die plekken, dan sprak de uitvoer
+ * zichzelf tegen: met `Laptop` in het register én in de activiteit stond dezelfde
+ * uitvoerder twee keer in `uitvoerders` met tegengestelde oordelen, en met
+ * `"laptop "` viel de taakkant stil terug op "niets aan de hand" terwijl dezelfde
+ * ronde riep dat hij geblokkeerd was (QA op AC-11, ronde 3, bevinding 3).
+ */
+export function uitvoerderSleutel(naam: string): string {
+  return naam.trim().toLowerCase();
 }
 
 /** Waarom een uitvoerder geblokkeerd heet, in één mensleesbare regel zonder secrets. */
@@ -587,34 +612,40 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
   // één tikfout van de schrijvende uitvoerder zette de hele tak uit, en de
   // uitvoer sprak zichzelf tegen (QA op AC-11, ronde 2, bevinding 3).
   const register = new Map<string, UitvoerderItem[]>();
-  const bruikbaar = registerBruikbaar(uitvoerders, nu);
+  // Een verlopen register mag niet meer voor leven instaan, maar het blijft wél
+  // een bron: elke ingang wordt bewaard. Hier werd de niet-blokkerende helft
+  // weggegooid, en dan verdween een uitvoerder die geblokkeerd is omdat zijn
+  // téken verlopen is — niet zijn platformtoestand — volledig uit de uitvoer,
+  // naam en al. Leeftijd nam zo een blokkade wég, het omgekeerde van wat de regel
+  // hierboven belooft, en de invariant van §5 brak op de echte dossiers:
+  // `0 geblokkeerd, 0 afwijking(en)` terwijl de laptop negen dagen stil lag met
+  // drie taken aan zich toegewezen. Bovendien bleef van de cloud-uitvoerder dan
+  // alleen de gepauzeerde routine over, waardoor de dispatch-terugval aansloeg en
+  // de sessie die de ronde draaide haar eigen werk blokkeerde — bevinding 2 van
+  // ronde 2 terug, nu aangezet door de klok (QA op AC-11, ronde 3, bevinding 1 en 2).
+  // Dat een verlopen register niets meer mag beweren, staat nu in `uitvoerderToestand`.
+  const vouchen = registerBruikbaar(uitvoerders, nu);
   for (const u of uitvoerders?.uitvoerders ?? []) {
-    // Leeftijd mag twijfel toevoegen, nooit een gemelde blokkade wegnemen. Een
-    // verlopen register werd hier in zijn geheel weggegooid, en daarna las
-    // `oordeel` elke uitvoerder met een vers activiteitsteken als `ACTIEF` — ook
-    // een uitvoerder die het register letterlijk als `blocked` beschrijft. Dat is
-    // het omgekeerde van wat ontwerp §2.2 en §7 eisen ("het faalt luid"), en het
-    // was bedoeld als verscherping (QA op AC-11, ronde 2, bevinding 2).
-    if (!bruikbaar && !BLOKKERENDE_TOESTANDEN.includes(platformtoestandVan(u.platformtoestand))) continue;
-    const sleutel = u.naam.toLowerCase();
+    const sleutel = uitvoerderSleutel(u.naam);
     const rij = register.get(sleutel);
     if (rij === undefined) register.set(sleutel, [u]);
     else rij.push(u);
   }
   const tekenVan = (naam: string): string | null => {
+    const sleutel = uitvoerderSleutel(naam);
     let best: string | null = null;
-    for (const a of activiteit) if (a.uitvoerder === naam && (best === null || ms(a.op) > ms(best))) best = a.op;
+    for (const a of activiteit) if (uitvoerderSleutel(a.uitvoerder) === sleutel && (best === null || ms(a.op) > ms(best))) best = a.op;
     return best;
   };
   /** Het oordeel over een rij ingangen: het ergste geval wint. */
   const oordeelOver = (naam: string, rij: readonly UitvoerderItem[]) => {
     const teken = tekenVan(naam);
-    if (rij.length === 0) return { toestand: uitvoerderToestand(null, teken, nu), reden: blokkadeReden(naam, null, teken, nu) };
-    const slechtste = rij.find((item) => uitvoerderToestand(item, teken, nu) === "GEBLOKKEERD");
+    if (rij.length === 0) return { toestand: uitvoerderToestand(null, teken, nu, vouchen), reden: blokkadeReden(naam, null, teken, nu) };
+    const slechtste = rij.find((item) => uitvoerderToestand(item, teken, nu, vouchen) === "GEBLOKKEERD");
     if (slechtste !== undefined) return { toestand: "GEBLOKKEERD" as const, reden: blokkadeReden(naam, slechtste, teken, nu) };
     return { toestand: "ACTIEF" as const, reden: blokkadeReden(naam, rij[0], teken, nu) };
   };
-  const ingangen = (naam: string) => register.get(naam.toLowerCase()) ?? [];
+  const ingangen = (naam: string) => register.get(uitvoerderSleutel(naam)) ?? [];
   /**
    * Continuïteit: wekt er nog iets de keten? Alle ingangen tellen, het ergste
    * geval wint. Dit is het oordeel voor de lijst `uitvoerders` en voor `blokkades`.
@@ -720,17 +751,24 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
   // Elke uitvoerder die het register kent of die in de werkactiviteit voorkomt,
   // met zijn toestand en de taken die aan hem hangen. Een geblokkeerde uitvoerder
   // zonder taken was anders onzichtbaar.
-  const namen = new Set<string>([...register.keys()]);
-  for (const a of activiteit) namen.add(a.uitvoerder);
-  const uitvoerderStand: UitvoerderRegie[] = [...namen]
-    .sort()
-    .map((naam) => {
-      const over = oordeel(naam);
+  // Op sleutel, niet op de ruwe naam: die mengde kleine-letter-registersleutels
+  // met ruwe activiteitsnamen, en dan stond dezelfde uitvoerder twee keer in de
+  // lijst met tegengestelde oordelen, waarvan er één in `blokkades` en in het
+  // totaal meetelde (QA op AC-11, ronde 3, bevinding 3).
+  const namen = new Map<string, string>();
+  for (const u of uitvoerders?.uitvoerders ?? []) namen.set(uitvoerderSleutel(u.naam), u.naam.trim());
+  for (const a of activiteit) if (!namen.has(uitvoerderSleutel(a.uitvoerder))) namen.set(uitvoerderSleutel(a.uitvoerder), a.uitvoerder.trim());
+  const uitvoerderStand: UitvoerderRegie[] = [...namen.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([sleutel, weergave]) => {
+      // De weergavenaam, niet de sleutel: de reden noemt de uitvoerder zoals hij
+      // heet. Opzoeken gebeurt binnen `oordeel` toch op de sleutel.
+      const over = oordeel(weergave);
       return {
-        naam,
+        naam: weergave,
         toestand: over.toestand,
         reden: over.reden,
-        taken: taken.filter((t) => t.uitvoerder !== null && t.uitvoerder.toLowerCase() === naam.toLowerCase()).map((t) => t.id),
+        taken: taken.filter((t) => t.uitvoerder !== null && uitvoerderSleutel(t.uitvoerder) === sleutel).map((t) => t.id),
       };
     });
   const blokkades = uitvoerderStand.filter((u) => u.toestand === "GEBLOKKEERD");

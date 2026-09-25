@@ -164,14 +164,30 @@ uitvoerder die het register letterlijk als `blocked` beschrijft. Dat is het
 omgekeerde van luid falen, en het was als verscherping bedoeld. Van een verlopen
 register blijven daarom de blokkerende ingangen staan.
 
+Wat "niet meer vouchen" betekent, is nauwkeuriger dan "weggooien". Het register
+gooide bij verlopen zijn niet-blokkerende ingangen weg, en dan verdween een
+uitvoerder die geblokkeerd is omdat zijn *teken* verlopen is — niet zijn
+platformtoestand — volledig uit de uitvoer, naam en al. Zo nam leeftijd alsnog
+een blokkade weg, en de invariant brak op de echte dossiers: nul geblokkeerd, nul
+afwijkingen, terwijl de laptop negen dagen stil lag met drie taken aan zich
+toegewezen. Elke ingang blijft nu bewaard; wat een verlopen register verliest is
+alleen het recht om voor leven in te staan. Zijn `laatste_teken` en
+`houdbaar_tot` zijn dan beweringen van een schrijver die zelf stilligt, en wat
+overblijft is de werkactiviteit.
+
 En één uitvoerder kan meer dan één ingang hebben — de cloud-uitvoerder is
 tegelijk een sessie die nu draait en een roosterroutine die morgen hoort te
 wekken — waarvan een `Map<naam, item>` stil de laatste overhield, afhankelijk
-van de schrijfvolgorde in het document; alle ingangen worden nu bewaard. De
-sleutel is de naam in kleine letters: op de ruwe naam kende het register
-`Laptop` "niet" terwijl het `laptop` beschrijft, en dan blokkeerde niets — één
-tikfout van de schrijvende uitvoerder zette de hele tak uit, en de uitvoer sprak
-zichzelf tegen.
+van de schrijfvolgorde in het document; alle ingangen worden nu bewaard.
+
+Eén sleutel voor álle plekken die een uitvoerder opzoeken: de naam zonder
+omringende witruimte en in kleine letters (`uitvoerderSleutel`). Stond die
+normalisatie maar op het register en niet ook op de tekenopzoeking, de namenlijst
+en de taken per uitvoerder, dan sprak de uitvoer zichzelf tegen: met `Laptop` in
+register én activiteit stond dezelfde uitvoerder twee keer in `uitvoerders` met
+tegengestelde oordelen, waarvan de spookregel in het totaal meetelde; en met
+`"laptop "` viel de taakkant stil terug op "niets aan de hand" terwijl dezelfde
+ronde riep dat hij geblokkeerd was.
 
 Met meer dan één ingang zijn het twee vragen, niet één. *Wekt er nog iets de
 keten?* telt alle ingangen en het ergste geval wint; dat is het oordeel voor de
@@ -224,6 +240,13 @@ afwijking(en)`; na `16 open, 3 geblokkeerd, 2 uitvoerder(s) geblokkeerd, 5
 afwijking(en)`, met beide geblokkeerde uitvoerders bij naam en met reden. De drie
 geblokkeerde taken zijn de taken van de onbereikbare laptop; de cloud-sessie die
 de ronde draait blokkeert haar eigen werk niet. Ander werk gaat door.
+
+Diezelfde uitkomst geldt nu ook als de klok verschuift of de schrijver zich
+vertypt: met een register van vijf minuten oud, met hetzelfde register van
+vijfentwintig uur oud, met `Laptop` met een hoofdletter en met `"laptop "` met een
+spatie erachter staat er telkens `3 geblokkeerd, 2 uitvoerder(s) geblokkeerd, 5
+afwijking(en)`. Vóór deze ronde gaven diezelfde vier metingen achtereenvolgens 3,
+0, 3 en 0 geblokkeerde taken — de klok en een spatie waren het enige verschil.
 
 **Wat nog niet werkt: het documentpad in de cloud.** De gepubliceerde Edge Function
 `jarvis-db` staat op versie 7 en haar allowlist kent `DOCUMENT_LEES_SQL` niet, dus

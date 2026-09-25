@@ -669,6 +669,74 @@ describe("regie — een geblokkeerde uitvoerder wordt gezien, ook zonder claim",
     expect(r.uitvoerders.find((u) => u.naam === "laptop")?.taken).toEqual(["T-1"]);
   });
 
+  // QA-ronde 3 op AC-11. Drie vormen waarin de uitvoer zichzelf tegensprak of
+  // stil bleef, alle drie gemeten op de echte dossiers, en alle drie met de klok
+  // of een tikfout als enige variabele.
+  describe("leeftijd en spelling mogen een blokkade niet wegnemen (ronde 3)", () => {
+    const stilgevallen = (gegenereerd: string): Uitvoerders => ({
+      gegenereerd_op: gegenereerd,
+      // Niet `blocked`: de brug meldt hem als `working` en laat hem stilvallen.
+      // Zijn blokkade zit in het verlopen teken, niet in zijn platformtoestand.
+      uitvoerders: [{ naam: "laptop", soort: "laptop", platformtoestand: "working",
+        laatste_teken: iso(UITVOERDER_TERMIJN_MINUTEN + 600), houdbaar_tot: iso(600) }],
+    });
+
+    it("laat een stilgevallen uitvoerder niet verdwijnen zodra het register zelf verloopt", () => {
+      // Het register gooide zijn niet-blokkerende ingangen weg, en dan verdween
+      // deze uitvoerder volledig — naam en al — uit `uitvoerders`, `blokkades` en
+      // het totaal. Leeftijd nam zo een blokkade wég.
+      const vers = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, stilgevallen(iso(1)), "cloud");
+      const verlopen = bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, stilgevallen(iso(UITVOERDER_TERMIJN_MINUTEN + 120)), "cloud");
+      for (const [wat, r] of [["vers", vers], ["verlopen", verlopen]] as const) {
+        expect(r.uitvoerders.map((u) => u.naam), wat).toContain("laptop");
+        expect(r.blokkades.map((u) => u.naam), wat).toContain("laptop");
+        expect(telAfwijkingen(r), wat).toBeGreaterThan(0);
+        expect(r.taken[0], wat).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+      }
+    });
+
+    it("laat een verlopen register de lopende sessie niet op de gepauzeerde routine blokkeren", () => {
+      // De productievorm. Met de sessie-ingang weggegooid bleef alleen de routine
+      // over, vond de dispatch-terugval geen ingang over nú meer, en droeg de regie
+      // de lopende sessie op haar eigen claim vrij te geven — met een reden die
+      // over de routine gaat. De klok was het enige verschil.
+      const echt = (gegenereerd: string): Uitvoerders => ({
+        gegenereerd_op: gegenereerd,
+        uitvoerders: [
+          { naam: "cloud", soort: "sessie", platformtoestand: "working", laatste_teken: iso(2) },
+          { naam: "cloud", soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "op pauze" },
+        ],
+      });
+      const claim = [act({ soort: "claim", op: iso(20) }), act({ soort: "stap", op: iso(2), tekst: "bezig" })];
+      for (const [wat, reg2] of [["vers", echt(iso(1))], ["verlopen", echt(iso(UITVOERDER_TERMIJN_MINUTEN + 120))]] as const) {
+        const r = bepaalRegie(overzicht([taak("T-1")]), claim, NU, reg2, "cloud");
+        expect(r.taken[0].toestand, wat).toBe("RUNNING");
+        expect(r.taken[0].blokkade, wat).toBeNull();
+        // En de gepauzeerde routine blijft zichtbaar: niets verdwijnt, het gevolg verschuift.
+        expect(r.blokkades.map((u) => u.naam), wat).toContain("cloud");
+      }
+    });
+
+    it("kent één uitvoerder onder één naam, wat de hoofdletters en de witruimte ook doen", () => {
+      // `Laptop` in register én activiteit gaf twee regels in `uitvoerders` met
+      // tegengestelde oordelen, waarvan de spookregel meetelde in het totaal; en
+      // `"laptop "` liet de taakkant stil terugvallen op "niets aan de hand"
+      // terwijl dezelfde ronde riep dat hij geblokkeerd was.
+      const vormen = ["laptop", "Laptop", " laptop", "laptop "];
+      for (const naam of vormen) {
+        const r = bepaalRegie(overzicht([toegewezen("laptop")]), [act({ uitvoerder: naam, op: iso(4) })], NU, reg(naam), "cloud");
+        // Eén regel, niet twee met tegengestelde oordelen. De weergavenaam houdt de
+        // spelling van het register — dat is geen tegenspraak, alleen de omringende
+        // witruimte gaat eraf.
+        expect(r.uitvoerders, naam).toHaveLength(1);
+        expect(r.uitvoerders[0].naam, naam).toBe(naam.trim());
+        expect(r.taken[0], naam).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+        expect(r.blokkades.map((u) => u.naam), naam).toEqual([naam.trim()]);
+        expect(r.blokkades[0].taken, naam).toEqual(["T-1"]);
+      }
+    });
+  });
+
   // De invariant van ontwerp §5 zelf, in één toets over elke vorm die QA vond:
   // er bestaat geen regie-uitkomst waarin een uitvoerder geblokkeerd is en het
   // getal dat de rapportage noemt nul is. Tot nu toe werd dat per casus
@@ -689,6 +757,10 @@ describe("regie — een geblokkeerde uitvoerder wordt gezien, ook zonder claim",
       { wat: "een tikfout in de toestand", regie: bepaalRegie(overzicht([zonderTaken]), [], NU,
         reg("laptop", { platformtoestand: "requires-action" as UitvoerderItem["platformtoestand"] }), "cloud") },
       { wat: "een uitvoerder met een hoofdletter in zijn naam", regie: bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("Laptop"), "cloud") },
+      { wat: "een uitvoerder met witruimte in zijn naam", regie: bepaalRegie(overzicht([toegewezen("laptop")]), [], NU, reg("laptop "), "cloud") },
+      { wat: "een stilgevallen uitvoerder in een verlopen register", regie: bepaalRegie(overzicht([toegewezen("laptop")]), [], NU,
+        { gegenereerd_op: iso(UITVOERDER_TERMIJN_MINUTEN + 120), uitvoerders: [{ naam: "laptop", soort: "laptop",
+          platformtoestand: "working", laatste_teken: iso(UITVOERDER_TERMIJN_MINUTEN + 600), houdbaar_tot: iso(600) }] }, "cloud") },
     ];
     for (const { wat, regie } of vormen) {
       expect(regie.blokkades.length, wat).toBeGreaterThan(0);
