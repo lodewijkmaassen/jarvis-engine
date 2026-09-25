@@ -29,3 +29,20 @@ describe("jarvis werk claim — twee uitvoerders niet tegelijk op één taak", (
     expect(claimGeweigerdOmdat("T-20260912-x", [act({ soort: "claim", op: iso(1), taak: "T-20260912-y" })], NU)).toBeNull();
   });
 });
+
+describe("de weigering noemt de vervalreden", () => {
+  // Zonder de vervalreden weet de aanvrager niet of hij op een levende
+  // uitvoerder wacht of op een claim die vanzelf verloopt — en dus ook niet of
+  // wachten of overslaan het juiste antwoord is.
+  it("noemt het heartbeat-venster en hoe lang het al stil is", () => {
+    const reden = claimGeweigerdOmdat("T-20260912-x", [act({ soort: "claim", op: iso(10) }), act({ soort: "heartbeat", op: iso(4) })], NU);
+    expect(reden).toContain(`${HEARTBEAT_MINUTEN.developer} minuten geen teken`);
+    expect(reden).toContain("nu 4 minuten stil");
+  });
+
+  it("laat de oude tekst staan: wie er claimde en wanneer", () => {
+    const reden = claimGeweigerdOmdat("T-20260912-x", [act({ soort: "claim", op: iso(1) })], NU);
+    expect(reden).toMatch(/al geclaimd door developer \(cloud\)/);
+    expect(reden).toMatch(/sla over of wacht op klaar\/vrijgave/);
+  });
+});

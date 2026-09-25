@@ -45,7 +45,7 @@ import {
   type TaakDossier,
 } from "./overzicht";
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
-import { ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
+import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
@@ -1994,7 +1994,19 @@ const KLAAR_KOELTIJD_MINUTEN = 10;
 export function claimGeweigerdOmdat(taak: string, activiteit: readonly Activiteit[], nu: Date): string | null {
   const lopend = uitvoeringVan(taak, activiteit, nu);
   if (lopend !== null && lopend.levend) {
-    return `${taak} is al geclaimd door ${lopend.claim.rol} (${lopend.claim.uitvoerder}) sinds ${lopend.claim.op}, laatste teken ${lopend.laatste.op}; sla over of wacht op klaar/vrijgave.`;
+    // De vervalreden hoort erbij. Zonder haar weet de aanvrager niet of hij op
+    // een levende uitvoerder wacht of op een claim die vanzelf verloopt, en
+    // dus ook niet of wachten of overslaan het juiste antwoord is.
+    const stil = Math.round((nu.getTime() - new Date(lopend.laatste.op).getTime()) / 60_000);
+    const venster = HEARTBEAT_MINUTEN[lopend.claim.rol as Rol] ?? null;
+    const verval =
+      venster === null
+        ? ""
+        : ` De claim vervalt vanzelf zodra er ${venster} minuten geen teken is; nu ${stil} minuten stil.`;
+    return (
+      `${taak} is al geclaimd door ${lopend.claim.rol} (${lopend.claim.uitvoerder}) sinds ${lopend.claim.op}, ` +
+      `laatste teken ${lopend.laatste.op}; sla over of wacht op klaar/vrijgave.${verval}`
+    );
   }
   const klaar = activiteit
     .filter((a) => a.taak === taak && a.soort === "klaar")
