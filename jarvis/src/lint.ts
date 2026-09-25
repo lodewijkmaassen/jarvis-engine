@@ -11,7 +11,7 @@
 //   waarschuwing  — zichtbaar, blokkeert niet
 import { matchtGlob, normaliseerPad } from "./classify";
 import { technischeMarkers } from "./review";
-import { leesAlternatieven, leesIngebedeKeuze } from "./overzicht";
+import { isAlternatiefLabel, leesAlternatieven, leesIngebedeKeuze, lijktOpKeuze } from "./overzicht";
 import type { JarvisConfig } from "./config";
 import { isActiefRecord, type KnowledgeRecord } from "./records";
 import { formatteerBevinding, formatteerLaadFout, type KennisLading } from "./store";
@@ -38,6 +38,8 @@ export const LINT_CODES = [
   "eigenaarslijst_technisch",
   "eigenaarslijst_keuze_niet_uitgesplitst",
   "eigenaarslijst_keuze_half",
+  "eigenaarslijst_keuze_bijna",
+  "eigenaarslijst_wacht_en_keuze",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -419,7 +421,12 @@ export function keuzeNietUitgesplitst(punt: {
  */
 export function keuzeZonderAlternatieven(regels: readonly { label: string; tekst: string }[]): boolean {
   const heeftKeuze = regels.some((r) => r.label.trim().toLowerCase() === "keuze");
-  if (!heeftKeuze) return false;
+  // Ook zonder `- Keuze:`-regel. Een punt met twee optieregels waarvan er te
+  // weinig bruikbaar zijn — hetzelfde label tweemaal, of een optie zonder
+  // gevolg — viel stil terug op `bevestiging` en kreeg "Gedaan" onder een
+  // beslissing die nooit is genomen (QA-ronde 6, B2). Wie alternatieven
+  // aandraagt, draagt er twee bruikbare aan of de poort zegt het.
+  if (!heeftKeuze && !regels.some((r) => isAlternatiefLabel(r.label))) return false;
   // Letterlijk de functie van de engine, niet een tweede telling ernaast: zolang
   // de lint op `label.trim().toLowerCase()` ontdubbelde en de engine op
   // `sleutelVan`, ging `- Optie A:` naast `- Optie-A:` groen door de poort
@@ -428,6 +435,20 @@ export function keuzeZonderAlternatieven(regels: readonly { label: string; tekst
   // het vangnet wel; die vorm meldt `eigenaarslijst_keuze_niet_uitgesplitst`.
   if (leesIngebedeKeuze(regels.find((r) => r.label.trim().toLowerCase() === "keuze")?.tekst ?? "").length >= 2) return false;
   return leesAlternatieven(regels).length < 2;
+}
+
+/**
+ * Een `- Wacht:`-regel naast een uitgeschreven keuze: het dossier zegt twee
+ * dingen tegelijk. De kaart kiest sinds QA-ronde 6 voor de keuze — een vraag
+ * blijft beantwoordbaar terwijl er op iets anders gewacht wordt — maar wélke
+ * van de twee het is, hoort in het dossier te staan en niet uit een volgorde in
+ * de code te volgen. Daarvóór wiste de wachtregel álle knoppen: de vraag stond
+ * als kaarttitel en "Later" was het enige antwoord.
+ */
+export function wachtNaastKeuze(regels: readonly { label: string; tekst: string }[]): boolean {
+  if (!regels.some((r) => r.label.trim().toLowerCase() === "wacht")) return false;
+  const heeftKeuze = regels.some((r) => r.label.trim().toLowerCase() === "keuze");
+  return heeftKeuze || leesAlternatieven(regels).length >= 2;
 }
 
 export function isAdministratieveBevestiging(tekst: string): boolean {
@@ -486,6 +507,45 @@ export function lint(invoer: LintInvoer): LintResultaat {
         `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft een "Keuze"-regel maar minder dan twee ` +
           `bruikbare "Optie"-regels; elk alternatief heeft een eigen label én een gevolg nodig, anders kan de eigenaar ` +
           `de vraag niet beantwoorden.`,
+      ),
+    );
+  }
+
+  // Een tekst die eruitziet als een keuze maar het formaat net niet haalt:
+  // cijfers in plaats van letters, geen keuzewoord, twee keer hetzelfde merk,
+  // of een leeg alternatief. De kaart kan die niet lezen, dus moet de poort hem
+  // afdwingen — anders krijgt de eigenaar "Gedaan" onder een open vraag zonder
+  // dat iets dat meldt (QA-ronde 6, B3).
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    const regels = punt.regels ?? [];
+    if (leesAlternatieven(regels).length >= 2) continue;
+    const bronnen = [punt.tekst, ...regels.filter((r) => /^(keuze|stap\s*\d+)$/i.test(r.label.trim())).map((r) => r.tekst)];
+    if (!bronnen.some((t) => lijktOpKeuze(t))) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_keuze_bijna",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" leest als een keuze — twee of meer ` +
+          `alternatieven door "of" gescheiden — maar het vangnet kan hem niet uitpakken (een ontbrekend keuzewoord, ` +
+          `tweemaal hetzelfde merk, of een leeg alternatief). Schrijf hem als "- Keuze: <vraag>" met ` +
+          `"- Optie A: <gevolg>" en "- Optie B: <gevolg>".`,
+      ),
+    );
+  }
+
+  // Een wachtregel naast een uitgeschreven keuze: het dossier zegt twee dingen
+  // tegelijk, en de code hoort dat niet stil voor de eigenaar te beslissen.
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (!wachtNaastKeuze(punt.regels ?? [])) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_wacht_en_keuze",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft zowel een "Wacht"-regel als een ` +
+          `keuze. Beide kunnen niet waar zijn voor de eigenaar: of hij kan nu kiezen, of er valt te wachten. ` +
+          `Haal de wachtregel weg, of maak er een apart punt van.`,
       ),
     );
   }

@@ -782,6 +782,77 @@ describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", 
     expect(uit.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(false);
   });
 
+  it("keurt een halve keuze ook af zonder `Keuze`-regel (QA-ronde 6, B2)", async () => {
+    const l = await lading();
+    const uit = lint({
+      ...basis(l),
+      eigenaarsPunten: [
+        { bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", regels: [{ label: "Optie A", tekst: "dit" }, { label: "Optie A", tekst: "dat" }] },
+      ],
+    });
+    expect(uit.bevindingen.some((x) => x.code === "eigenaarslijst_keuze_half" && x.severity === "fout")).toBe(true);
+  });
+
+  it("meldt een keuze die het vangnet net niet leest (QA-ronde 6, B3)", async () => {
+    const l = await lading();
+    for (const tekst of [
+      "neem (a) de ene weg, of (b) de andere weg.",
+      "kies tussen (a) de ene weg, of (A) de andere weg.",
+      "kies tussen (a), of (b) de andere weg.",
+    ]) {
+      const uit = lint({
+        ...basis(l),
+        eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Het beslispunt.", regels: [{ label: "Stap 1", tekst }] }],
+      });
+      expect(uit.bevindingen.some((x) => x.code === "eigenaarslijst_keuze_bijna" && x.severity === "fout")).toBe(true);
+    }
+  });
+
+  it("meldt een wachtregel naast een uitgeschreven keuze (QA-ronde 6, B1)", async () => {
+    const l = await lading();
+    const uit = lint({
+      ...basis(l),
+      eigenaarsPunten: [
+        {
+          bestand: "tasks/T-1/resultaat.md",
+          tekst: "De preview-bouw.",
+          regels: [
+            { label: "Keuze", tekst: "welke weg?" },
+            { label: "Optie A", tekst: "dit" },
+            { label: "Optie B", tekst: "dat" },
+            { label: "Wacht", tekst: "op de leverancier" },
+          ],
+        },
+      ],
+    });
+    expect(uit.bevindingen.some((x) => x.code === "eigenaarslijst_wacht_en_keuze" && x.severity === "fout")).toBe(true);
+  });
+
+  it("laat een wachtregel zonder keuze met rust", async () => {
+    const l = await lading();
+    const uit = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", regels: [{ label: "Wacht", tekst: "op de leverancier" }] }],
+    });
+    expect(uit.bevindingen.some((x) => x.code === "eigenaarslijst_wacht_en_keuze")).toBe(false);
+  });
+
+  it("geeft de regels van een eigenaarspunt door uit het dossier (QA-ronde 6, N5)", async () => {
+    // De doorgifte van `regels` in `leesEigenaarsPunten` had geen enkele test;
+    // zonder haar zwijgen alle drie de keuzeregels op elk echt dossier.
+    const l = await lading();
+    const zonder = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw." }],
+    });
+    expect(zonder.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(false);
+    const met = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "De preview-bouw.", regels: [{ label: "Keuze", tekst: "welke weg?" }] }],
+    });
+    expect(met.bevindingen.some((x) => x.code === "eigenaarslijst_keuze_half")).toBe(true);
+  });
+
   it("keurt een half geschreven keuze af", async () => {
     const l = await lading();
     const uit = lint({

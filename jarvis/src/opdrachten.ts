@@ -1135,7 +1135,7 @@ async function opdrachtContext(vlaggen: ReadonlyMap<string, string>): Promise<nu
  * wijziging raakt (resultaat.md in de takenmap), voor de poortregel
  * eigenaarslijst_administratief (CON-0016).
  */
-async function leesEigenaarsPunten(
+export async function leesEigenaarsPunten(
   wortel: string,
   config: JarvisConfig,
   bestanden: readonly string[],

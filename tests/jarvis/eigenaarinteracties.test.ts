@@ -13,8 +13,8 @@
  * De nummers verwijzen naar de acceptatiecriteria van T-20260917-eigenaarinteracties.
  */
 import { describe, expect, it } from "vitest";
-import { bepaalEigenaarSoort, leesAandacht, leesIngebedeKeuze, type ProjectInvoer } from "@/jarvis/src/overzicht";
-import { keuzeNietUitgesplitst, keuzeZonderAlternatieven } from "@/jarvis/src/lint";
+import { bepaalEigenaarSoort, leesAandacht, leesIngebedeKeuze, lijktOpKeuze, type ProjectInvoer } from "@/jarvis/src/overzicht";
+import { keuzeNietUitgesplitst, keuzeZonderAlternatieven, wachtNaastKeuze } from "@/jarvis/src/lint";
 
 function dossier(punt: string): ProjectInvoer {
   return {
@@ -316,7 +316,11 @@ describe("een record houdt zijn eigen knoppen (QA-ronde 3, NB-2 en B2)", () => {
           status: "open",
           datum: "2026-09-25",
           samenvatting: "Iets.",
-          velden: { opties },
+          // `leesAandacht` leest `r.opties`, niet `velden.opties`. Met het
+          // veld op de verkeerde plek bereikten deze optieregels `bouwOpties`
+          // nooit en slaagden de drie asserties hieronder ongeacht de code —
+          // ook op de merge-base (QA-ronde 6, N2).
+          opties,
           pad: `knowledge/${type}-0001.md`,
         },
       ],
@@ -342,6 +346,25 @@ describe("een record houdt zijn eigen knoppen (QA-ronde 3, NB-2 en B2)", () => {
     const items = leesAandacht(metRecord("RSK", "- Gedaan: al af"));
     expect(items[0]?.opties.map((o) => o.keuze)).not.toContain("gedaan");
   });
+
+  it("laat de betekenisdragende labels van de eigenaarslijst een record ongemoeid (QA-ronde 6, N1)", () => {
+    // `Keuze`, `Extern`, `Bevestig` en `Wacht` dragen betekenis op de
+    // eigenaarslijst, niet in de `## Opties`-sectie van een kennisrecord: daar
+    // zijn het gewone woorden. Door het filter ook dáár toe te passen
+    // verdwenen beide alternatieven van een conflict en viel de kaart terug op
+    // "Beslissing vastleggen".
+    const items = leesAandacht(metRecord("CFL", "- Doorgaan: nu bouwen\n- Wacht: nog een maand afwachten"));
+    const kn = items[0]?.opties.map((o) => o.keuze) ?? [];
+    expect(kn).toEqual(["doorgaan", "wacht", "later"]);
+    expect(kn).not.toContain("beslist");
+  });
+
+  for (const label of ["Keuze", "Extern", "Bevestig"]) {
+    it(`laat "${label}" als gewoon optielabel van een record staan (QA-ronde 6, N1)`, () => {
+      const items = leesAandacht(metRecord("CFL", `- ${label}: de ene weg\n- Anders: de andere weg`));
+      expect(items[0]?.opties.map((o) => o.keuze)).toEqual([label.toLowerCase(), "anders", "later"]);
+    });
+  }
 });
 
 describe("een halve keuze krijgt nooit een handelingsknop (QA-ronde 4, B4)", () => {
@@ -462,14 +485,177 @@ describe("QA-ronde 5 — de alternatieven bereiken de eigenaar, of de poort keur
     });
   });
 
-  describe("N4: een punt dat zegt te wachten krijgt geen handelingsknop", () => {
-    it("laat `Wacht` vóórgaan op twee optieregels", () => {
-      expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 2, labels: ["Wacht", "Optie A", "Optie B"] })).toBe("uitstel");
-      const item = eerste(
-        "- Het beslispunt.\n  - Wacht: op antwoord van de klant\n  - Optie A: de ene weg\n  - Optie B: de andere weg",
-      );
-      expect(item.interactie).toBe("uitstel");
-      expect(item.opties.map((o) => o.keuze)).toEqual(["later"]);
+  describe("N4/N7: een punt dat alleen zegt te wachten krijgt geen handelingsknop", () => {
+    it("geeft een punt met alleen een `Wacht`-regel enkel Later", () => {
+      expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 0, labels: ["Wacht"] })).toBe("uitstel");
     });
+
+    it("laat `Wacht` een externe handeling niet overrulen", () => {
+      // Anders kan de eigenaar een handeling die hij wél heeft gedaan niet
+      // melden zolang het dossier ergens een wachtregel draagt (QA-ronde 6, N7).
+      expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 0, labels: ["Wacht", "Extern"] })).toBe("externe-handeling");
+      expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 0, labels: ["Wacht", "Bevestig"] })).toBe("bevestiging");
+    });
+  });
+});
+
+describe("QA-ronde 6 — geen kaart meer die de eigenaar niet kan afhandelen", () => {
+  const r = (...paren: readonly (readonly [string, string])[]) => paren.map(([label, tekst]) => ({ label, tekst }));
+
+  describe("B1: een `Wacht`-regel wist de knoppen van een uitgeschreven keuze niet", () => {
+    const punt =
+      "- **De preview-bouw.**\n" +
+      "  - Keuze: welke weg kiezen we voor de preview-bouw?\n" +
+      "  - Optie A: een ignoreCommand toevoegen — scheelt deploys\n" +
+      "  - Optie B: niets doen — de limiet blijft vollopen\n" +
+      "  - Wacht: op het antwoord van de leverancier";
+
+    it("houdt de keuze een keuze, met beide alternatieven als knop", () => {
+      const item = eerste(punt);
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+    });
+
+    it("meldt de tegenspraak in het dossier in plaats van haar stil op te lossen", () => {
+      const regels = r(
+        ["Keuze", "welke weg kiezen we?"],
+        ["Optie A", "de ene weg"],
+        ["Optie B", "de andere weg"],
+        ["Wacht", "op de leverancier"],
+      );
+      expect(wachtNaastKeuze(regels)).toBe(true);
+    });
+
+    it("zwijgt over een wachtregel zonder keuze", () => {
+      const regels = r(["Wacht", "op de leverancier"]);
+      expect(wachtNaastKeuze(regels)).toBe(false);
+      expect(wachtNaastKeuze(r(["Optie A", "de ene weg"], ["Optie B", "de andere weg"]))).toBe(false);
+    });
+  });
+
+  describe("B2: optieregels zonder `Keuze`-regel krijgen nooit stil een Gedaan", () => {
+    for (const [wat, extra] of [
+      ["tweemaal hetzelfde label", "  - Optie A: de andere weg — dit gebeurt er dan"],
+      ["een optie zonder gevolg", "  - Optie B:"],
+      ["een label dat na normalisatie samenvalt", "  - Optie-A: de andere weg — dit gebeurt er dan"],
+    ] as const) {
+      it(`geeft alleen Later bij ${wat}`, () => {
+        const item = eerste(`- **Het beslispunt.**\n  - Optie A: de ene weg — dit gebeurt er dan\n${extra}`);
+        expect(item.interactie).toBe("uitstel");
+        expect(item.opties.map((o) => o.keuze)).toEqual(["later"]);
+      });
+    }
+
+    it("keurt die vorm af, ook zonder `Keuze`-regel", () => {
+      expect(keuzeZonderAlternatieven(r(["Optie A", "de ene weg"], ["Optie A", "de andere weg"]))).toBe(true);
+      expect(keuzeZonderAlternatieven(r(["Optie A", "de ene weg"], ["Optie B", ""]))).toBe(true);
+      expect(keuzeZonderAlternatieven(r(["Optie A", "de ene weg"]))).toBe(true);
+    });
+
+    it("laat twee bruikbare optieregels zonder `Keuze`-regel gewoon een keuze zijn", () => {
+      const item = eerste("- **Het beslispunt.**\n  - Optie A: de ene weg\n  - Optie B: de andere weg");
+      expect(item.interactie).toBe("keuze");
+      expect(keuzeZonderAlternatieven(r(["Optie A", "de ene weg"], ["Optie B", "de andere weg"]))).toBe(false);
+    });
+
+    it("laat een punt zonder enige optieregel met rust", () => {
+      expect(eerste("- Stap 1: zet de sleutel in de kluis.\n  - Controle: de sleutel staat er.").interactie).toBe("bevestiging");
+      expect(keuzeZonderAlternatieven(r(["Stap 1", "zet de sleutel in de kluis."]))).toBe(false);
+    });
+  });
+
+  describe("B3: een keuze die het vangnet net niet leest, wordt door de poort afgedwongen", () => {
+    it("leest cijfers als merk", () => {
+      const item = eerste("- Stap 1: kies tussen (1) de ene weg, of (2) de andere weg.");
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["optie-1", "optie-2", "later"]);
+    });
+
+    for (const [wat, tekst] of [
+      ["een ontbrekend keuzewoord", "neem (a) de ene weg, of (b) de andere weg."],
+      ["tweemaal hetzelfde merk", "kies tussen (a) de ene weg, of (A) de andere weg."],
+      ["een leeg alternatief", "kies tussen (a), of (b) de andere weg."],
+    ] as const) {
+      it(`herkent ${wat} als bijna-keuze`, () => {
+        expect(lijktOpKeuze(tekst)).toBe(true);
+      });
+    }
+
+    it("zwijgt over een handeling met twee delen", () => {
+      for (const tekst of [
+        "doe (a) het ene en (b) het andere.",
+        "controleer artikel 5 lid (a) en lid (b) van het contract.",
+        "zet de sleutel in de kluis.",
+      ]) {
+        expect(lijktOpKeuze(tekst)).toBe(false);
+      }
+    });
+
+    it("laat een uitgesplitste keuze een gewone keuze zijn", () => {
+      const item = eerste(
+        "- **Het beslispunt.**\n  - Stap 1: neem (a) de ene weg, of (b) de andere weg.\n" +
+          "  - Keuze: welke weg?\n  - Optie A: de ene weg\n  - Optie B: de andere weg",
+      );
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+    });
+  });
+
+  describe("N3: een lege `Keuze`-regel geeft geen kaart zonder titel", () => {
+    it("valt terug op de titel van het punt", () => {
+      const item = eerste("- **Beslispunt.**\n  - Keuze:\n  - Optie A: de ene weg\n  - Optie B: de andere weg");
+      expect(item.titel).toBe("Beslispunt.");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+    });
+
+    it("doet dat ook bij een regel met alleen opmaak", () => {
+      expect(eerste("- **Beslispunt.**\n  - Keuze: **\n  - Optie A: de ene weg\n  - Optie B: de andere weg").titel).toBe("Beslispunt.");
+    });
+  });
+
+  describe("N4/N6: wat niet in een knop past, staat wél op de kaart", () => {
+    it("bewaart de staart van een lange vraag in de toelichting", () => {
+      const lang =
+        "welke weg kiezen we voor de preview-bouw van pull requests, gegeven dat de gratis limiet van de leverancier " +
+        "al twee keer is volgelopen en de bouw dan stilvalt?";
+      const item = eerste(`- **De preview-bouw.**\n  - Keuze: ${lang}\n  - Optie A: de ene weg\n  - Optie B: de andere weg`);
+      expect(item.titel.length).toBeLessThan(lang.length);
+      expect(item.toelichting).toContain("volgelopen");
+    });
+
+    it("zet de alternatieven in de tekst als zij geen knop worden", () => {
+      const item = eerste(
+        "**akkoord_pr**\n\n- **Het akkoord.**\n  - Optie A: de ene weg\n  - Optie B: de andere weg",
+      );
+      expect(item.interactie).toBe("akkoord");
+      expect(item.toelichting).toContain("de ene weg");
+      expect(item.toelichting).toContain("de andere weg");
+    });
+  });
+});
+
+describe("N5: de regels van een eigenaarspunt komen werkelijk uit het dossier", () => {
+  // `leesEigenaarsPunten` vult wat de drie keuzeregels van de poort lezen.
+  // Zonder die doorgifte zwijgen ze op elk echt dossier, en dat had geen test.
+  it("leest label én tekst van elke regel onder een punt", async () => {
+    const { mkdtemp, mkdir, writeFile } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const { leesEigenaarsPunten } = await import("@/jarvis/src/opdrachten");
+    const wortel = await mkdtemp(path.join(tmpdir(), "jarvis-eig-"));
+    await mkdir(path.join(wortel, "tasks", "T-1"), { recursive: true });
+    await writeFile(
+      path.join(wortel, "tasks", "T-1", "resultaat.md"),
+      "# Resultaat\n\n## Wat de eigenaar nog moet doen\n\n" +
+        "- **De preview-bouw.**\n  - Keuze: welke weg kiezen we?\n  - Optie A: de ene weg\n  - Optie B: de andere weg\n",
+      "utf8",
+    );
+    const punten = await leesEigenaarsPunten(wortel, { taken_map: "tasks" } as never, ["tasks/T-1/resultaat.md"]);
+    expect(punten).toHaveLength(1);
+    expect(punten[0].tekst).toContain("De preview-bouw.");
+    expect(punten[0].regels.map((r) => r.label)).toEqual(["Keuze", "Optie A", "Optie B"]);
+    expect(punten[0].regels.map((r) => r.tekst)).toEqual(["welke weg kiezen we?", "de ene weg", "de andere weg"]);
+    // En daarmee valt het punt door de poort als een geldige keuze, niet als half.
+    expect(keuzeZonderAlternatieven(punten[0].regels)).toBe(false);
   });
 });

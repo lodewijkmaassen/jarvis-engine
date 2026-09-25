@@ -657,10 +657,19 @@ export function bouwOpties(
     else if (l === "advies") advies = r.tekst;
     else if (l === "waarom") waarom = r.tekst;
     else if (l === "controle") controle = r.tekst;
-    // `Keuze` draagt de vraag, `Extern` en `Bevestig` bepalen het soort. Alle
-    // drie zijn betekenisdragers, geen alternatieven; zonder deze regel werd
-    // "Extern" zelf een knop.
-    else if (GERESERVEERDE_LABELS.includes(l)) continue;
+    // `Keuze` draagt de vraag, `Extern`, `Bevestig` en `Wacht` bepalen het
+    // soort. Het zijn betekenisdragers, geen alternatieven; zonder deze regel
+    // werd "Extern" zelf een knop.
+    //
+    // Maar alleen op de eigenaarslijst hébben ze die betekenis. De
+    // `## Opties`-sectie van een kennisrecord gebruikt gewone woorden als
+    // label, en `- Doorgaan: …` naast `- Wacht: nog een maand afwachten` is
+    // daar een volwaardige keuze. Door dit filter ook dáár toe te passen
+    // verdwenen bij een CFL beide alternatieven en viel de kaart terug op
+    // "Beslissing vastleggen" — een regressie van QA-ronde 6 (N1). `later` en
+    // `gedaan` blijven overal beschermd: die hebben in de interface een vaste
+    // betekenis, waar het label ook staat.
+    else if (welke === "alleen-optie" && GERESERVEERDE_LABELS.includes(l)) continue;
     else if (r.tekst.length > 0 && isAlternatief(r.label, welke)) {
       const sleutel = sleutelVan(r.label);
       // `later` en `gedaan` hebben een vaste betekenis in de interface. Een
@@ -762,6 +771,34 @@ const KNOPPEN: Record<EigenaarSoort, readonly Optie[]> = {
  */
 export const KEUZEWOORD = /\b(kies|kiezen|keuze|bepaal|bepalen|welke|of\b.*\bof)\b/i;
 
+/**
+ * Een merk voor een alternatief: `(a)`, `(B)`, `(1)`. Cijfers horen erbij —
+ * QA-ronde 6 (B3) mat dat "kies tussen (1) de ene weg, of (2) de andere weg"
+ * geen keuze werd en de eigenaar "Gedaan" kreeg onder een open vraag.
+ */
+const MERK = /\(([a-zA-Z0-9])\)\s*/g;
+
+/**
+ * Ziet deze tekst eruit als een keuze zonder er een te zijn die het vangnet
+ * kan lezen? Twee of meer merken, netjes door "of" gescheiden — en toch geen
+ * bruikbare uitkomst, bijvoorbeeld doordat het keuzewoord ontbreekt, twee
+ * merken gelijk zijn of een alternatief leeg is.
+ *
+ * Criterium 2 van de taak laat precies twee wegen open: de kaart herkent de
+ * keuze, óf de poort dwingt het formaat af. QA-ronde 6 (B3) mat vier vormen
+ * waarin geen van beide gebeurde. Deze functie is de tweede weg.
+ */
+export function lijktOpKeuze(tekst: string): boolean {
+  const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "");
+  const merken = [...plat.matchAll(MERK)];
+  if (merken.length < 2) return false;
+  for (let i = 0; i + 1 < merken.length; i += 1) {
+    const tussen = plat.slice(merken[i].index + merken[i][0].length, merken[i + 1].index);
+    if (!/\b(of|dan wel)\s*$/i.test(tussen.trim())) return false;
+  }
+  return leesIngebedeKeuze(tekst).length < 2;
+}
+
 export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
   const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "");
   // Twee merken maken nog geen keuze. "doe (a) het ene en (b) het andere" is
@@ -770,7 +807,7 @@ export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
   // en zonder manier om ze af te sluiten. Er moet een keuzewoord staan én de
   // alternatieven moeten met "of" gescheiden zijn.
   if (!KEUZEWOORD.test(plat)) return [];
-  const merken = [...plat.matchAll(/\(([a-zA-Z])\)\s*/g)];
+  const merken = [...plat.matchAll(MERK)];
   if (merken.length < 2) return [];
   // Elk paar opeenvolgende merken hoort door "of" gescheiden te zijn; staat er
   // "en", dan moeten beide dingen gebeuren en is het geen keuze.
@@ -849,31 +886,50 @@ export function leesAlternatieven(regels: readonly { label: string; tekst: strin
 
 export function bepaalEigenaarSoort(invoer: {
   readonly akkoordContext: boolean;
+  /** Het aantal bruikbare, ondubbelzinnige alternatieven. */
   readonly alternatieven: number;
+  /**
+   * Het aantal regels dat zich als alternatief aandient (`- Optie A:`,
+   * `- Keuze B:`), bruikbaar of niet. Nul als het punt er geen heeft.
+   */
+  readonly alternatiefRegels?: number;
   readonly labels: readonly string[];
 }): EigenaarSoort {
   const heeft = (naam: string) => invoer.labels.some((l) => l.trim().toLowerCase() === naam);
   const noemtZichKeuze = heeft("keuze");
-  // 1. Een punt dat zégt te wachten is geen handeling en ook geen keuze: er is
-  // niets af te handelen zolang het wacht, dus ook geen knop die suggereert van
-  // wel (CON-0016). Dit stond onder de keuzetak, waardoor twee optieregels naast
-  // een `- Wacht:`-regel alsnog handelingsknoppen opleverden (QA-ronde 5, N4).
-  if (heeft("wacht")) return "uitstel";
-  // 2. Governance gaat voor — tenzij het punt zelf een vraag stelt. Een punt in
+  // 1. Governance gaat voor — tenzij het punt zelf een vraag stelt. Een punt in
   // een akkoordcontext dat `- Keuze:` schrijft, kreeg "Akkoord"/"Niet akkoord"
   // onder de vraagtitel en zijn alternatieven verdwenen volledig uit de kaart
   // (QA-ronde 5, B3). Geen van beide knoppen antwoordt "welke weg?", dus de
   // vraag wint van de context; zonder `- Keuze:`-regel blijft het een akkoord,
   // ook met optieregels erbij.
   if (invoer.akkoordContext && !noemtZichKeuze) return "akkoord";
+  // 2. Twee bruikbare alternatieven: dan is het een keuze, wat er verder ook
+  // bij staat. Een `- Wacht:`-regel haalt dat niet weg — QA-ronde 6 (B1) mat
+  // dat zo'n regel naast een volledig uitgeschreven keuze álle knoppen wiste:
+  // de vraag stond als kaarttitel en "Later" was de enige knop, met beide
+  // alternatieven nergens te zien en een groene poort. Wachten op iets externs
+  // maakt een vraag niet onbeantwoordbaar; dat de twee samen staan is een fout
+  // in het dossier, en die meldt `jarvis lint` als `eigenaarslijst_wacht_en_keuze`.
   if (invoer.alternatieven >= 2) return "keuze";
-  // 3. Een punt dat in het dossier letterlijk `- Keuze:` schrijft maar te weinig
-  // bruikbare alternatieven heeft, is een halve keuze. Het mag nooit op een
-  // handelingssoort terugvallen: dan krijgt de eigenaar "Gedaan" op een open
-  // vraag, en dat is woordelijk de klacht waarmee deze taak begon. Het wordt
-  // `uitstel` — alleen "Later" — en de poort keurt het dossier af.
-  if (noemtZichKeuze) return "uitstel";
+  // 3. Een punt dat alternatieven aandraagt maar niet bruikbaar — letterlijk
+  // `- Keuze:` zonder twee alternatieven, of optieregels waarvan er te weinig
+  // een eigen sleutel en een gevolg hebben — is een halve keuze. Het mag nooit
+  // op een handelingssoort terugvallen: dan krijgt de eigenaar "Gedaan" op een
+  // open vraag, en dat is woordelijk de klacht waarmee deze taak begon. Het
+  // wordt `uitstel` — alleen "Later" — en de poort keurt het dossier af.
+  // De tweede helft van die voorwaarde is QA-ronde 6 (B2): zonder
+  // `- Keuze:`-regel viel een punt met twee onbruikbare optieregels stil terug
+  // op `bevestiging` en kreeg het "Gedaan".
+  if (noemtZichKeuze || (invoer.alternatiefRegels ?? 0) >= 1) return "uitstel";
   if (heeft("extern")) return "externe-handeling";
+  if (heeft("bevestig")) return "bevestiging";
+  // 5. Een punt dat alleen zégt te wachten en niets aandraagt om af te handelen,
+  // is geen handeling: dan ook geen knop die suggereert van wel (CON-0016).
+  // Deze tak staat ná `extern` en `bevestig`, niet ervóór: stond hij vooraan,
+  // dan kon de eigenaar een externe handeling die hij wél had gedaan niet meer
+  // melden zolang het dossier ergens een wachtregel droeg (QA-ronde 6, N7).
+  if (heeft("wacht")) return "uitstel";
   // Anders: bevestiging, niet uitstel.
   //
   // Het uitvoeringsplan zet `uitstel` als terugval, en dat klopt zodra elk
@@ -1066,14 +1122,20 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         uitOptieregels.length >= 2 ? [] : (vangnetBronnen.map((t) => leesIngebedeKeuze(t)).find((o) => o.length >= 2) ?? []);
       const alternatieveOpties = uitOptieregels.length >= 2 ? uitOptieregels : ingebed;
       const alternatieven = alternatieveOpties.length;
+      const alternatiefRegels = item.regels.filter((r) => isAlternatiefLabel(r.label)).length;
       const interactie = bepaalEigenaarSoort({
         akkoordContext,
         alternatieven,
+        alternatiefRegels,
         labels: item.regels.map((r) => r.label),
       });
       // De titel is de hele vraag. Staat er een `Keuze`-regel, dan is dát de
-      // vraag; anders de titel van het punt zelf.
-      const titel = keuzeRegel ? kortTitel(keuzeRegel.tekst, 120) : item.titel;
+      // vraag; anders de titel van het punt zelf. Een lege of alleen uit opmaak
+      // bestaande `Keuze`-regel geeft géén lege kaarttitel: dan viel de
+      // lijstregel in de app weg en zag de eigenaar een rij zonder tekst
+      // (QA-ronde 6, N3).
+      const vraag = keuzeRegel !== undefined && heeftGevolg(keuzeRegel.tekst) ? keuzeRegel.tekst.trim() : null;
+      const titel = vraag !== null ? kortTitel(vraag, 120) : item.titel;
       const gebouwd = bouwOpties(item.regels, KNOPPEN[interactie], "alleen-optie");
       // De knoppen volgen uit het soort — dat is de hele invariant van deze
       // verzameling, en hij mag niet van een toevallige labelregel afhangen.
@@ -1086,17 +1148,28 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // De alternatieven komen uit de optieregels zelf, niet uit wat
       // `bouwOpties` er verder van maakt: anders glippen losse labelregels als
       // `- Let op: …` er alsnog als knop tussen.
-      const opties =
-        interactie === "keuze" && alternatieveOpties.length >= 2
-          ? [...alternatieveOpties, OPTIE_LATER]
-          : [...KNOPPEN[interactie === "keuze" ? "uitstel" : interactie], OPTIE_LATER];
+      const wordenKnoppen = interactie === "keuze" && alternatieveOpties.length >= 2;
+      const opties = wordenKnoppen
+        ? [...alternatieveOpties, OPTIE_LATER]
+        : [...KNOPPEN[interactie === "keuze" ? "uitstel" : interactie], OPTIE_LATER];
+      // Wat niet in een knop terechtkomt, hoort wél op de kaart te staan.
+      // Zonder dit verdwenen twee dingen volledig uit het beeld van de
+      // eigenaar (QA-ronde 6, N4 en N6): de staart van een vraag die langer is
+      // dan de titel, en de alternatieven van een punt dat om een andere reden
+      // geen keuzeknoppen krijgt — een akkoordcontext, of een halve keuze. Hij
+      // zag dan een vraag zonder antwoord én zonder de tekst die het dossier
+      // voor hem had opgeschreven.
+      const staart = vraag !== null && vraag !== titel ? [vraag] : [];
+      const verloren = wordenKnoppen ? [] : alternatieveOpties.map((o) => `${o.label}: ${o.gevolg}`);
+      const extraTekst = [...staart, ...verloren];
+      const basisToelichting = item.context ? `${item.context}. ${item.toelichting}` : item.toelichting;
       items.push({
         id: `${p}:${taak.id}:${korteSleutel(item.titel)}`,
         project: taak.opdracht["project"] ?? p,
         soort: interactie === "keuze" || interactie === "akkoord" ? "beslissing" : "actie",
         interactie,
         titel,
-        toelichting: item.context ? `${item.context}. ${item.toelichting}` : item.toelichting,
+        toelichting: extraTekst.length > 0 ? [basisToelichting, ...extraTekst].filter((t) => t.trim().length > 0).join(" — ") : basisToelichting,
         bron: `tasks/${taak.id}/resultaat.md`,
         urgentie: blokkerend ? "hoog" : naMerge ? "laag" : "midden",
         ...metWaarom(

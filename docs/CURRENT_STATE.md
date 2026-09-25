@@ -44,24 +44,35 @@ voorgelegd, bereikten de knoppen nooit, en hij heeft die kaart uiteindelijk met
 `keuze`, `externe-handeling`, `bevestiging`, `uitstel` — en `bepaalEigenaarSoort`
 kiest in deze vaste volgorde, waarbij de eerste tak die past wint:
 
-1. een `- Wacht:`-regel — dan `uitstel`, alleen "Later";
-2. een akkoordcontext (`akkoord_pr`) zónder `- Keuze:`-regel — dan `akkoord`;
-3. twee of meer bruikbare alternatieven — dan `keuze`;
-4. een `- Keuze:`-regel zonder die twee alternatieven — dan `uitstel`;
-5. een `- Extern:`-regel — dan `externe-handeling`;
-6. anders `bevestiging` als veilige terugval, waar `- Bevestig:` mee samenvalt.
+1. een akkoordcontext (`akkoord_pr`) zónder `- Keuze:`-regel — dan `akkoord`;
+2. twee of meer bruikbare alternatieven — dan `keuze`;
+3. een punt dat alternatieven aandraagt maar niet bruikbaar (een `- Keuze:`-regel
+   zonder twee alternatieven, of optieregels waarvan er te weinig een eigen
+   sleutel én een gevolg hebben) — dan `uitstel`, alleen "Later";
+4. een `- Extern:`-regel — dan `externe-handeling`;
+5. een `- Bevestig:`-regel — dan `bevestiging`;
+6. een `- Wacht:`-regel — dan `uitstel`;
+7. anders `bevestiging` als veilige terugval.
 
 De knoppen volgen uit het soort: "Gedaan" alleen bij een externe
 handeling of een bevestiging, akkoordknoppen alleen waar de governance een
 autorisatie eist, en bij een keuze de alternatieven zelf, elk met zijn gevolg.
 
-Twee takken staan in die volgorde omdat onafhankelijke QA ze eerder andersom
-mat. `- Wacht:` gaat vóór de keuze, want een punt dat zegt te wachten heeft
-niets af te handelen, ook niet met twee optieregels eronder. En een punt dat
-zelf een vraag stelt gaat vóór de akkoordcontext: een keuze onder `akkoord_pr`
-kreeg "Akkoord"/"Niet akkoord" onder de vraagtitel, en de alternatieven die het
-dossier had opgeschreven verdwenen volledig uit de kaart. Zonder `- Keuze:`-regel
-blijft een akkoord een akkoord, ook met optieregels erbij.
+Drie takken staan waar ze staan omdat onafhankelijke QA ze eerder ergens anders
+mat. Een punt dat zelf een vraag stelt gaat vóór de akkoordcontext: een keuze
+onder `akkoord_pr` kreeg "Akkoord"/"Niet akkoord" onder de vraagtitel, en de
+alternatieven die het dossier had opgeschreven verdwenen volledig uit de kaart.
+Zonder `- Keuze:`-regel blijft een akkoord een akkoord, ook met optieregels
+erbij. `- Wacht:` staat juist achteraan, en stond één ronde ten onrechte vooraan:
+daar wiste zij álle knoppen van een volledig uitgeschreven keuze — de vraag als
+kaarttitel, "Later" als enige antwoord, beide alternatieven nergens — en ook de
+"Gedaan" van een externe handeling die de eigenaar wél had verricht. Wachten op
+iets externs maakt een vraag niet onbeantwoordbaar. Dat de twee samen in één punt
+staan is een fout in het dossier, en de poort meldt haar als
+`eigenaarslijst_wacht_en_keuze` in plaats van haar stil op te lossen. De derde
+tak telt niet alleen een letterlijke `- Keuze:`-regel: een punt met twee
+optieregels waarvan er te weinig bruikbaar zijn, viel anders stil terug op
+`bevestiging` en kreeg "Gedaan" onder een beslissing die nooit is genomen.
 
 De alternatieven komen uit eigen optieregels; `- Keuze:` draagt de vraag, zodat
 de titel de hele vraag is. Labels die met `Optie` of `Keuze` beginnen én daarna
@@ -78,7 +89,31 @@ lint op de ruwe labeltekst en de engine op `sleutelVan`; `- Optie A:` naast
 alleen "Later" gaf. Een onbruikbaar alternatief maakt de hele keuze onbruikbaar
 in plaats van stil weg te vallen: twee labels met dezelfde sleutel zijn niet aan
 een antwoord toe te wijzen, en een optietekst die alleen opmaak is (`**`, `-`)
-draagt geen gevolg. Het punt wordt dan een halve keuze en de poort keurt het af.
+draagt geen gevolg. Het punt wordt dan een halve keuze en de poort keurt het af —
+ook zonder `- Keuze:`-regel, want wie alternatieven aandraagt draagt er twee
+bruikbare aan.
+
+Het vangnet leest ook cijfers als merk (`(1)` naast `(a)`). Wat het net níét kan
+uitpakken, dwingt de poort af: een tekst met twee of meer merken netjes door "of"
+gescheiden die toch geen bruikbare keuze oplevert — een ontbrekend keuzewoord,
+tweemaal hetzelfde merk, een leeg alternatief — levert
+`eigenaarslijst_keuze_bijna`. Criterium 2 laat precies twee wegen open, de kaart
+herkent de keuze of de poort dwingt het formaat af, en vier vormen vielen tussen
+die twee door.
+
+Wat niet in een knop terechtkomt, staat nu wél op de kaart: de staart van een
+vraag die langer is dan de titel, en de alternatieven van een punt dat om een
+andere reden geen keuzeknoppen krijgt. De eigenaar zag daar eerst een vraag
+zonder antwoord én zonder de tekst die het dossier voor hem had opgeschreven. Een
+lege `- Keuze:`-regel geeft geen lege kaarttitel meer maar valt terug op de titel
+van het punt.
+
+De betekenisdragende labels gelden alleen op de eigenaarslijst. In de
+`## Opties`-sectie van een kennisrecord zijn `Keuze`, `Extern`, `Bevestig` en
+`Wacht` gewone woorden, en `- Doorgaan: nu bouwen` naast `- Wacht: nog een maand
+afwachten` is daar een volwaardige keuze; één ronde lang verdwenen bij een
+conflictrecord beide alternatieven. `later` en `gedaan` blijven overal beschermd:
+die hebben in de interface een vaste betekenis, waar het label ook staat.
 
 De knoppen volgen strikt uit het soort. Een eerdere opzet liet elke
 `- Label: tekst`-regel vóórgaan op de knoppen van het soort; daardoor verloor
