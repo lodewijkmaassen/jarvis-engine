@@ -94,16 +94,42 @@ ook zonder `- Keuze:`-regel, want wie alternatieven aandraagt draagt er twee
 bruikbare aan.
 
 Het vangnet leest ook cijfers als merk (`(1)` naast `(a)`). Wat het net níét kan
-uitpakken, dwingt de poort af: een tekst met twee of meer merken netjes door "of"
-gescheiden die toch geen bruikbare keuze oplevert — een ontbrekend keuzewoord,
-tweemaal hetzelfde merk, een leeg alternatief — levert
-`eigenaarslijst_keuze_bijna`. Criterium 2 laat precies twee wegen open, de kaart
-herkent de keuze of de poort dwingt het formaat af, en vier vormen vielen tussen
-die twee door.
+uitpakken, dwingt de poort af met `eigenaarslijst_keuze_bijna`. Die regel is
+bewust lósser dan de lezer en niet strenger: één ronde deed zij dezelfde strenge
+scheidingstoets, en toen glipte elke keuze waarvan het merk achteraan stond
+("betaalt (a) of pas na de levering (b)"), waar een bijzin tussen "of" en het
+volgende merk stond, waar "ofwel" stond, waar een derde merk tussenkwam, of die
+helemaal geen merken had ("kies of je nu betaalt of pas na de levering"), door
+beide netten heen. De toets is nu: er staat een keuzewoord, én er is een
+aanwijzing dat er meer dan één mogelijkheid is — twee merken, of twee keer "of".
+
+Dat keuzewoord is dragend. Zonder die eis gold "twee merken met een of ertussen"
+als keuze, en dan keurt de poort `- Lees punt (a) of (b) van het contract door`
+af terwijl dat een verwijzing is. Een tekst met twee merken en géén keuzewoord is
+vaker een verwijzing dan een vraag en valt daarom buiten de regel. Criterium 2
+laat precies twee wegen open — de kaart herkent de keuze, of de poort dwingt het
+formaat af — en beide grenzen zijn met echte teksten gemeten.
+
+De poort leest de keuze ook in een `- Extern:`-, `- Bevestig:`- of
+`- Wacht:`-regel, niet alleen in `- Stap N:` en `- Keuze:`. Dat verschil was
+willekeurig: dezelfde keuze in een `Extern`-regel bereikte de knoppen niet, stond
+nergens op de kaart en de poort zweeg. `- Let op:` en `- Controle:` blijven er
+buiten: een waarschuwing hoort geen kaart met knoppen te worden, en een controle
+is werk van Jarvis (CON-0016).
+
+Optieregels onder een akkoordcontext zonder `- Keuze:`-regel geven
+`eigenaarslijst_akkoord_en_keuze`. De kaart blijft een akkoord — dat is de
+gedocumenteerde keuze — maar het dossier zegt dan twee dingen tegelijk, net als
+bij een wachtregel, en de poort zegt dat in plaats van het stil op te lossen.
 
 Wat niet in een knop terechtkomt, staat nu wél op de kaart: de staart van een
-vraag die langer is dan de titel, en de alternatieven van een punt dat om een
-andere reden geen keuzeknoppen krijgt. De eigenaar zag daar eerst een vraag
+vraag die langer is dan de titel, de alternatieven van een punt dat om een andere
+reden geen keuzeknoppen krijgt, en de tekst van de `- Extern:`-, `- Bevestig:`- en
+`- Wacht:`-regels. Die laatste verdween volledig, omdat zij het soort bepaalt en
+daarom als knop wordt overgeslagen: een punt met `- Extern: log in op het
+platform en zet de sleutel onder deze naam` kwam aan als een kop met één knop
+"Gedaan" en zonder de instructie, en bij een wachtregel zag de eigenaar niet
+waarop gewacht werd. De eigenaar zag daar eerst een vraag
 zonder antwoord én zonder de tekst die het dossier voor hem had opgeschreven. Een
 lege `- Keuze:`-regel geeft geen lege kaarttitel meer maar valt terug op de titel
 van het punt.
@@ -131,11 +157,12 @@ dossierpunt expliciet zegt wat het is. Zolang dat niet zo is, betekent die
 terugval iets anders: elk bestaand eigenaarspunt zonder `Extern`- of
 `Bevestig`-regel verliest zijn enige knop en is voor de eigenaar niet meer af te
 sluiten. Onafhankelijke QA heeft dat twee rondes achter elkaar als verlies van
-werkend gedrag gemeten. `uitstel` heeft twee ingangen en geen andere: een
-expliciete `- Wacht:`-regel, en een `- Keuze:`-regel die haar twee bruikbare
-alternatieven niet aanreikt. Zodra de dossiers zijn nagelopen kan de terugval
-alsnog verschuiven, en is dat een keuze met een lege verzameling gevallen in
-plaats van een stille breuk.
+werkend gedrag gemeten. `uitstel` heeft drie ingangen en geen andere: een
+expliciete `- Wacht:`-regel, een `- Keuze:`-regel die haar twee bruikbare
+alternatieven niet aanreikt, en een punt dat wél optieregels draagt maar er te
+weinig bruikbare — ook zonder `- Keuze:`-regel. Zodra de dossiers zijn nagelopen
+kan de terugval alsnog verschuiven, en is dat een keuze met een lege verzameling
+gevallen in plaats van een stille breuk.
 
 Een bronregel kan de vaste knoppen niet meer overnemen. `later` en `gedaan`
 hebben een vaste betekenis in de interface; een kennisrecord met een regel
@@ -160,6 +187,17 @@ waarom er niets te doen valt — voor de eigenaar niet te onderscheiden van een
 kaart waarvan de knoppen zijn weggevallen. De invariant is daarmee volledig
 serverside getoetst en er is geen weergavecontrole die hem zou opmerken als hij
 breekt. Gemeten door onafhankelijke QA, ronde 5.
+
+De poort zag de eerste ongecommitte wijziging niet. `git status --porcelain` zet
+de toestand in de eerste twee tekens, en een van die twee kan een spatie zijn:
+`" M pad"`. De git-aanroep trimde haar uitvoer, waardoor die spatie van de eerste
+regel verdween en het afsnijden van de statuskolom daarna drie tekens van het
+pád afhaalde — `" M tasks/x"` werd `"sks/x"`. De eerste ongecommitte wijziging
+viel daardoor buiten elke poortcontrole en `jarvis lint` gaf tijdens het
+schrijven een vals groen; na committen vuurde alles weer, dus CI en de poort
+vóór een pull request waren niet geraakt. De porcelain-uitvoer wordt nu ongetrimd
+gelezen en per regel ontleed, met een herbenoeming (`oud -> nieuw`) op het nieuwe
+pad. Gevonden door onafhankelijke QA, ronde 7.
 
 De controle schaalt mee met de wijziging. Het rolcontract eiste vóór elke
 commit alle vier de projectcontroles, ook bij een commit die alleen een dossier

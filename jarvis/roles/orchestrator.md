@@ -65,11 +65,14 @@ beslisverzoek of de mededeling dat er geen is, (6) de eerstvolgende logische
 stap. Maximaal één A4; details staan in de onderliggende bestanden.
 
 Onder `## Wat de eigenaar nog moet doen` geldt een vorm, en die staat hier omdat
-jij de schrijver van dit bestand bent. De poort controleert daarvan de
-keuzevorm — `eigenaarslijst_keuze_half`, `eigenaarslijst_keuze_niet_uitgesplitst`,
-`eigenaarslijst_keuze_bijna` en `eigenaarslijst_wacht_en_keuze` — en verder niets:
-of een handeling werkelijk `- Stap N:` en `- Controle:` draagt, controleert geen
-lintregel. Reken daar dus niet op. Per punt:
+jij de schrijver van dit bestand bent. De poort controleert daarvan de keuzevorm
+(`eigenaarslijst_keuze_half`, `eigenaarslijst_keuze_niet_uitgesplitst`,
+`eigenaarslijst_keuze_bijna`, `eigenaarslijst_wacht_en_keuze`,
+`eigenaarslijst_akkoord_en_keuze`), of het punt geen administratieve bevestiging
+is die Jarvis zelf hoort te doen (`eigenaarslijst_administratief`, fout), en of
+het in gewone taal staat (`eigenaarslijst_technisch`, waarschuwing). Verder
+niets: of een handeling werkelijk `- Stap N:` en `- Controle:` draagt, controleert
+geen lintregel. Reken daar dus niet op. Per punt:
 
 - een handeling schrijf je als `- Stap N: <wat>` met een `- Controle: <hoe je
   ziet dat het gelukt is>` (`LRN-0014`);
@@ -77,10 +80,17 @@ lintregel. Reken daar dus niet op. Per punt:
   alternatieven `- Optie A: <gevolg>` en `- Optie B: <gevolg>`. Labels moeten
   van elkaar verschillen ná normalisatie — `Optie A` en `Optie-A` zijn hetzelfde
   label — en elk alternatief heeft een gevolg in woorden, geen opmaakteken;
-- een punt dat op iets buiten Jarvis wacht krijgt `- Wacht: <waarop>`; dan
-  verschijnt er geen handelingsknop. Zet die regel nooit in hetzelfde punt als een
-  keuze: de vraag blijft dan beantwoordbaar en de poort meldt de tegenspraak. Maak
-  er twee punten van, of laat de wachtregel weg;
+- een handeling die de eigenaar buiten Jarvis verricht, krijgt `- Extern: <wat>`;
+  dan verschijnt "Gedaan". Een punt dat hij alleen hoeft te bevestigen krijgt
+  `- Bevestig: <wat>`. Dat zijn de enige twee ingangen naar die twee soorten:
+  schrijf je alleen `- Stap N:` en `- Controle:`, dan komt het punt op de veilige
+  terugval `bevestiging` uit, met dezelfde knoppen als `- Bevestig:`;
+- een punt dat op iets buiten Jarvis wacht krijgt `- Wacht: <waarop>`. Staat die
+  regel alleen, dan verschijnt er geen handelingsknop; staat er een `- Extern:`-
+  of `- Bevestig:`-regel bij, dan houdt de eigenaar zijn "Gedaan" — anders kan hij
+  een handeling die hij wél heeft verricht niet melden. Zet een wachtregel nooit
+  in hetzelfde punt als een keuze: de vraag blijft dan beantwoordbaar en de poort
+  meldt de tegenspraak. Maak er twee punten van, of laat de wachtregel weg;
 - zet een keuze nooit alleen in de lopende tekst. `jarvis lint` keurt
   `eigenaarslijst_keuze_niet_uitgesplitst` en `eigenaarslijst_keuze_half` af,
   want zonder die vorm bereiken de alternatieven de knoppen op de telefoon van

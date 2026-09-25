@@ -782,6 +782,50 @@ describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", 
     expect(uit.bevindingen.some((x) => String(x.code).startsWith("eigenaarslijst_keuze"))).toBe(false);
   });
 
+  it("meldt optieregels onder een akkoordcontext (QA-ronde 7, bevinding 6)", async () => {
+    const l = await lading();
+    const regels = [{ label: "Optie A", tekst: "dit" }, { label: "Optie B", tekst: "dat" }];
+    const met = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Het akkoord.", regels, akkoordContext: true }],
+    });
+    expect(met.bevindingen.some((x) => x.code === "eigenaarslijst_akkoord_en_keuze" && x.severity === "fout")).toBe(true);
+    // Zonder akkoordcontext is het een gewone keuze, en met een `Keuze`-regel is
+    // het er ook een: dan wint de vraag van de context en is er niets te melden.
+    const zonder = lint({
+      ...basis(l),
+      eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Het punt.", regels }],
+    });
+    expect(zonder.bevindingen.some((x) => x.code === "eigenaarslijst_akkoord_en_keuze")).toBe(false);
+    const metKeuze = lint({
+      ...basis(l),
+      eigenaarsPunten: [
+        {
+          bestand: "tasks/T-1/resultaat.md",
+          tekst: "Het punt.",
+          regels: [{ label: "Keuze", tekst: "welke weg?" }, ...regels],
+          akkoordContext: true,
+        },
+      ],
+    });
+    expect(metKeuze.bevindingen.some((x) => x.code === "eigenaarslijst_akkoord_en_keuze")).toBe(false);
+  });
+
+  it("meldt een keuze in een `Extern`-regel (QA-ronde 7, bevinding 2)", async () => {
+    const l = await lading();
+    const uit = lint({
+      ...basis(l),
+      eigenaarsPunten: [
+        {
+          bestand: "tasks/T-1/resultaat.md",
+          tekst: "Er ligt iets bij jou.",
+          regels: [{ label: "Extern", tekst: "kies tussen (a) de ene sleutel, of (b) de andere sleutel." }],
+        },
+      ],
+    });
+    expect(uit.bevindingen.some((x) => x.code === "eigenaarslijst_keuze_niet_uitgesplitst" && x.severity === "fout")).toBe(true);
+  });
+
   it("keurt een halve keuze ook af zonder `Keuze`-regel (QA-ronde 6, B2)", async () => {
     const l = await lading();
     const uit = lint({
@@ -796,9 +840,11 @@ describe("eigenaarslijst_keuze — de poort bewaakt het formaat van een keuze", 
   it("meldt een keuze die het vangnet net niet leest (QA-ronde 6, B3)", async () => {
     const l = await lading();
     for (const tekst of [
-      "neem (a) de ene weg, of (b) de andere weg.",
       "kies tussen (a) de ene weg, of (A) de andere weg.",
       "kies tussen (a), of (b) de andere weg.",
+      "Kies of je de rekening nu betaalt (a) of pas na de levering (b).",
+      "kies tussen (a) de ene weg, ofwel (b) de andere weg.",
+      "Kies of je nu betaalt of pas na de levering.",
     ]) {
       const uit = lint({
         ...basis(l),

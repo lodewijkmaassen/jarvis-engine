@@ -572,9 +572,16 @@ describe("QA-ronde 6 — geen kaart meer die de eigenaar niet kan afhandelen", (
     });
 
     for (const [wat, tekst] of [
-      ["een ontbrekend keuzewoord", "neem (a) de ene weg, of (b) de andere weg."],
       ["tweemaal hetzelfde merk", "kies tussen (a) de ene weg, of (A) de andere weg."],
       ["een leeg alternatief", "kies tussen (a), of (b) de andere weg."],
+      // QA-ronde 7, bevinding 1: vijf vormen die zowel het vangnet als de poort
+      // ontglipten omdat `lijktOpKeuze` dezelfde strenge scheidingstoets deed
+      // als de lezer.
+      ["een merk ná het alternatief", "Kies of je de rekening nu betaalt (a) of pas na de levering (b)."],
+      ["een bijzin tussen de alternatieven", "kies tussen (a) de ene weg, of, als je liever wacht, (b) de andere weg."],
+      ['"ofwel" in plaats van "of"', "kies tussen (a) de ene weg, ofwel (b) de andere weg."],
+      ["een derde merk ertussen", "kies tussen (a) de ene weg (1), of (b) de andere weg."],
+      ["een keuze zonder merken", "Kies of je nu betaalt of pas na de levering."],
     ] as const) {
       it(`herkent ${wat} als bijna-keuze`, () => {
         expect(lijktOpKeuze(tekst)).toBe(true);
@@ -589,6 +596,24 @@ describe("QA-ronde 6 — geen kaart meer die de eigenaar niet kan afhandelen", (
       ]) {
         expect(lijktOpKeuze(tekst)).toBe(false);
       }
+    });
+
+    it("zwijgt over een verwijzing met merken zonder keuzewoord (QA-ronde 7, bevinding 7)", () => {
+      // Twee merken met een "of" ertussen zijn niet genoeg: dit zijn
+      // verwijzingen, geen vragen. Het keuzewoord is de discriminant.
+      for (const tekst of [
+        "Lees punt (a) of (b) van het contract door voordat je betaalt.",
+        "Betaal de factuur (1) of (2), ze horen bij dezelfde levering.",
+        "neem (a) de ene weg, of (b) de andere weg.",
+      ]) {
+        expect(lijktOpKeuze(tekst)).toBe(false);
+      }
+    });
+
+    it("zwijgt over een ja-nee-vraag met één \"of\"", () => {
+      // "beslissen of X mag" is geen keuze tussen twee benoemde alternatieven.
+      expect(lijktOpKeuze("beslissen of X mag.")).toBe(false);
+      expect(lijktOpKeuze("Kies in de app of een samenvoeging een taaknummer moet dragen.")).toBe(false);
     });
 
     it("laat een uitgesplitste keuze een gewone keuze zijn", () => {
@@ -657,5 +682,67 @@ describe("N5: de regels van een eigenaarspunt komen werkelijk uit het dossier", 
     expect(punten[0].regels.map((r) => r.tekst)).toEqual(["welke weg kiezen we?", "de ene weg", "de andere weg"]);
     // En daarmee valt het punt door de poort als een geldige keuze, niet als half.
     expect(keuzeZonderAlternatieven(punten[0].regels)).toBe(false);
+  });
+});
+
+describe("QA-ronde 7 — de laatste twee paden, en een oude fout in de poort", () => {
+  const r = (...paren: readonly (readonly [string, string])[]) => paren.map(([label, tekst]) => ({ label, tekst }));
+
+  describe("bevinding 2: een keuze in een `Extern`- of `Bevestig`-regel bereikt de poort", () => {
+    for (const label of ["Extern", "Bevestig", "Wacht"]) {
+      it(`meldt een keuze in een \`${label}\`-regel als niet-uitgesplitst`, () => {
+        const regels = r([label, "kies tussen (a) de ene sleutel, of (b) de andere sleutel."]);
+        expect(keuzeNietUitgesplitst({ tekst: "Er ligt iets bij jou.", regels })).toBe(true);
+      });
+    }
+
+    it("laat `Let op` en `Controle` er buiten: een waarschuwing is geen kaart met knoppen", () => {
+      for (const label of ["Let op", "Controle"]) {
+        const regels = r([label, "kies tussen (a) de ene weg, of (b) de andere weg."]);
+        expect(keuzeNietUitgesplitst({ tekst: "Er ligt iets bij jou.", regels })).toBe(false);
+      }
+    });
+  });
+
+  describe("bevinding 3: de tekst van een soortbepalende regel staat op de kaart", () => {
+    it("zet de instructie van een `Extern`-regel in de toelichting", () => {
+      const item = eerste(
+        "- **Zet de sleutel in de kluis.**\n" +
+          "  - Extern: log in op het platform, open Instellingen en plak de waarde onder de afgesproken naam\n" +
+          "  - Controle: de naam staat in de lijst",
+      );
+      expect(item.interactie).toBe("externe-handeling");
+      expect(item.toelichting).toContain("log in op het platform");
+      expect(item.controle).toContain("staat in de lijst");
+    });
+
+    it("zegt waarop gewacht wordt", () => {
+      const item = eerste("- **Het punt.**\n  - Wacht: op het antwoord van de leverancier");
+      expect(item.interactie).toBe("uitstel");
+      expect(item.toelichting).toContain("antwoord van de leverancier");
+    });
+  });
+
+  describe("bevinding 5: de eerste ongecommitte wijziging valt niet meer buiten de poort", () => {
+    it("leest het pad van elke statusregel, ook de eerste met een leidende spatie", async () => {
+      const { padenUitPorcelain } = await import("@/jarvis/src/opdrachten");
+      expect(padenUitPorcelain(" M tasks/T-1/resultaat.md\n?? nieuw.md\n")).toEqual([
+        "tasks/T-1/resultaat.md",
+        "nieuw.md",
+      ]);
+      expect(padenUitPorcelain("MM a.ts\n M b.ts\nA  c.ts\n")).toEqual(["a.ts", "b.ts", "c.ts"]);
+    });
+
+    it("neemt bij een herbenoeming het nieuwe pad", () => {
+      return import("@/jarvis/src/opdrachten").then(({ padenUitPorcelain }) => {
+        expect(padenUitPorcelain("R  oud.md -> nieuw.md\n")).toEqual(["nieuw.md"]);
+      });
+    });
+
+    it("negeert lege regels en een lege uitvoer", async () => {
+      const { padenUitPorcelain } = await import("@/jarvis/src/opdrachten");
+      expect(padenUitPorcelain("")).toEqual([]);
+      expect(padenUitPorcelain("\n\n")).toEqual([]);
+    });
   });
 });

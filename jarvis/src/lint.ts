@@ -40,6 +40,7 @@ export const LINT_CODES = [
   "eigenaarslijst_keuze_half",
   "eigenaarslijst_keuze_bijna",
   "eigenaarslijst_wacht_en_keuze",
+  "eigenaarslijst_akkoord_en_keuze",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -98,6 +99,8 @@ export type LintInvoer = {
      * tekst kon de poort dat niet zien.
      */
     readonly regels?: readonly { readonly label: string; readonly tekst: string }[];
+    /** Staat dit punt onder een governancecontext die een autorisatie vraagt? */
+    readonly akkoordContext?: boolean;
   }[];
   /**
    * De commitlog was niet volledig en eenduidig te lezen (een record zonder
@@ -391,6 +394,29 @@ export function toetsRandvoorwaarden(
  * als één knop "Gedaan". De engine herkent zo'n regel nog wel (het vangnet),
  * maar dit is de norm en de poort bewaakt hem.
  */
+/**
+ * De regels waarin een keuze kan schuilen: de tekst van het punt zelf, de
+ * `Keuze`-regel, de stapregels, en de regels die het soort bepalen.
+ *
+ * Die laatste drie stonden er niet bij, en daardoor zweeg de poort over een
+ * keuze in `- Extern:` of `- Bevestig:` terwijl zij dezelfde keuze in
+ * `- Stap 1:` wel meldde. Dat verschil was willekeurig: de eigenaar kreeg één
+ * knop "Gedaan" en zag zijn alternatieven nergens (QA-ronde 7, bevinding 2).
+ * `Let op` en `Controle` blijven eruit: een waarschuwing hoort geen kaart met
+ * knoppen te worden, en een controle is werk van Jarvis (CON-0016).
+ */
+export function keuzeBronnen(
+  tekst: string,
+  regels: readonly { readonly label: string; readonly tekst: string }[],
+): readonly string[] {
+  return [
+    tekst,
+    ...regels
+      .filter((r) => /^(keuze|extern|bevestig|wacht|stap\s*\d+)$/i.test(r.label.trim()))
+      .map((r) => r.tekst),
+  ];
+}
+
 export function keuzeNietUitgesplitst(punt: {
   readonly tekst: string;
   readonly regels?: readonly { readonly label: string; readonly tekst: string }[];
@@ -405,11 +431,7 @@ export function keuzeNietUitgesplitst(punt: {
   // "Stap N:" in de toelichting, en daarna keek zij alleen naar de toelichting
   // terwijl de stapregels van een LRN-0014-punt in `regels` zitten en de
   // toelichting alleen de vette kop draagt (QA-ronde 5, N3).
-  const bronnen = [
-    punt.tekst,
-    ...regels.filter((r) => /^(keuze|stap\s*\d+)$/i.test(r.label.trim())).map((r) => r.tekst),
-  ];
-  return bronnen.some((t) => leesIngebedeKeuze(t).length >= 2);
+  return keuzeBronnen(punt.tekst, regels).some((t) => leesIngebedeKeuze(t).length >= 2);
 }
 
 /**
@@ -519,8 +541,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   for (const punt of invoer.eigenaarsPunten ?? []) {
     const regels = punt.regels ?? [];
     if (leesAlternatieven(regels).length >= 2) continue;
-    const bronnen = [punt.tekst, ...regels.filter((r) => /^(keuze|stap\s*\d+)$/i.test(r.label.trim())).map((r) => r.tekst)];
-    if (!bronnen.some((t) => lijktOpKeuze(t))) continue;
+    if (!keuzeBronnen(punt.tekst, regels).some((t) => lijktOpKeuze(t))) continue;
     bevindingen.push(
       bevinding(
         "eigenaarslijst_keuze_bijna",
@@ -546,6 +567,28 @@ export function lint(invoer: LintInvoer): LintResultaat {
         `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" heeft zowel een "Wacht"-regel als een ` +
           `keuze. Beide kunnen niet waar zijn voor de eigenaar: of hij kan nu kiezen, of er valt te wachten. ` +
           `Haal de wachtregel weg, of maak er een apart punt van.`,
+      ),
+    );
+  }
+
+  // Optieregels onder een akkoordcontext, zonder `- Keuze:`-regel: de kaart geeft
+  // dan "Akkoord"/"Niet akkoord" over een inhoudelijke keuze. Dat is de
+  // gedocumenteerde uitkomst — een akkoord blijft een akkoord — maar het dossier
+  // zegt daarmee twee dingen tegelijk, net als bij een wachtregel. Symmetrisch
+  // met `eigenaarslijst_wacht_en_keuze` (QA-ronde 7, bevinding 6).
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    const regels = punt.regels ?? [];
+    if (!punt.akkoordContext) continue;
+    if (regels.some((r) => r.label.trim().toLowerCase() === "keuze")) continue;
+    if (leesAlternatieven(regels).length < 2) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_akkoord_en_keuze",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" staat in een akkoordcontext en draagt ` +
+          `tegelijk twee alternatieven. De kaart geeft dan "Akkoord"/"Niet akkoord" over een inhoudelijke keuze; ` +
+          `schrijf de vraag als een eigen punt met "- Keuze: <vraag>", of haal de optieregels weg.`,
       ),
     );
   }

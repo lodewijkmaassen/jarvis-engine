@@ -779,24 +779,35 @@ export const KEUZEWOORD = /\b(kies|kiezen|keuze|bepaal|bepalen|welke|of\b.*\bof)
 const MERK = /\(([a-zA-Z0-9])\)\s*/g;
 
 /**
- * Ziet deze tekst eruit als een keuze zonder er een te zijn die het vangnet
- * kan lezen? Twee of meer merken, netjes door "of" gescheiden — en toch geen
- * bruikbare uitkomst, bijvoorbeeld doordat het keuzewoord ontbreekt, twee
- * merken gelijk zijn of een alternatief leeg is.
+ * Ziet deze tekst eruit als een keuze zonder er een te zijn die het vangnet kan
+ * lezen? Criterium 2 van de taak laat precies twee wegen open: de kaart herkent
+ * de keuze, óf de poort dwingt het formaat af. Deze functie is de tweede weg.
  *
- * Criterium 2 van de taak laat precies twee wegen open: de kaart herkent de
- * keuze, óf de poort dwingt het formaat af. QA-ronde 6 (B3) mat vier vormen
- * waarin geen van beide gebeurde. Deze functie is de tweede weg.
+ * Zij is bewust lósser dan `leesIngebedeKeuze` en niet strenger. Eén ronde
+ * gebruikte zij dezelfde strenge scheidingstoets als de lezer, en toen glipte
+ * elke keuze waarvan het merk achteraan stond ("betaalt (a) of pas na de
+ * levering (b)"), waar een bijzin tussen "of" en het volgende merk stond, waar
+ * "ofwel" in plaats van "of" stond, waar een derde merk tussenkwam, of die
+ * helemaal geen merken had ("kies of je nu betaalt of pas na de levering"),
+ * door beide netten heen — met "Gedaan" onder een onbeantwoorde vraag en een
+ * groene poort (QA-ronde 7, bevinding 1).
+ *
+ * De toets is nu: er staat een keuzewoord, én er is een aanwijzing dat er meer
+ * dan één mogelijkheid is — twee merken, of twee keer "of". Dat keuzewoord is
+ * dragend en is geen restant: zonder die eis gold "twee merken met een of
+ * ertussen" als keuze, en dan is `- Lees punt (a) of (b) van het contract door`
+ * ook een keuze, terwijl het een verwijzing is (QA-ronde 7, bevinding 7).
+ * Een tekst met twee merken en géén keuzewoord is vaker een verwijzing dan een
+ * vraag; die vorm valt daarom buiten deze regel.
  */
 export function lijktOpKeuze(tekst: string): boolean {
+  // Al leesbaar als keuze? Dan valt er niets af te dwingen.
+  if (leesIngebedeKeuze(tekst).length >= 2) return false;
   const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "");
-  const merken = [...plat.matchAll(MERK)];
-  if (merken.length < 2) return false;
-  for (let i = 0; i + 1 < merken.length; i += 1) {
-    const tussen = plat.slice(merken[i].index + merken[i][0].length, merken[i + 1].index);
-    if (!/\b(of|dan wel)\s*$/i.test(tussen.trim())) return false;
-  }
-  return leesIngebedeKeuze(tekst).length < 2;
+  if (!KEUZEWOORD.test(plat)) return false;
+  const merken = [...plat.matchAll(MERK)].length;
+  const voegwoorden = (plat.match(/\b(of|ofwel|dan wel)\b/gi) ?? []).length;
+  return merken >= 2 || voegwoorden >= 2;
 }
 
 export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
@@ -1161,7 +1172,16 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // voor hem had opgeschreven.
       const staart = vraag !== null && vraag !== titel ? [vraag] : [];
       const verloren = wordenKnoppen ? [] : alternatieveOpties.map((o) => `${o.label}: ${o.gevolg}`);
-      const extraTekst = [...staart, ...verloren];
+      // `Extern`, `Bevestig` en `Wacht` bepalen het soort en worden daarom door
+      // `bouwOpties` overgeslagen — maar hun tekst zegt wél wat de eigenaar moet
+      // doen, of waarop gewacht wordt. Die verdween volledig: een punt met
+      // `- Extern: log in op het platform en zet de sleutel onder deze naam`
+      // kwam aan als een kop met één knop "Gedaan" en zonder de instructie
+      // (QA-ronde 7, bevinding 3).
+      const soortRegels = item.regels
+        .filter((r) => ["extern", "bevestig", "wacht"].includes(r.label.trim().toLowerCase()) && heeftGevolg(r.tekst))
+        .map((r) => `${r.label.trim()}: ${r.tekst.trim()}`);
+      const extraTekst = [...staart, ...soortRegels, ...verloren];
       const basisToelichting = item.context ? `${item.context}. ${item.toelichting}` : item.toelichting;
       items.push({
         id: `${p}:${taak.id}:${korteSleutel(item.titel)}`,

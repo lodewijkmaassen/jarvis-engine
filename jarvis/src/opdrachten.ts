@@ -115,12 +115,42 @@ const uitvoeren = promisify(execFile);
 
 /** Git-aanroep die nooit gooit: een lege repo of ontbrekende ref is geen crash. */
 async function git(wortel: string, args: readonly string[]): Promise<string> {
+  return (await gitRuw(wortel, args)).trim();
+}
+
+/**
+ * Dezelfde aanroep, maar zonder `trim()`. Nodig voor `git status --porcelain`,
+ * waar de eerste twee tekens de toestand zijn en een ervan een spatie kan zijn:
+ * `" M pad"`. Het wegtrimmen van die spatie schoof de hele regel op, waarna het
+ * afsnijden van de statuskolom drie tekens van het pád afhaalde — `" M tasks/x"`
+ * werd `"sks/x"`. Gevolg: de eerste ongecommitte wijziging viel buiten elke
+ * poortcontrole, en `jarvis lint` gaf tijdens het schrijven een vals groen
+ * (gemeten door onafhankelijke QA, ronde 7, bevinding 5).
+ */
+async function gitRuw(wortel: string, args: readonly string[]): Promise<string> {
   try {
     const { stdout } = await uitvoeren("git", [...args], { cwd: wortel, maxBuffer: 32 * 1024 * 1024 });
-    return stdout.trim();
+    return stdout;
   } catch {
     return "";
   }
+}
+
+/**
+ * De paden uit `git status --porcelain`: de eerste drie tekens zijn de toestand
+ * plus een spatie. Een herbenoeming staat als `oud -> nieuw`; dan telt het
+ * nieuwe pad, want dat is het bestand dat er nu is.
+ */
+export function padenUitPorcelain(uitvoer: string): readonly string[] {
+  const uit: string[] = [];
+  for (const regel of uitvoer.replace(/\r\n/g, "\n").split("\n")) {
+    if (regel.length <= 3) continue;
+    const rest = regel.slice(3);
+    const pijl = rest.indexOf(" -> ");
+    const pad = (pijl >= 0 ? rest.slice(pijl + 4) : rest).trim().replace(/^"(.*)"$/, "$1");
+    if (pad.length > 0) uit.push(pad);
+  }
+  return uit;
 }
 
 // Formaat voor één `git log` over de hele branch: recordscheiding (0x1e) per
@@ -175,13 +205,9 @@ async function gewijzigdeBestanden(wortel: string, basis: string): Promise<reado
   const samengevoegd = await git(wortel, ["merge-base", basis, "HEAD"]);
   const punt = samengevoegd.length > 0 ? samengevoegd : basis;
   const uit = await git(wortel, ["diff", "--name-only", `${punt}..HEAD`]);
-  const ongecommit = await git(wortel, ["status", "--porcelain"]);
+  const ongecommit = await gitRuw(wortel, ["status", "--porcelain"]);
   const uitDiff = uit.split("\n").filter((r) => r.trim().length > 0);
-  const uitStatus = ongecommit
-    .split("\n")
-    .map((r) => r.slice(3).trim())
-    .filter((r) => r.length > 0);
-  return [...new Set([...uitDiff, ...uitStatus])].sort();
+  return [...new Set([...uitDiff, ...padenUitPorcelain(ongecommit)])].sort();
 }
 
 /**
@@ -1139,9 +1165,21 @@ export async function leesEigenaarsPunten(
   wortel: string,
   config: JarvisConfig,
   bestanden: readonly string[],
-): Promise<readonly { bestand: string; tekst: string; regels: readonly { label: string; tekst: string }[] }[]> {
+): Promise<
+  readonly {
+    bestand: string;
+    tekst: string;
+    regels: readonly { label: string; tekst: string }[];
+    akkoordContext: boolean;
+  }[]
+> {
   const takenMap = normaliseerPadTekst(config.taken_map).replace(/\/+$/, "");
-  const uit: { bestand: string; tekst: string; regels: readonly { label: string; tekst: string }[] }[] = [];
+  const uit: {
+    bestand: string;
+    tekst: string;
+    regels: readonly { label: string; tekst: string }[];
+    akkoordContext: boolean;
+  }[] = [];
   for (const b of bestanden) {
     const pad = normaliseerPadTekst(b);
     if (!pad.startsWith(`${takenMap}/`) || !/\/resultaat\.md$/.test(pad)) continue;
@@ -1152,7 +1190,12 @@ export async function leesEigenaarsPunten(
       continue; // verwijderd in deze wijziging
     }
     for (const item of leesItemsOnder(inhoud, KOP_EIGENAAR_LIJST))
-      uit.push({ bestand: pad, tekst: item.toelichting, regels: item.regels.map((r) => ({ label: r.label, tekst: r.tekst })) });
+      uit.push({
+        bestand: pad,
+        tekst: item.toelichting,
+        regels: item.regels.map((r) => ({ label: r.label, tekst: r.tekst })),
+        akkoordContext: /akkoord[_ -]?pr/i.test(item.context),
+      });
   }
   return uit;
 }
