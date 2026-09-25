@@ -276,6 +276,21 @@ escapes die `core.quotepath` erin zet, zodat een pad met een niet-ASCII-teken
 bestaat en wordt gelint; en een `" -> "` binnen die aanhalingstekens is deel van de
 naam, geen herbenoeming. Gevonden door onafhankelijke QA, rondes 7 en 8.
 
+Twee kleinere dingen uit dezelfde meting. `rolVoorStap` wees een rol aan op een
+woord in de staart van de stap: "Bouw van richting 2 (developer, engine) … Zie
+'Analyse (e)' voor de criteria" kwam bij de architect terecht. Noemt een stap een
+rol in haar eerste woorden, dan is dát de rol. En `jarvis regie` en `jarvis werk`
+stonden niet in de hulptekst van `npx jarvis`, terwijl zij de twee opdrachten zijn
+waarmee een uitvoerder zijn werk zichtbaar maakt.
+
+Dat laatste is meer dan kosmetisch. Onafhankelijke QA mat dat de rolkaarten in de
+app allemaal "beschikbaar" melden terwijl er aantoonbaar werk loopt, omdat de
+rolstatus alleen "bezig" wordt via een open claim — en de uitvoerders zijn gestopt
+met claimen: de laatste claim in `jarvis.activiteit` was van 2026-09-24 22:44, en
+alle negentien rijen van de dag erna dragen `taak = null`. Zonder claim is er geen
+`RUNNING`, geen heartbeat en geen dodemansdetectie in productie. Dat is geen
+codefout maar een gewoonte van de uitvoerder, en de hulptekst zegt het nu.
+
 De controle schaalt mee met de wijziging. Het rolcontract eiste vóór elke
 commit alle vier de projectcontroles, ook bij een commit die alleen een dossier
 of een statusdocument raakt — en die vier zeggen over een tekstbestand niets.

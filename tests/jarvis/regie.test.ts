@@ -454,3 +454,34 @@ describe("uitvoerderToestand", () => {
     expect(uitvoerderToestand(null, iso(UITVOERDER_TERMIJN_MINUTEN + 1), NU)).toBe("GEBLOKKEERD");
   });
 });
+
+// Uit de onafhankelijke meting van de acceptatiecriteria van
+// T-20260914-agent-operations: de regie wees een rol aan die niet aan zet was.
+describe("rolVoorStap — een rol die de stap zelf noemt gaat vóór een woord in de staart", () => {
+  it("leest de developer uit de kop, niet de architect uit de staart", () => {
+    // Het echte geval: de stap begint met "Bouw van richting 2 (developer,
+    // engine)" en eindigt met "Zie \"Analyse (e)\" voor de criteria". Op het
+    // woordpatroon alleen kwam die stap bij de architect terecht.
+    const stap =
+      'Bouw van richting 2 (developer, engine): `jarvis werk claim` een compare-and-set geven. ' +
+      'Per acceptatiecriterium een test die faalt op de code van vóór de wijziging. Zie "Analyse (e)" voor de criteria';
+    expect(rolVoorStap(stap)).toBe("developer");
+  });
+
+  for (const [kop, rol] of [
+    ["QA: acceptatie A t/m H onafhankelijk meten op de productiecasus", "qa"],
+    ["Architect: het ontwerp van het uitvoerdersregister uitwerken", "architect"],
+    ["Kennisbeheerder: de invariant als CON-record vastleggen", "knowledge-manager"],
+    ["Developer (engine): de reparatie met een test per criterium", "developer"],
+  ] as const) {
+    it(`leest "${kop.slice(0, 26)}…" als ${rol}`, () => {
+      expect(rolVoorStap(kop)).toBe(rol);
+    });
+  }
+
+  it("valt terug op het woordpatroon als geen rol wordt genoemd", () => {
+    expect(rolVoorStap("Het ontwerp van de nieuwe laag uitwerken")).toBe("architect");
+    expect(rolVoorStap("Het dossier afronden en de stand bijwerken")).toBe("knowledge-manager");
+    expect(rolVoorStap("De knop bouwen")).toBe("developer");
+  });
+});
