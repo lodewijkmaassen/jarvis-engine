@@ -61,13 +61,15 @@ p{margin:0}
 .zet.stil b{color:var(--hoog)}
 .zet.wacht b{color:var(--laag)}
 .nulstand{display:block;margin-top:6px;font-family:var(--mono);font-size:11.5px;color:var(--ok)}
-.stand{margin-top:12px;border:1px solid var(--lijn);background:var(--vlak)}
-.stand>.kop{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--lijn)}
-.stand>.kop b{font-family:var(--display);font-size:15px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
-.stand>.kop .wanneer{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--zacht)}
-.stand.leegstand>.kop{background:var(--ok-zacht)}.stand.leegstand>.kop b{color:var(--ok)}
-.stand.werkstand>.kop{background:var(--cyaan-zacht)}.stand.werkstand>.kop b{color:var(--cyaan)}
-.stand>.kop small{font-size:12px;color:var(--gedempt);font-family:var(--body);letter-spacing:0;text-transform:none}
+/* `kop` is bezet: .kop is de vaste kopbalk van de app (position:fixed).
+   Een paneelkop met die naam kruipt eroverheen. Vandaar .vakkop. */
+.vakkenpaneel{margin-top:12px;border:1px solid var(--lijn);background:var(--vlak)}
+.vakkenpaneel>.vakkop{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--lijn)}
+.vakkenpaneel>.vakkop b{font-family:var(--display);font-size:15px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.vakkenpaneel>.vakkop .wanneer{margin-left:auto;font-family:var(--mono);font-size:10.5px;color:var(--zacht)}
+.vakkenpaneel.leegstand>.vakkop{background:var(--ok-zacht)}.vakkenpaneel.leegstand>.vakkop b{color:var(--ok)}
+.vakkenpaneel.werkstand>.vakkop{background:var(--cyaan-zacht)}.vakkenpaneel.werkstand>.vakkop b{color:var(--cyaan)}
+.vakkenpaneel>.vakkop small{font-size:12px;color:var(--gedempt);font-family:var(--body);letter-spacing:0;text-transform:none}
 .vak{border-top:1px solid var(--lijn)}.vak:first-of-type{border-top:0}
 .vak>summary{display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer;min-height:42px;list-style:none}
 .vak>summary::-webkit-details-marker{display:none}
@@ -1018,7 +1020,7 @@ function standHtml(o) {
   const kop = ind.nulstand
     ? `<b>Geen actief werk</b><small>Niemand is aan zet. Wat er verder is, staat hieronder per vak.</small>`
     : `<b>${actief} ${actief === 1 ? "taak" : "taken"} actief</b><small>Hieronder per vak, van nu tot klaar.</small>`;
-  let s = `<div class="stand ${ind.nulstand ? "leegstand" : "werkstand"}"><div class="kop">${kop}<span class="wanneer">stand ${esc(relatief(o.gegenereerd_op))}</span></div>`;
+  let s = `<div class="vakkenpaneel ${ind.nulstand ? "leegstand" : "werkstand"}"><div class="vakkop">${kop}<span class="wanneer">stand ${esc(relatief(o.gegenereerd_op))}</span></div>`;
   for (const v of VAKKEN) {
     const rijen = v.sleutel === "risico" ? (ind.risicos ?? []) : (ind[v.sleutel] ?? []);
     const n = rijen.length;
@@ -1276,7 +1278,12 @@ async function start() {
   if (!bron) { $status.innerHTML = `<span class="dot uit"></span>geen gegevens — open dit op claude.ai of als eigen app`; return; }
   bron.overzicht((data) => {
     if (!data) { $status.innerHTML = `<span class="dot uit"></span>nog geen overzicht`; return; }
-    staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, centraal: data.centraal ?? null, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [] };
+    // Deze lijst moet elk veld van `Overzicht` kennen. Ze is er om ontbrekende
+    // velden een vaste terugval te geven, niet om te filteren: `indeling` viel
+    // er stil uit en het standpaneel bleef daardoor leeg, terwijl het document
+    // hem wél droeg. Nieuw veld in overzicht.ts? Voeg hem hier toe — de
+    // vangrail in interface-indeling.test.ts valt anders om.
+    staat.overzicht = { versie: data.versie, gegenereerd_op: data.gegenereerd_op, centraal: data.centraal ?? null, projecten: data.projecten ?? [], voor_jou: data.voor_jou ?? [], indeling: data.indeling ?? null };
     render();
   }, (err) => { staat.dbFout = `Overzicht niet te lezen (${err.code ?? err.message}).`; render(); });
   bron.status((data) => { staat.jarvis = data; render(); });

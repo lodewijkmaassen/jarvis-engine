@@ -231,3 +231,43 @@ describe("de regie publiceert beide documenten uit dezelfde run", () => {
     expect(blok).toContain('scanTekst(overzichtJson, allowlist, "overzicht.json")');
   });
 });
+
+describe("de pagina laat geen veld van het overzicht vallen", () => {
+  const bron = readFileSync(path.join(process.cwd(), "jarvis/src/overzicht.ts"), "utf8");
+  const html = readFileSync(path.join(process.cwd(), "jarvis/interface/jarvis.html"), "utf8");
+
+  it("neemt elk veld van Overzicht over in staat.overzicht", () => {
+    // De pagina bouwt `staat.overzicht` veld voor veld op, om ontbrekende
+    // velden een vaste terugval te geven. Dat is tegelijk een tweede lijst:
+    // `indeling` viel er stil uit, en het standpaneel bleef leeg terwijl het
+    // document hem droeg. Geen melding, geen fout — precies het faalpad dat
+    // deze repository elders al dichtzet.
+    const type = /export type Overzicht = \{([\s\S]*?)\n\};/.exec(bron)?.[1] ?? "";
+    expect(type).not.toBe("");
+    const velden = [...type.matchAll(/readonly ([a-z_]+)[?]?:/g)].map((m) => m[1]);
+    expect(velden).toContain("indeling");
+    const toewijzing = /staat\.overzicht = \{([^;]*)\};/.exec(html)?.[1] ?? "";
+    expect(toewijzing).not.toBe("");
+    for (const v of velden) {
+      expect(toewijzing, `staat.overzicht laat "${v}" vallen`).toMatch(new RegExp(`\\b${v}:`));
+    }
+  });
+});
+
+describe("het standpaneel botst niet met de opmaak van de app", () => {
+  const html = readFileSync(path.join(process.cwd(), "jarvis/interface/jarvis.html"), "utf8");
+
+  it("gebruikt de bezette klassenaam `kop` niet", () => {
+    // `.kop` is de vaste kopbalk van de app (`position:fixed`). Het paneel
+    // gebruikte die naam voor zijn eigen kop, waarna die kop uit de flow liep
+    // en over het eerste vak heen ging staan.
+    const paneel = /function standHtml\(o\) \{[\s\S]*?\n\}/.exec(html)?.[0] ?? "";
+    expect(paneel).not.toBe("");
+    expect(paneel, "het paneel gebruikt de bezette klassenaam `kop`").not.toMatch(/class="kop"/);
+    expect(paneel).toContain('class="vakkop"');
+  });
+
+  it("houdt .kop vast gepositioneerd voor de app zelf", () => {
+    expect(html).toMatch(/\.kop\{position:fixed/);
+  });
+});

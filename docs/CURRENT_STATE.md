@@ -6,13 +6,13 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-24._
+_Gegenereerd op 2026-09-25._
 
 | Feit | Waarde |
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 37 |
+| Testbestanden | 38 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -31,6 +31,26 @@ _Gegenereerd op 2026-09-24._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Het overzicht deelt het werk in vakken in, en de regie publiceert het mee. Dat
+zijn de twee helften van één klacht: de administratieve nulstand was bereikt,
+maar in de interface niet te zien. `overzicht/huidig` liep achter omdat
+`jarvis regie --schrijf` alleen `regie/huidig` verving en het overzicht van een
+losse tweede opdracht afhing; de regie bouwt dat overzicht al in dezelfde run en
+schrijft het nu mee, zodat de twee documenten niet meer uiteen kunnen lopen.
+Bij een sanitizerbevinding in één van de twee gaat er niets weg — alleen de
+schone helft schrijven zou de scheefstand terugbrengen.
+
+En alles wat niet van de eigenaar was, kwam op één hoop. `deelIn` zet elke taak
+in precies één vak — actief, backlog, bij jou, wachtend, geparkeerd, afgerond —
+en zet de open risico's er apart bij; `nulstand` zegt of er actief werk is, niet
+of er niets te zien valt. Actief en backlog scheiden op beweging in het venster,
+zodat een volle wachtrij niet als een druk systeem leest. De indeling staat in
+de gegevenslaag en niet in de pagina: een tweede kopie van die regel is precies
+hoe overzicht en regie eerder uiteen zijn gelopen. Lege vakken blijven in beeld
+met een nul erbij, want een vak dat verdwijnt zodra het leeg is maakt van een
+nulstand een lege pagina, en dan is niet te zien of er niets is of dat er niets
+gemeten is.
 
 Een run laat sinds deze wijziging één spoor na: `jarvis db run start` schrijft
 bij het begin een regel met startmoment, oorzaak (rooster, signaal,
