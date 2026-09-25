@@ -292,6 +292,26 @@ publiceren was een losse tweede opdracht die alleen in de afsluitstap van een
 routine stond, en een ronde die anders eindigde liet de interface zonder
 melding op een oude wereld staan.
 
+De poort betrapt nu ook een terugkerende kopie van de routinetekst in het
+promptveld van de uitvoerder die haar wekt. Die kopie is er twee keer geweest, en
+zij is het soort fout dat niemand opmerkt: de routine wordt bijgewerkt in de
+repository, het promptveld houdt een oude versie, en de uitvoerder draait maanden
+op instructies die niemand meer leest. `routine_prompt_kopie` meet overlap van
+hele regels van minstens veertig tekens, niet van woorden — een prompt die naar de
+routine *verwijst* deelt losse termen met haar, geen hele zinnen — en noemt in de
+bevinding alleen de eerste overlappende regel, ingekort, nooit de hele prompt.
+
+De engine bevraagt de platformlaag daarvoor niet: zij kent geen tokens. Het
+promptveld komt als bestand binnen, via `JARVIS_ROUTINE_PROMPT_BESTAND`, en niet
+als omgevingsvariabele met de tekst erin — een prompt kan namen en instellingen
+dragen en die horen niet in een procesomgeving of een log. Ontbreekt het bestand,
+dan vuurt de regel niet: de poort beweert niets over wat zij niet heeft gezien.
+
+Gemeten op de echte routine van 2026-09-25: 541 regels routinetekst tegen een
+promptveld van twee regels, nul overlappende regels — er staat vandaag geen kopie.
+Dezelfde routine als promptveld levert 409 overlappende regels, dus de regel zou
+een terugval luid melden.
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.

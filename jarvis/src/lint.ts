@@ -35,6 +35,7 @@ export const LINT_CODES = [
   "ack_bron_onbetrouwbaar",
   "eigenaarslijst_administratief",
   "eigenaarslijst_technisch",
+  "routine_prompt_kopie",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -95,6 +96,14 @@ export type LintInvoer = {
   readonly ackBronVertrouwd?: boolean;
   /** Omschrijving van die bron, voor de foutmelding. */
   readonly ackBron?: string;
+  /**
+   * De routinetekst en het promptveld van de uitvoerder die deze poort draait,
+   * om een terugkerende kopie te betrappen. Beide komen van buiten: de engine
+   * bevraagt de platformlaag niet en kent geen tokens. Ontbreekt een van de
+   * twee, dan vuurt de regel niet — zij kan niets beweren over wat zij niet
+   * heeft gezien.
+   */
+  readonly routine?: { readonly tekst: string; readonly prompt: string; readonly verwijzing?: string };
 };
 
 export type CommitOverzicht = {
@@ -367,6 +376,41 @@ export function toetsRandvoorwaarden(
  * echte eigenaarshandeling noemt — inloggen, een credential, een instelling,
  * een betaling, een akkoord of beslissing — blijft staan.
  */
+/** Regels die in beide teksten zo letterlijk voorkomen dat het een kopie is. */
+export const PROMPT_KOPIE_MINIMUM = 40;
+
+/**
+ * Staat de routinetekst opnieuw in het promptveld van de uitvoerder?
+ *
+ * Deze kopie is er twee keer geweest. Zij is het soort fout dat niemand opmerkt:
+ * de routine wordt bijgewerkt in de repository, het promptveld houdt een oude
+ * versie, en de uitvoerder draait maanden op instructies die niemand meer leest.
+ * De koppeling is inmiddels één verwijzing naar `docs/ROUTINE_CLOUD.md`, en deze
+ * regel bewaakt dat zij dat blijft.
+ *
+ * Gemeten op overlap van hele regels, niet op woorden: een prompt die naar de
+ * routine *verwijst* deelt losse woorden met haar, maar geen hele zinnen. De
+ * drempel van 40 tekens houdt koppen, opsommingstekens en losse termen erbuiten.
+ *
+ * Wat teruggegeven wordt is de ingekorte regel, nooit de hele prompt: die kan
+ * instellingen of namen bevatten en hoort niet in een bevinding terecht te komen.
+ */
+export function promptKopieRegels(routine: string, prompt: string): readonly string[] {
+  const normaliseer = (t: string) =>
+    t
+      .replace(/\r\n/g, "\n")
+      .split("\n")
+      .map((r) => r.replace(/^[\s>*\-#\d.)]+/, "").replace(/\s+/g, " ").trim())
+      .filter((r) => r.length >= PROMPT_KOPIE_MINIMUM);
+  const inPrompt = new Set(normaliseer(prompt));
+  const uit: string[] = [];
+  for (const regel of normaliseer(routine)) {
+    if (!inPrompt.has(regel) || uit.includes(regel)) continue;
+    uit.push(regel);
+  }
+  return uit;
+}
+
 export function isAdministratieveBevestiging(tekst: string): boolean {
   const t = tekst.replace(/`/g, "").replace(/\s+/g, " ");
   const werkwoord = /\b(bevestig\w*|valideer\w*|controleer\w*|lees|nalezen|doorlezen|nakijken|kijk\w* na|goedkeur\w* (?:de|het) (?:tekst|documentatie))\b/i;
@@ -393,6 +437,27 @@ export function lint(invoer: LintInvoer): LintResultaat {
           `die doet Jarvis zelf (kennisbeheer of QA) en hoort niet in "Wat de eigenaar nog moet doen" (CON-0016).`,
       ),
     );
+  }
+
+  // Staat de routinetekst opnieuw in het promptveld? Die kopie is er twee keer
+  // geweest, en zij valt niemand op: de repository verandert, het promptveld
+  // houdt een oude versie, en de uitvoerder draait op instructies die niemand
+  // meer leest. De regel vuurt alleen wanneer beide teksten zijn meegegeven.
+  if (invoer.routine !== undefined && invoer.routine.tekst.trim() !== "" && invoer.routine.prompt.trim() !== "") {
+    const kopie = promptKopieRegels(invoer.routine.tekst, invoer.routine.prompt);
+    if (kopie.length > 0) {
+      const waar = invoer.routine.verwijzing ?? "de routine van deze uitvoerder";
+      bevindingen.push(
+        bevinding(
+          "routine_prompt_kopie",
+          "fout",
+          "docs/ROUTINE_CLOUD.md",
+          `het promptveld van ${waar} bevat ${kopie.length} regel(s) die letterlijk in de routinetekst staan; ` +
+            `de koppeling hoort één verwijzing naar dat bestand te zijn, anders draait de uitvoerder op een kopie ` +
+            `die niet meeverandert. Eerste regel: "${kopie[0].slice(0, 90)}${kopie[0].length > 90 ? "…" : ""}".`,
+        ),
+      );
+    }
   }
 
   // Wat bij de eigenaar ligt leest hij op zijn telefoon: kort en zonder

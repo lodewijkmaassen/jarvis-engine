@@ -525,8 +525,18 @@ export async function poortUitkomst(stappen: readonly PoortStap[]): Promise<numb
 export async function opdrachtPoort(bouwStappen: typeof poortStappen = poortStappen): Promise<number> {
   const lees = (naam: string) => process.env[naam] ?? "";
   const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  // Het promptveld komt als bestand binnen, nooit uit de platformlaag zelf en
+  // nooit als omgevingsvariabele met de tekst erin: een prompt kan namen en
+  // instellingen dragen, en die horen niet in een procesomgeving of een log.
+  const promptBestand = lees("JARVIS_ROUTINE_PROMPT_BESTAND");
+  const routinePrompt = promptBestand === "" ? "" : ((await leesOfNull(path.resolve(promptBestand))) ?? "");
+  if (promptBestand !== "" && routinePrompt === "") {
+    console.error(`jarvis poort: promptbestand ${promptBestand} niet te lezen; de routinecontrole vuurt niet.`);
+  }
   return poortUitkomst(
     bouwStappen(wortel, {
+      routinePrompt,
+      routineVerwijzing: lees("JARVIS_ROUTINE_ID"),
       basis: `origin/${lees("PR_BASIS") || "main"}`,
       tekst: `${lees("PR_TITEL")}
 
@@ -939,6 +949,15 @@ type PoortInvoer = {
   readonly ackActor: string;
   readonly ackRelatie: string;
   /**
+   * Het promptveld van de routine die deze uitvoerder wekt, en de verwijzing
+   * ernaar. Komt als kant-en-klare invoerwaarde binnen, net als `tekst`: de
+   * engine bevraagt de platformlaag niet en kent geen tokens. De uitvoerder die
+   * haar wél mag bevragen zet de tekst in `JARVIS_ROUTINE_PROMPT_BESTAND`.
+   * Ontbreekt zij, dan vuurt de regel niet.
+   */
+  readonly routinePrompt?: string;
+  readonly routineVerwijzing?: string;
+  /**
    * Is er een pull-requestcontext waarin een `Current-State-Impact`-verklaring
    * te lezen valt?
    *
@@ -984,6 +1003,14 @@ export function prContextVanGebeurtenis(gebeurtenis: string): boolean {
 async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
   const { wortel, config, lading } = await laadAlles();
   const { basis, tekst, ackTekst, ackActor, ackRelatie, prContext } = invoer;
+  // De routinetekst komt uit de repository, het promptveld van buiten. Alleen
+  // met beide kan de poort een terugkerende kopie betrappen; met één van de twee
+  // beweert zij niets.
+  const routineTekst = await leesOfNull(path.join(wortel, "docs", "ROUTINE_CLOUD.md"));
+  const routine =
+    routineTekst !== null && (invoer.routinePrompt ?? "").trim() !== ""
+      ? { tekst: routineTekst, prompt: invoer.routinePrompt as string, verwijzing: invoer.routineVerwijzing }
+      : undefined;
   const bestanden = await gewijzigdeBestanden(wortel, basis);
 
 
@@ -1074,6 +1101,7 @@ async function voerPoortUit(invoer: PoortInvoer): Promise<number> {
     acks,
     commits,
     eigenaarsPunten,
+    routine,
     statusCommitsSinds: Number.parseInt(statusCommits || "0", 10) || 0,
     statusImpactVerklaard: statusImpact,
     prContext,
