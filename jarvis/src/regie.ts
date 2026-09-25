@@ -109,6 +109,21 @@ export type Regie = {
   readonly rollen: readonly RolRegie[];
   /** Elke uitvoerder die het register kent of die in de werkactiviteit voorkomt. */
   readonly uitvoerders: readonly UitvoerderRegie[];
+  /**
+   * De geblokkeerde uitvoerders, apart geteld naast `afwijkingen`.
+   *
+   * De invariant uit ontwerp §5 is dat er geen regie-uitkomst bestaat waarin een
+   * uitvoerder geblokkeerd is en er niets afwijkt. `afwijkingen` filtert taken, en
+   * een geblokkeerde uitvoerder zonder taken leverde er dus nul — precies de casus
+   * van de gepauzeerde roosterroutine (QA op AC-11, ronde 2, bevinding 1).
+   *
+   * Hier wijkt de uitvoering bewust af van de létter van §5: een uitvoerder is geen
+   * taak en hoort niet in een takenlijst. De gárantie is wat telt, en die luidt nu:
+   * `afwijkingen.length + blokkades.length` is nooit nul zolang een uitvoerder
+   * geblokkeerd is. `telAfwijkingen` rekent dat uit en de slotregel van
+   * `jarvis regie` meldt het totaal.
+   */
+  readonly blokkades: readonly UitvoerderRegie[];
   /** Uitvoerbaar werk in prioriteitsvolgorde: eerst herstel, dan afronding, dan onderbroken werk, dan nieuw werk. */
   readonly uitvoerbaar: readonly TaakRegie[];
   readonly afwijkingen: readonly TaakRegie[];
@@ -165,6 +180,14 @@ export type Uitvoerders = {
 export const UITVOERDER_TERMIJN_MINUTEN = 24 * 60;
 
 export type UitvoerderToestand = "ACTIEF" | "GEBLOKKEERD";
+
+/**
+ * Alles wat afwijkt: taken én geblokkeerde uitvoerders. Dit is de teller waarop de
+ * invariant van ontwerp §5 rust — nul betekent werkelijk niets aan de hand.
+ */
+export function telAfwijkingen(regie: Pick<Regie, "afwijkingen" | "blokkades">): number {
+  return regie.afwijkingen.length + regie.blokkades.length;
+}
 
 /** Een platformtoestand die op zichzelf al een blokkade is, ongeacht de heartbeat. */
 const BLOKKERENDE_TOESTANDEN: readonly Platformtoestand[] = ["requires_action", "blocked", "failed"];
@@ -559,32 +582,79 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
   // hing van de schrijfvolgorde af — een gepauzeerde routine verdween zo achter
   // een werkende sessie. Alle ingangen worden bewaard en het ergste geval wint:
   // is één ingang geblokkeerd, dan is de uitvoerder geblokkeerd.
+  // De sleutel is de naam in kleine letters. Op de ruwe naam kende het register
+  // `Laptop` "niet" terwijl het `laptop` beschrijft, en dan blokkeerde niets —
+  // één tikfout van de schrijvende uitvoerder zette de hele tak uit, en de
+  // uitvoer sprak zichzelf tegen (QA op AC-11, ronde 2, bevinding 3).
   const register = new Map<string, UitvoerderItem[]>();
   const bruikbaar = registerBruikbaar(uitvoerders, nu);
-  if (bruikbaar) {
-    for (const u of uitvoerders?.uitvoerders ?? []) {
-      const rij = register.get(u.naam);
-      if (rij === undefined) register.set(u.naam, [u]);
-      else rij.push(u);
-    }
+  for (const u of uitvoerders?.uitvoerders ?? []) {
+    // Leeftijd mag twijfel toevoegen, nooit een gemelde blokkade wegnemen. Een
+    // verlopen register werd hier in zijn geheel weggegooid, en daarna las
+    // `oordeel` elke uitvoerder met een vers activiteitsteken als `ACTIEF` — ook
+    // een uitvoerder die het register letterlijk als `blocked` beschrijft. Dat is
+    // het omgekeerde van wat ontwerp §2.2 en §7 eisen ("het faalt luid"), en het
+    // was bedoeld als verscherping (QA op AC-11, ronde 2, bevinding 2).
+    if (!bruikbaar && !BLOKKERENDE_TOESTANDEN.includes(platformtoestandVan(u.platformtoestand))) continue;
+    const sleutel = u.naam.toLowerCase();
+    const rij = register.get(sleutel);
+    if (rij === undefined) register.set(sleutel, [u]);
+    else rij.push(u);
   }
   const tekenVan = (naam: string): string | null => {
     let best: string | null = null;
     for (const a of activiteit) if (a.uitvoerder === naam && (best === null || ms(a.op) > ms(best))) best = a.op;
     return best;
   };
-  const oordeel: UitvoerderOordeel = (naam) => {
-    const rij = register.get(naam) ?? [];
+  /** Het oordeel over een rij ingangen: het ergste geval wint. */
+  const oordeelOver = (naam: string, rij: readonly UitvoerderItem[]) => {
     const teken = tekenVan(naam);
     if (rij.length === 0) return { toestand: uitvoerderToestand(null, teken, nu), reden: blokkadeReden(naam, null, teken, nu) };
     const slechtste = rij.find((item) => uitvoerderToestand(item, teken, nu) === "GEBLOKKEERD");
-    if (slechtste !== undefined) return { toestand: "GEBLOKKEERD", reden: blokkadeReden(naam, slechtste, teken, nu) };
-    return { toestand: "ACTIEF", reden: blokkadeReden(naam, rij[0], teken, nu) };
+    if (slechtste !== undefined) return { toestand: "GEBLOKKEERD" as const, reden: blokkadeReden(naam, slechtste, teken, nu) };
+    return { toestand: "ACTIEF" as const, reden: blokkadeReden(naam, rij[0], teken, nu) };
   };
+  const ingangen = (naam: string) => register.get(naam.toLowerCase()) ?? [];
+  /**
+   * Continuïteit: wekt er nog iets de keten? Alle ingangen tellen, het ergste
+   * geval wint. Dit is het oordeel voor de lijst `uitvoerders` en voor `blokkades`.
+   */
+  const oordeel: UitvoerderOordeel = (naam) => oordeelOver(naam, ingangen(naam));
+  /**
+   * De ingangen die over het werk van *nu* gaan: een sessie of een laptop.
+   *
+   * In het echte register is `cloud` tegelijk een `working` sessie met een vers
+   * teken én een `blocked` roosterroutine. Met "het ergste geval wint" op zowel
+   * continuïteit als dispatch werd elke stap met `Uitvoerder: cloud` geblokkeerd
+   * met de routine als reden — de uitvoerder die de regieronde op dat moment
+   * zelf draait, zou zijn eigen geclaimde werk blokkeren. Dat is het valse alarm
+   * dat ontwerp §7 verbiedt (QA op AC-11, ronde 2, bevinding 4).
+   *
+   * Maar een routine mag alleen wijken voor een ingang die wél over nu gaat.
+   * Een filter zonder terugval gooide de énige uitspraak weg die het register
+   * over zo'n uitvoerder deed, en dan las een `requires_action`-uitvoerder met
+   * een vers teken weer stil als `ACTIEF` — hetzelfde stille falen dat dit
+   * register wegneemt, nu een laag dieper. Kent het register voor deze
+   * uitvoerder geen sessie en geen laptop, dan tellen al zijn ingangen.
+   */
+  const dispatchIngangen = (naam: string): readonly UitvoerderItem[] => {
+    const rij = ingangen(naam);
+    const nu2 = rij.filter((u) => u.soort === undefined || u.soort === "sessie" || u.soort === "laptop");
+    return nu2.length > 0 ? nu2 : rij;
+  };
+  /**
+   * Dispatch: kan deze uitvoerder nú werk doen? Dat is een andere vraag dan
+   * "wekt er nog iets de keten?", en die twee waren samengevoegd. Een
+   * gepauzeerde routine blijft zichtbaar in `uitvoerders` en in de
+   * blokkadeteller; zij houdt alleen geen lopend werk meer tegen zolang een
+   * sessie of laptop over dit moment spreekt.
+   */
+  const oordeelDispatch: UitvoerderOordeel = (naam) => oordeelOver(naam, dispatchIngangen(naam));
   // Alleen wat het register expliciet over deze uitvoerder zegt; kent het hem
   // niet, dan is er geen oordeel. Zie `RegisterOordeel` voor waarom dat verschil
   // ertoe doet.
-  const uitRegister: RegisterOordeel = (naam) => ((register.get(naam) ?? []).length === 0 ? null : oordeel(naam));
+  const uitRegister: RegisterOordeel = (naam) =>
+    dispatchIngangen(naam).length === 0 ? null : oordeelDispatch(naam);
 
   const taken: TaakRegie[] = [];
   const gezien = new Set<string>();
@@ -593,7 +663,7 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
       if (t.status !== "actief" && t.status !== "review") continue;
       if (gezien.has(t.id)) continue; // een dossierspiegel in een ander project telt niet als tweede taak
       gezien.add(t.id);
-      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu, oordeel, uitvoerder, uitRegister));
+      taken.push(bepaalTaak(t, t.project ?? p.id, overzicht, activiteit, nu, oordeelDispatch, uitvoerder, uitRegister));
     }
   }
   const uitvoerbaar = taken
@@ -663,5 +733,6 @@ export function bepaalRegie(overzicht: Overzicht, activiteit: readonly Activitei
         taken: taken.filter((t) => t.uitvoerder !== null && t.uitvoerder.toLowerCase() === naam.toLowerCase()).map((t) => t.id),
       };
     });
-  return { gegenereerd_op: nu.toISOString(), taken, rollen, uitvoerders: uitvoerderStand, uitvoerbaar, afwijkingen };
+  const blokkades = uitvoerderStand.filter((u) => u.toestand === "GEBLOKKEERD");
+  return { gegenereerd_op: nu.toISOString(), taken, rollen, uitvoerders: uitvoerderStand, blokkades, uitvoerbaar, afwijkingen };
 }

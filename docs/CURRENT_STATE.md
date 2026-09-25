@@ -157,11 +157,33 @@ onbekende waarde `onbekend`. `gegenereerd_op` werd gelezen en nooit gebruikt,
 waardoor een register van dagen oud met een `houdbaar_tot` in de toekomst als
 "alles in orde" las terwijl de schrijver ervan al lang stil lag;
 `registerBruikbaar` telt een register buiten zijn eigen houdbaarheid als
-afwezig. En één uitvoerder kan meer dan één ingang hebben — de cloud-uitvoerder
-is tegelijk een sessie die nu draait en een roosterroutine die morgen hoort te
+afwezig. Leeftijd mag daarbij twijfel tóevoegen en nooit een gemelde blokkade
+wegnemen: een verlopen register werd eerst in zijn geheel weggegooid, en daarna
+las elke uitvoerder met een vers activiteitsteken weer `ACTIEF` — ook een
+uitvoerder die het register letterlijk als `blocked` beschrijft. Dat is het
+omgekeerde van luid falen, en het was als verscherping bedoeld. Van een verlopen
+register blijven daarom de blokkerende ingangen staan.
+
+En één uitvoerder kan meer dan één ingang hebben — de cloud-uitvoerder is
+tegelijk een sessie die nu draait en een roosterroutine die morgen hoort te
 wekken — waarvan een `Map<naam, item>` stil de laatste overhield, afhankelijk
-van de schrijfvolgorde in het document; alle ingangen worden nu bewaard en het
-ergste geval wint.
+van de schrijfvolgorde in het document; alle ingangen worden nu bewaard. De
+sleutel is de naam in kleine letters: op de ruwe naam kende het register
+`Laptop` "niet" terwijl het `laptop` beschrijft, en dan blokkeerde niets — één
+tikfout van de schrijvende uitvoerder zette de hele tak uit, en de uitvoer sprak
+zichzelf tegen.
+
+Met meer dan één ingang zijn het twee vragen, niet één. *Wekt er nog iets de
+keten?* telt alle ingangen en het ergste geval wint; dat is het oordeel voor de
+lijst `uitvoerders` en voor `blokkades`. *Kan deze uitvoerder nú werk doen?*
+telt alleen de ingangen die daarover gaan — een sessie of een laptop. Waren die
+twee samengevoegd, dan blokkeerde elke stap met `Uitvoerder: cloud` op de
+gepauzeerde routine als reden: de uitvoerder die de regieronde op dat moment
+zelf draait, zou zijn eigen geclaimde werk blokkeren. Dat is het valse alarm van
+§7. Een routine mag echter alleen wijken voor een ingang die wél over nú gaat:
+kent het register voor een uitvoerder geen sessie en geen laptop, dan tellen al
+zijn ingangen, want de énige uitspraak weggooien die het register over hem doet
+is hetzelfde stille falen, een laag dieper.
 
 Een verse werkactiviteit blijft een geldig teken van leven, register of geen
 register: een uitvoerder die net een stap schreef is aantoonbaar in leven. Dat
@@ -188,10 +210,20 @@ van de gepauzeerde roosterroutine: niets wekt de keten nog, geen enkele taak han
 eraan. De slotregel van `jarvis regie` noemt hen bij naam met hun reden en telt ze
 apart. Eis 9 verbiedt een tweede wekker; zíen dat de wekker uit staat is er geen.
 
-Gemeten op de productiecasus van 2026-09-25: vóór `16 open, 5 uitvoerbaar, 0
-geblokkeerd, 0 afwijking(en)`; na `16 open, 5 uitvoerbaar, 3 geblokkeerd, 2
-uitvoerder(s) geblokkeerd, 3 afwijking(en)`, met beide geblokkeerde uitvoerders bij
-naam en met reden. `uitvoerbaar` blijft 5: ander werk gaat door.
+Het getal in de rapportage is het tótaal — `afwijkingen` plus `blokkades` — en
+niet alleen de taken. `afwijkingen` filtert taken, en een geblokkeerde uitvoerder
+zonder taken leverde er dus nul: precies de casus van de gepauzeerde routine.
+Hier wijkt de uitvoering bewust af van de létter van §5, die een takenlijst
+eist; de gárantie is wat telt, en die luidt nu dat er geen regie-uitkomst bestaat
+waarin een uitvoerder geblokkeerd is en het getal nul. Dat staat als één toets
+over elke vorm die QA vond, en de slotregel én de weggeschreven activiteit
+noemen hetzelfde totaal.
+
+Gemeten op de productiecasus van 2026-09-25: vóór `16 open, 0 geblokkeerd, 0
+afwijking(en)`; na `16 open, 3 geblokkeerd, 2 uitvoerder(s) geblokkeerd, 5
+afwijking(en)`, met beide geblokkeerde uitvoerders bij naam en met reden. De drie
+geblokkeerde taken zijn de taken van de onbereikbare laptop; de cloud-sessie die
+de ronde draait blokkeert haar eigen werk niet. Ander werk gaat door.
 
 **Wat nog niet werkt: het documentpad in de cloud.** De gepubliceerde Edge Function
 `jarvis-db` staat op versie 7 en haar allowlist kent `DOCUMENT_LEES_SQL` niet, dus

@@ -45,7 +45,7 @@ import {
   type TaakDossier,
 } from "./overzicht";
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
-import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
+import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, telAfwijkingen, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
@@ -2147,7 +2147,9 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
       taak: null,
       project: null,
       soort: "regie",
-      tekst: `ronde: ${regie.taken.length} open, ${regie.uitvoerbaar.length} uitvoerbaar, ${regie.afwijkingen.length} afwijking(en)`,
+      // Het totaal, net als de slotregel: een geblokkeerde uitvoerder zonder taken
+      // mag ook in de activiteit niet als "0 afwijking(en)" worden weggeschreven.
+      tekst: `ronde: ${regie.taken.length} open, ${regie.uitvoerbaar.length} uitvoerbaar, ${regie.blokkades.length} uitvoerder(s) geblokkeerd, ${telAfwijkingen(regie)} afwijking(en)`,
     });
   }
   if (vlaggen.has("json") || (!uit && !vlaggen.has("schrijf"))) {
@@ -2158,9 +2160,10 @@ async function opdrachtRegie(vlaggen: ReadonlyMap<string, string>): Promise<numb
     console.log(`${t.toestand.padEnd(22)} ${t.id.padEnd(36)} ${t.verantwoordelijke.padEnd(18)} ${t.waarom}`);
   }
   const geblokkeerd = regie.taken.filter((t) => t.toestand === "BLOCKED").length;
-  const geblokkeerdeUitvoerders = regie.uitvoerders.filter((u) => u.toestand === "GEBLOKKEERD");
-  for (const u of geblokkeerdeUitvoerders) console.error(`jarvis regie: uitvoerder ${u.naam} is GEBLOKKEERD — ${u.reden}`);
-  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${geblokkeerdeUitvoerders.length} uitvoerder(s) geblokkeerd, ${regie.afwijkingen.length} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
+  for (const u of regie.blokkades) console.error(`jarvis regie: uitvoerder ${u.naam} is GEBLOKKEERD — ${u.reden}`);
+  // Het totaal, niet alleen de taken: een geblokkeerde uitvoerder zonder taken mag
+  // niet naast "0 afwijking(en)" staan.
+  console.log(`jarvis regie: ${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ${geblokkeerd} geblokkeerd, ${regie.blokkades.length} uitvoerder(s) geblokkeerd, ${telAfwijkingen(regie)} afwijking(en)${uit ? `, geschreven naar ${uit}` : ""}${vlaggen.has("schrijf") ? ", regie/huidig en overzicht/huidig gezet" : ""}.`);
   return 0;
 }
 
