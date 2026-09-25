@@ -12,7 +12,7 @@ _Gegenereerd op 2026-09-25._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 39 |
+| Testbestanden | 40 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -291,6 +291,18 @@ overzicht ten slotte zelf in de database, net als `jarvis regie --schrijf`:
 publiceren was een losse tweede opdracht die alleen in de afsluitstap van een
 routine stond, en een ronde die anders eindigde liet de interface zonder
 melding op een oude wereld staan.
+
+`jarvis regie --schrijf` zet nu het derde statusdocument er ook bij:
+`jarvis/status`, uit dezelfde run. Dat stond tot nu toe in een eigen stap van de
+routine, met dezelfde scheefstand als gevolg die `overzicht/huidig` eerder had —
+eindigde een ronde anders dan in de afsluitstap, dan bleef de app een sessie
+melden die niet meer liep, zonder dat iets dat meldde. `bouwStatus` leidt het af
+uit de regie-uitkomst: de eerste uitvoerbare taak als `bezig_met`, de rollen die
+werkelijk iets doen of iets in de wachtrij hebben als `agenten`, en dezelfde
+telling als de slotregel van de opdracht als `toelichting`. `sinds` komt van de
+vorige versie, want dat is het begin van de sessie en niet van deze berekening;
+zonder dat leest de app elke ronde als een nieuwe sessie. De drie documenten gaan
+samen langs de sanitizer: bij een bevinding in één van de drie gaat er niets weg.
 
 De poort betrapt nu ook een terugkerende kopie van de routinetekst in het
 promptveld van de uitvoerder die haar wekt. Die kopie is er twee keer geweest, en

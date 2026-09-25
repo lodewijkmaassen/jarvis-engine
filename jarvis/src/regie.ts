@@ -94,6 +94,66 @@ export type Regie = {
   readonly afwijkingen: readonly TaakRegie[];
 };
 
+/**
+ * Het statusdocument `jarvis/status`, zoals de app het leest: één sessieregel
+ * met een levensteken, de rollen die werkelijk iets doen, en één regel uitleg.
+ */
+export type JarvisStatus = {
+  readonly sessie: {
+    readonly naam: string;
+    readonly rol: string;
+    readonly laatste: string;
+    readonly sinds: string;
+    readonly bezig_met: string;
+  };
+  readonly agenten: readonly { readonly naam: string; readonly rol: string; readonly wat: string; readonly status: string }[];
+  readonly toelichting: string;
+};
+
+/**
+ * Het statusdocument uit dezelfde regie-uitkomst, in plaats van uit een losse
+ * tweede opdracht.
+ *
+ * Dat losse schrijven was de bekende scheefstand: `jarvis/status` stond in een
+ * eigen stap van de routine, en een ronde die anders eindigde liet de app op een
+ * oude wereld staan zonder dat iets dat meldde. Voor `overzicht/huidig` is dat al
+ * opgelost; dit is het derde document.
+ *
+ * `sinds` komt van de vorige versie als die er is: dat is het begin van de sessie
+ * en niet van deze berekening, en hij hoort dus niet elke ronde te verspringen.
+ */
+export function bouwStatus(
+  regie: Regie,
+  opties: { readonly naam: string; readonly sinds?: string | null; readonly nu?: Date },
+): JarvisStatus {
+  const nu = opties.nu ?? new Date();
+  const eerste = regie.uitvoerbaar[0];
+  const bezig = eerste ? `${eerste.id}: ${(eerste.volgende_stap ?? "").replace(/\s+/g, " ").slice(0, 120)}`.trim() : "";
+  const geblokkeerd = regie.taken.filter((t) => t.toestand === "BLOCKED").length;
+  return {
+    sessie: {
+      naam: opties.naam,
+      rol: "orchestrator",
+      laatste: nu.toISOString(),
+      sinds: opties.sinds ?? nu.toISOString(),
+      bezig_met: bezig,
+    },
+    // Alleen rollen die werkelijk iets doen of iets in de wachtrij hebben: een
+    // lijst van zeven rollen die allemaal "beschikbaar" heten, zegt niets.
+    agenten: regie.rollen
+      .filter((r) => r.status !== "beschikbaar" || r.wachtrij > 0)
+      .map((r) => ({
+        naam: r.rol,
+        rol: r.rol,
+        wat: r.wat ?? "",
+        status: r.status,
+      })),
+    toelichting:
+      `${regie.taken.length} open taak/taken, ${regie.uitvoerbaar.length} uitvoerbaar, ` +
+      `${geblokkeerd} geblokkeerd, ${regie.afwijkingen.length} afwijking(en).`,
+  };
+}
+
 /** Time-out van een heartbeat per rol, in minuten: geen blinde timeout voor alles. */
 export const HEARTBEAT_MINUTEN: Readonly<Record<Rol, number>> = {
   orchestrator: 20,
