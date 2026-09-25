@@ -26,6 +26,25 @@ export type Urgentie = "hoog" | "midden" | "laag";
 
 export type AandachtSoort = "beslissing" | "actie" | "conflict" | "risico" | "blokkade";
 
+/**
+ * Wat voor interactie een eigenaarspunt is — de betekenis, niet de bron.
+ *
+ * `AandachtSoort` zegt waar een punt vandaan komt en bepaalt de volgorde in de
+ * lijst. Deze verzameling zegt wat de eigenaar moet dóen, en bepaalt daarmee
+ * welke knoppen hij krijgt. Ze staan naast elkaar omdat ze verschillende vragen
+ * beantwoorden.
+ *
+ * De aanleiding is gemeten: het soort van een dossierpunt hing aan één woord
+ * — `blokkerend` in de context, of een titel die met "beslis" begint. Een
+ * keuze die toevallig met "kies" begon werd daardoor als handeling aangeboden,
+ * met één knop "Gedaan", terwijl de twee alternatieven die de eigenaar in de
+ * tekst kreeg voorgelegd de knoppen nooit bereikten.
+ */
+export type EigenaarSoort = "akkoord" | "keuze" | "externe-handeling" | "bevestiging" | "uitstel";
+
+/** De labels die in een eigenaarspunt een eigen betekenis hebben en dus geen alternatief zijn. */
+export const GERESERVEERDE_LABELS = Object.freeze(["advies", "waarom", "controle", "keuze", "extern", "bevestig"]);
+
 /** Eén keuze die de eigenaar kan maken, met wat er dan gebeurt. */
 export type Optie = {
   /** Sleutel waaronder het antwoord wordt opgeslagen: kleine letters, streepjes. */
@@ -47,6 +66,12 @@ export type AandachtItem = {
   readonly urgentie: Urgentie;
   /** Waarom dit bij de eigenaar ligt en niet bij Jarvis. */
   readonly waarom: string;
+  /**
+   * Wat voor interactie dit is, voor een punt dat bij de eigenaar ligt; `null`
+   * voor alles wat uit een record of het statusdocument komt. De knoppen volgen
+   * hieruit, nooit uit het eerste woord van de titel.
+   */
+  readonly interactie: EigenaarSoort | null;
   /** De keuzes, elk met gevolg. Nooit leeg: "later" is er altijd. */
   readonly opties: readonly Optie[];
   /** Het advies van Jarvis, als dat in de bron staat. */
@@ -612,6 +637,10 @@ export function bouwOpties(
     else if (l === "advies") advies = r.tekst;
     else if (l === "waarom") waarom = r.tekst;
     else if (l === "controle") controle = r.tekst;
+    // `Keuze` draagt de vraag, `Extern` en `Bevestig` bepalen het soort. Alle
+    // drie zijn betekenisdragers, geen alternatieven; zonder deze regel werd
+    // "Extern" zelf een knop.
+    else if (l === "keuze" || l === "extern" || l === "bevestig") continue;
     else if (r.tekst.length > 0) opties.push({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst });
   }
   const basis = opties.length > 0 ? opties : [...standaard];
@@ -675,6 +704,72 @@ function risicoOpties(r: { kans?: string; impact?: string; mitigatie?: string })
  *
  * Een niet-aangesloten project levert precies één item: de aansluiting zelf.
  */
+/** De knoppen per soort interactie. "Later" komt er altijd bij, in `bouwOpties`. */
+const KNOPPEN: Record<EigenaarSoort, readonly Optie[]> = {
+  akkoord: [
+    { keuze: "akkoord", label: "Akkoord", gevolg: "Jarvis legt je autorisatie vast en voert uit wat eronder valt." },
+    { keuze: "niet-akkoord", label: "Niet akkoord", gevolg: "Jarvis voert het niet uit en vraagt wat er anders moet." },
+  ],
+  keuze: [],
+  "externe-handeling": [
+    { keuze: "gedaan", label: "Gedaan", gevolg: "Jarvis streept dit punt af in het taakdossier en legt vast dat jij het hebt gedaan." },
+  ],
+  bevestiging: [
+    { keuze: "gedaan", label: "Gedaan", gevolg: "Jarvis streept dit punt af en controleert bij de volgende ronde of het effect heeft gehad." },
+    { keuze: "nog-niet", label: "Nog niet", gevolg: "Het punt blijft staan; Jarvis brengt het later opnieuw onder je aandacht." },
+  ],
+  uitstel: [],
+};
+
+/**
+ * De alternatieven van een keuze die in één regel staat: "(a) … of (b) …".
+ *
+ * Dit is een migratiepad, geen tweede formaat. Bestaande dossiers hebben hun
+ * keuzes zo geschreven, en zonder herkenning toont de kaart een half afgemaakte
+ * vraag met één knop "Gedaan" — precies de fout die deze verzameling wegneemt.
+ * Voor nieuwe dossierpunten is de norm een eigen optieregel, en `jarvis lint`
+ * bewaakt dat.
+ */
+export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
+  const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "");
+  // Minstens twee gemerkte alternatieven; één "(a)" zonder "(b)" is geen keuze.
+  const merken = [...plat.matchAll(/\(([a-z])\)\s*/g)];
+  if (merken.length < 2) return [];
+  const uit: Optie[] = [];
+  for (const [i, m] of merken.entries()) {
+    const start = m.index + m[0].length;
+    const eind = i + 1 < merken.length ? merken[i + 1].index : plat.length;
+    let deel = plat.slice(start, eind).trim();
+    // Het voegwoord vóór het volgende alternatief hoort bij de scheiding, niet
+    // bij de tekst ervoor.
+    deel = deel.replace(/[,;]?\s*(of|dan wel)\s*$/i, "").replace(/[.,;]\s*$/, "").trim();
+    if (deel.length === 0) return [];
+    uit.push({ keuze: `optie-${m[1]}`, label: `(${m[1]}) ${kortTitel(deel, 60)}`, gevolg: deel });
+  }
+  return uit;
+}
+
+/**
+ * Wat voor interactie dit eigenaarspunt is. In volgorde; de eerste die past
+ * wint. Geen enkele stap leest het eerste woord van een titel — dat was de
+ * fout: een keuze die met "kies" begon werd een handeling met één knop.
+ */
+export function bepaalEigenaarSoort(invoer: {
+  readonly akkoordContext: boolean;
+  readonly alternatieven: number;
+  readonly labels: readonly string[];
+}): EigenaarSoort {
+  if (invoer.akkoordContext) return "akkoord";
+  if (invoer.alternatieven >= 2) return "keuze";
+  const heeft = (naam: string) => invoer.labels.some((l) => l.toLowerCase() === naam);
+  if (heeft("extern")) return "externe-handeling";
+  if (heeft("bevestig")) return "bevestiging";
+  // Niets in het dossier zegt dat de eigenaar iets kan doen. Dan ook geen knop
+  // die suggereert van wel; een punt dat op een gebeurtenis wacht is geen
+  // handeling (CON-0016).
+  return "uitstel";
+}
+
 export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
   const items: AandachtItem[] = [];
   const p = invoer.id;
@@ -684,6 +779,9 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       id: `${p}:aansluiten`,
       project: p,
       soort: "actie",
+      // Aansluiten vraagt een handeling in de repository zelf; de eigenaar
+      // meldt dat hij het gedaan heeft, Jarvis ziet het daarna vanzelf.
+      interactie: "bevestiging",
       titel: `${invoer.naam} is nog niet op Jarvis aangesloten`,
       toelichting:
         "Jarvis ziet van dit project alleen de git-historie. Aansluiten betekent: een GitHub-remote, " +
@@ -733,6 +831,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
           id: `${p}:blokkade:${i + 1}`,
           project: p,
           soort: "blokkade",
+          interactie: null,
           titel: b.titel,
           toelichting: b.toelichting,
           bron: "docs/CURRENT_STATE.md",
@@ -760,6 +859,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         id: `${p}:${r.id}`,
         project: projectVoorRecord(r),
         soort: "conflict",
+        interactie: null,
         titel: r.titel,
         toelichting: r.samenvatting,
         bron: r.id,
@@ -778,6 +878,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         id: `${p}:${r.id}`,
         project: projectVoorRecord(r),
         soort: "risico",
+        interactie: null,
         titel: r.titel,
         toelichting: r.samenvatting,
         bron: r.id,
@@ -802,19 +903,47 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       if (isAfgevinkt(item.titel) || isAkkoordVraag(item.titel)) continue;
       const blokkerend = /blokkerend/i.test(item.context);
       const naMerge = /na merge/i.test(item.context);
-      // Een punt dat begint met "beslis" vraagt een keuze, geen handeling; dat
-      // verschil bepaalt welke knoppen de interface toont.
-      const beslissing = blokkerend || /^beslis/i.test(item.titel);
+      const akkoordContext = /akkoord[_ -]?pr/i.test(item.context);
+      // De alternatieven komen uit eigen optieregels (de norm) of, voor
+      // bestaande dossiers, uit een keuze die in één regel staat.
+      const uitRegels = item.regels.filter((r) => !GERESERVEERDE_LABELS.includes(r.label.toLowerCase()) && !/^stap\s*\d+$/i.test(r.label));
+      const keuzeRegel = item.regels.find((r) => r.label.toLowerCase() === "keuze");
+      // Eén bron per keer, niet alles aan elkaar geplakt: dezelfde zin staat
+      // vaak in de titel én in de toelichting én in de stapregel, en samen
+      // geplakt levert dat elk alternatief drie keer op.
+      const ingebed =
+        uitRegels.length >= 2
+          ? []
+          : [...item.regels.map((r) => r.tekst), item.toelichting, item.titel]
+              .map((t) => leesIngebedeKeuze(t))
+              .find((o) => o.length >= 2) ?? [];
+      const alternatieven = uitRegels.length >= 2 ? uitRegels.length : ingebed.length;
+      const interactie = bepaalEigenaarSoort({
+        akkoordContext,
+        alternatieven,
+        labels: item.regels.map((r) => r.label),
+      });
+      // De titel is de hele vraag. Staat er een `Keuze`-regel, dan is dát de
+      // vraag; anders de titel van het punt zelf.
+      const titel = keuzeRegel ? kortTitel(keuzeRegel.tekst, 120) : item.titel;
+      const gebouwd = bouwOpties(item.regels, KNOPPEN[interactie]);
+      // Bij een keuze wegen de alternatieven zwaarder dan de standaardknoppen,
+      // en "Gedaan" hoort er nooit bij: een keuze is geen handeling.
+      const opties =
+        interactie === "keuze" && ingebed.length >= 2 && uitRegels.length < 2
+          ? [...ingebed, OPTIE_LATER]
+          : gebouwd.opties;
       items.push({
         id: `${p}:${taak.id}:${korteSleutel(item.titel)}`,
         project: taak.opdracht["project"] ?? p,
-        soort: beslissing ? "beslissing" : "actie",
-        titel: item.titel,
+        soort: interactie === "keuze" || interactie === "akkoord" ? "beslissing" : "actie",
+        interactie,
+        titel,
         toelichting: item.context ? `${item.context}. ${item.toelichting}` : item.toelichting,
         bron: `tasks/${taak.id}/resultaat.md`,
         urgentie: blokkerend ? "hoog" : naMerge ? "laag" : "midden",
         ...metWaarom(
-          bouwOpties(item.regels, beslissing ? STANDAARD_BESLISSING : STANDAARD_ACTIE),
+          { ...gebouwd, opties },
           `Staat in het resultaat van ${taak.id} als punt dat alleen de eigenaar kan doen.`,
         ),
       });
@@ -825,6 +954,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
         id: `${p}:${taak.id}:human-action:${i + 1}`,
         project: taak.opdracht["project"] ?? p,
         soort: "actie",
+        interactie: "externe-handeling",
         titel: kortTitel(m.replace(/^HUMAN_ACTION_REQUIRED\W*/, "")),
         toelichting: m,
         bron: `tasks/${taak.id}/resultaat.md`,

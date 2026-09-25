@@ -12,7 +12,7 @@ _Gegenereerd op 2026-09-25._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 39 |
+| Testbestanden | 40 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -31,6 +31,33 @@ _Gegenereerd op 2026-09-25._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Een eigenaarspunt krijgt zijn soort uit structuur in het dossier, niet uit het
+eerste woord van zijn titel. Dat woord bepaalde het tot nu toe: `blokkerend` in
+de context, of een titel die met "beslis" begint. Een punt dat luidde "kies
+tussen (a) … of (b) …" viel daardoor buiten beide en werd een handeling met één
+knop "Gedaan"; de twee alternatieven die de eigenaar in de tekst kreeg
+voorgelegd, bereikten de knoppen nooit, en hij heeft die kaart uiteindelijk met
+"Gedaan" moeten sluiten voor een keuze die hij al in het gesprek had gegeven.
+
+`EigenaarSoort` benoemt nu wat een punt van de eigenaar vraagt — `akkoord`,
+`keuze`, `externe-handeling`, `bevestiging`, `uitstel` — en `bepaalEigenaarSoort`
+kiest in vaste volgorde: governance vóór keuze, keuze vóór handeling, en anders
+uitstel. De knoppen volgen uit het soort: "Gedaan" alleen bij een externe
+handeling of een bevestiging, akkoordknoppen alleen waar de governance een
+autorisatie eist, en bij een keuze de alternatieven zelf, elk met zijn gevolg.
+
+De alternatieven komen uit eigen optieregels; `- Keuze:` draagt de vraag, zodat
+de titel de hele vraag is. Voor bestaande dossiers herkent de engine daarnaast
+een keuze die in één regel staat. Dat is een migratiepad, geen tweede formaat:
+`jarvis lint` keurt een keuze in een stapregel af en noemt de hersteltekst.
+
+Wat hier nog niet in zit is de weg terug van gesprek naar actie (§3 van het
+uitvoeringsplan): een bericht met een `item_id` sluit de bijbehorende kaart nog
+niet. Zolang die er niet is, valt een bestaand dossierpunt zonder `Extern`- of
+`Bevestig`-regel terug op `uitstel` en biedt het alleen "Later". Dat is bewust:
+de dossierpunten worden in een eigen ronde nagelopen (stap 5 van het plan), en
+de pin volgt pas daarna.
 
 De controle schaalt mee met de wijziging. Het rolcontract eiste vóór elke
 commit alle vier de projectcontroles, ook bij een commit die alleen een dossier

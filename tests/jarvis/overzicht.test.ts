@@ -221,7 +221,7 @@ describe("wat bij de eigenaar ligt", () => {
     expect(items.map((i) => i.bron)).toEqual(["RSK-0002"]);
   });
 
-  it("leest de eigenaarslijst uit een taakdossier, blokkerend als beslissing", () => {
+  it("leest de eigenaarslijst uit een taakdossier; het soort hangt niet aan een woord", () => {
     const resultaat = [
       "## Wat de eigenaar nog moet doen",
       "",
@@ -235,11 +235,19 @@ describe("wat bij de eigenaar ligt", () => {
       "3. **Beslissen of X mag.** Toelichting.",
     ].join("\n");
     const items = leesAandacht(project({ taken: [{ id: "T-1", opdracht: { status: "actief" }, resultaat }] }));
-    expect(items.map((i) => [i.soort, i.urgentie])).toEqual([
-      ["beslissing", "hoog"],
-      ["beslissing", "laag"],
-      ["actie", "laag"],
+    // Geen van deze drie punten noemt alternatieven, een externe dienst of een
+    // bevestiging, en geen ervan draagt een akkoordcontext. Ze vragen dus geen
+    // handeling die Jarvis kan aanbieden — ook niet het punt dat toevallig met
+    // "Beslissen" begint. Dat is de kern van criterium 1: het eerste woord van
+    // een titel bepaalt niets meer. De urgentie blijft wél uit de context komen.
+    expect(items.map((i) => [i.interactie, i.urgentie])).toEqual([
+      ["uitstel", "hoog"],
+      ["uitstel", "laag"],
+      ["uitstel", "laag"],
     ]);
+    // En zonder soort dat een handeling aanbiedt, ook geen knop die dat
+    // suggereert: alleen "Later" (criterium 3).
+    expect(items.map((i) => i.opties.map((o) => o.keuze))).toEqual([["later"], ["later"], ["later"]]);
     expect(items[0].bron).toBe("tasks/T-1/resultaat.md");
   });
 
@@ -706,9 +714,21 @@ describe("de invariant van de eigenaarslijst", () => {
     expect(bouwOverzicht([p], NU).projecten[0].taken[0].akkoord_nodig).toBe(false);
   });
 
-  it("houdt een echte eigenaarskeuze staan: die vereist hem nog steeds", () => {
+  it("houdt een echte eigenaarskeuze staan, en biedt hem aan als keuze", () => {
+    // Dit is de regel die deze verzameling heeft uitgelokt. Vroeger werd hij
+    // `actie` met één knop "Gedaan", en bereikten de twee alternatieven uit de
+    // tekst de knoppen nooit; de eigenaar heeft de kaart toen met "Gedaan"
+    // moeten sluiten voor een keuze die hij al in het gesprek had gegeven.
     const doc = eigenaarslijst("- Stap 1: kies tussen (a) een vercel.json met een ignoreCommand, of (b) niets doen.\n");
-    expect(leesAandacht(project({ taken: [met(doc)] })).map((i) => i.soort)).toEqual(["actie"]);
+    const [item] = leesAandacht(project({ taken: [met(doc)] }));
+    expect(item.interactie).toBe("keuze");
+    const keuzes = item.opties.map((o) => o.keuze);
+    expect(keuzes).toEqual(["optie-a", "optie-b", "later"]);
+    // Een keuze is geen handeling: "Gedaan" hoort er niet bij (criterium 3).
+    expect(keuzes).not.toContain("gedaan");
+    // En elk alternatief draagt zijn eigen gevolg (criterium 2).
+    expect(item.opties[0].gevolg).toContain("vercel.json");
+    expect(item.opties[1].gevolg).toContain("niets doen");
   });
 });
 

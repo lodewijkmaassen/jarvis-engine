@@ -35,6 +35,7 @@ export const LINT_CODES = [
   "ack_bron_onbetrouwbaar",
   "eigenaarslijst_administratief",
   "eigenaarslijst_technisch",
+  "eigenaarslijst_keuze_in_stap",
 ] as const;
 export type LintCode = (typeof LINT_CODES)[number];
 
@@ -367,6 +368,24 @@ export function toetsRandvoorwaarden(
  * echte eigenaarshandeling noemt — inloggen, een credential, een instelling,
  * een betaling, een akkoord of beslissing — blijft staan.
  */
+/**
+ * Staat er een keuze verstopt in een stapregel?
+ *
+ * Een keuzepunt hoort zijn alternatieven als eigen optieregels te schrijven.
+ * Gebeurt dat niet, dan valt de kaart terug op de standaardknoppen van het
+ * soort en bereiken de alternatieven de eigenaar nooit — gemeten: een punt met
+ * "kies tussen (a) … of (b) …" in een `Stap 1`-regel kwam bij de eigenaar aan
+ * als één knop "Gedaan". De engine herkent zo'n regel nog wel (het vangnet),
+ * maar dit is de norm en de poort bewaakt hem.
+ */
+export function keuzeInStapregel(tekst: string): boolean {
+  const plat = tekst.replace(/\s+/g, " ").replace(/\*\*/g, "");
+  if (!/^\s*(?:[-*]\s+)?\**stap\s*\d+\**\s*:/i.test(plat)) return false;
+  if (/\bkies\s+tussen\b/i.test(plat)) return true;
+  // Twee gemerkte alternatieven in dezelfde regel is óók een keuze.
+  return [...plat.matchAll(/\([a-z]\)/g)].length >= 2;
+}
+
 export function isAdministratieveBevestiging(tekst: string): boolean {
   const t = tekst.replace(/`/g, "").replace(/\s+/g, " ");
   const werkwoord = /\b(bevestig\w*|valideer\w*|controleer\w*|lees|nalezen|doorlezen|nakijken|kijk\w* na|goedkeur\w* (?:de|het) (?:tekst|documentatie))\b/i;
@@ -391,6 +410,22 @@ export function lint(invoer: LintInvoer): LintResultaat {
         punt.bestand,
         `"${punt.tekst.slice(0, 90)}${punt.tekst.length > 90 ? "…" : ""}" is een documentatie- of statusbevestiging; ` +
           `die doet Jarvis zelf (kennisbeheer of QA) en hoort niet in "Wat de eigenaar nog moet doen" (CON-0016).`,
+      ),
+    );
+  }
+
+  // Een keuze hoort haar alternatieven als eigen optieregels te schrijven; in
+  // een stapregel verstopt bereiken ze de knoppen niet.
+  for (const punt of invoer.eigenaarsPunten ?? []) {
+    if (!keuzeInStapregel(punt.tekst)) continue;
+    bevindingen.push(
+      bevinding(
+        "eigenaarslijst_keuze_in_stap",
+        "fout",
+        punt.bestand,
+        `"${punt.tekst.slice(0, 70)}${punt.tekst.length > 70 ? "…" : ""}" zet een keuze in een stapregel; ` +
+          `schrijf de vraag als "- Keuze: <vraag>" met daaronder "- Optie A: <gevolg>" en "- Optie B: <gevolg>", ` +
+          `anders bereiken de alternatieven de knoppen niet.`,
       ),
     );
   }
