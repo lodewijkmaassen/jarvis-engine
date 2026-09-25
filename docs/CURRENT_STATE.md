@@ -42,16 +42,43 @@ voorgelegd, bereikten de knoppen nooit, en hij heeft die kaart uiteindelijk met
 
 `EigenaarSoort` benoemt nu wat een punt van de eigenaar vraagt — `akkoord`,
 `keuze`, `externe-handeling`, `bevestiging`, `uitstel` — en `bepaalEigenaarSoort`
-kiest in vaste volgorde: governance eerst, dan een punt dat zichzelf een keuze
-noemt, dan een echte keuze met twee bruikbare alternatieven, dan een externe
-handeling, dan een bevestiging — en anders bevestiging als veilige terugval. De knoppen volgen uit het soort: "Gedaan" alleen bij een externe
+kiest in deze vaste volgorde, waarbij de eerste tak die past wint:
+
+1. een `- Wacht:`-regel — dan `uitstel`, alleen "Later";
+2. een akkoordcontext (`akkoord_pr`) zónder `- Keuze:`-regel — dan `akkoord`;
+3. twee of meer bruikbare alternatieven — dan `keuze`;
+4. een `- Keuze:`-regel zonder die twee alternatieven — dan `uitstel`;
+5. een `- Extern:`-regel — dan `externe-handeling`;
+6. anders `bevestiging` als veilige terugval, waar `- Bevestig:` mee samenvalt.
+
+De knoppen volgen uit het soort: "Gedaan" alleen bij een externe
 handeling of een bevestiging, akkoordknoppen alleen waar de governance een
 autorisatie eist, en bij een keuze de alternatieven zelf, elk met zijn gevolg.
 
+Twee takken staan in die volgorde omdat onafhankelijke QA ze eerder andersom
+mat. `- Wacht:` gaat vóór de keuze, want een punt dat zegt te wachten heeft
+niets af te handelen, ook niet met twee optieregels eronder. En een punt dat
+zelf een vraag stelt gaat vóór de akkoordcontext: een keuze onder `akkoord_pr`
+kreeg "Akkoord"/"Niet akkoord" onder de vraagtitel, en de alternatieven die het
+dossier had opgeschreven verdwenen volledig uit de kaart. Zonder `- Keuze:`-regel
+blijft een akkoord een akkoord, ook met optieregels erbij.
+
 De alternatieven komen uit eigen optieregels; `- Keuze:` draagt de vraag, zodat
-de titel de hele vraag is. Voor bestaande dossiers herkent de engine daarnaast
-een keuze die in één regel staat. Dat is een migratiepad, geen tweede formaat:
-`jarvis lint` keurt een keuze in een stapregel af en noemt de hersteltekst.
+de titel de hele vraag is. Labels die met `Optie` of `Keuze` beginnen én daarna
+nog iets zeggen (`- Optie A:`, `- Keuze B:`) zijn alternatieven; het kale label
+`- Keuze:` is de vraag. Voor bestaande dossiers herkent de engine daarnaast een
+keuze die in één regel staat — in een stapregel, in de toelichting, in de titel,
+en ook in de `- Keuze:`-regel zelf. Dat is een migratiepad, geen tweede formaat:
+`jarvis lint` keurt een keuze in de lopende tekst af en noemt de hersteltekst.
+
+Eén functie telt de alternatieven, `leesAlternatieven`, en de lint gebruikt
+letterlijk diezelfde functie. Zolang zij haar eigen telling had, ontdubbelde de
+lint op de ruwe labeltekst en de engine op `sleutelVan`; `- Optie A:` naast
+`- Optie-A:` ging daardoor groen door de poort terwijl de kaart de eigenaar
+alleen "Later" gaf. Een onbruikbaar alternatief maakt de hele keuze onbruikbaar
+in plaats van stil weg te vallen: twee labels met dezelfde sleutel zijn niet aan
+een antwoord toe te wijzen, en een optietekst die alleen opmaak is (`**`, `-`)
+draagt geen gevolg. Het punt wordt dan een halve keuze en de poort keurt het af.
 
 De knoppen volgen strikt uit het soort. Een eerdere opzet liet elke
 `- Label: tekst`-regel vóórgaan op de knoppen van het soort; daardoor verloor
@@ -69,9 +96,11 @@ dossierpunt expliciet zegt wat het is. Zolang dat niet zo is, betekent die
 terugval iets anders: elk bestaand eigenaarspunt zonder `Extern`- of
 `Bevestig`-regel verliest zijn enige knop en is voor de eigenaar niet meer af te
 sluiten. Onafhankelijke QA heeft dat twee rondes achter elkaar als verlies van
-werkend gedrag gemeten. `uitstel` vraagt nu een expliciete `- Wacht:`-regel;
-zodra de dossiers zijn nagelopen kan de terugval alsnog verschuiven, en is dat
-een keuze met een lege verzameling gevallen in plaats van een stille breuk.
+werkend gedrag gemeten. `uitstel` heeft twee ingangen en geen andere: een
+expliciete `- Wacht:`-regel, en een `- Keuze:`-regel die haar twee bruikbare
+alternatieven niet aanreikt. Zodra de dossiers zijn nagelopen kan de terugval
+alsnog verschuiven, en is dat een keuze met een lege verzameling gevallen in
+plaats van een stille breuk.
 
 Een bronregel kan de vaste knoppen niet meer overnemen. `later` en `gedaan`
 hebben een vaste betekenis in de interface; een kennisrecord met een regel
@@ -83,9 +112,19 @@ knoppen.
 Wat hier nog niet in zit is de weg terug van gesprek naar actie (§3 van het
 uitvoeringsplan): een bericht met een `item_id` sluit de bijbehorende kaart nog
 niet. Een bestaand dossierpunt zonder `Extern`- of `Bevestig`-regel houdt
-intussen zijn knoppen: de terugval is `bevestiging`, niet `uitstel`. De
-dossierpunten worden in een eigen ronde nagelopen (stap 5 van het plan), en de
-pin volgt pas daarna.
+intussen zijn knoppen: de terugval is `bevestiging`, niet `uitstel`. Dat geldt
+niet voor een punt met een `- Keuze:`- of `- Wacht:`-regel: dat zijn de twee
+ingangen van `uitstel` hierboven, en daar is "Gedaan" juist de fout die deze
+taak wegneemt. De dossierpunten worden in een eigen ronde nagelopen (stap 5 van
+het plan), en de pin volgt pas daarna.
+
+Wat hier ook nog niet in zit: het veld `interactie` wordt serverside bepaald maar
+nergens gerenderd. De interface bouwt haar knoppen uitsluitend uit `opties`, dus
+een `uitstel`-kaart staat met één knop "Later" tussen de acties zonder te zeggen
+waarom er niets te doen valt — voor de eigenaar niet te onderscheiden van een
+kaart waarvan de knoppen zijn weggevallen. De invariant is daarmee volledig
+serverside getoetst en er is geen weergavecontrole die hem zou opmerken als hij
+breekt. Gemeten door onafhankelijke QA, ronde 5.
 
 De controle schaalt mee met de wijziging. Het rolcontract eiste vóór elke
 commit alle vier de projectcontroles, ook bij een commit die alleen een dossier

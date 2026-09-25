@@ -11,7 +11,7 @@
 //   waarschuwing  — zichtbaar, blokkeert niet
 import { matchtGlob, normaliseerPad } from "./classify";
 import { technischeMarkers } from "./review";
-import { leesIngebedeKeuze } from "./overzicht";
+import { leesAlternatieven, leesIngebedeKeuze } from "./overzicht";
 import type { JarvisConfig } from "./config";
 import { isActiefRecord, type KnowledgeRecord } from "./records";
 import { formatteerBevinding, formatteerLaadFout, type KennisLading } from "./store";
@@ -389,13 +389,25 @@ export function toetsRandvoorwaarden(
  * als één knop "Gedaan". De engine herkent zo'n regel nog wel (het vangnet),
  * maar dit is de norm en de poort bewaakt hem.
  */
-export function keuzeNietUitgesplitst(tekst: string): boolean {
+export function keuzeNietUitgesplitst(punt: {
+  readonly tekst: string;
+  readonly regels?: readonly { readonly label: string; readonly tekst: string }[];
+}): boolean {
+  const regels = punt.regels ?? [];
+  // Al netjes uitgesplitst: dan valt er niets te melden.
+  if (leesAlternatieven(regels).length >= 2) return false;
   // Dezelfde herkenning als de engine gebruikt, niet een tweede kopie ervan:
   // wat het vangnet als keuze leest, hoort de poort als niet-uitgesplitst af
-  // te keuren. Een eerdere versie ankerde op "Stap N:" en vuurde daarom nooit
-  // — `lint` krijgt de toelichting van een punt binnen, en daar is dat
-  // voorvoegsel al afgeknipt.
-  return leesIngebedeKeuze(tekst).length >= 2;
+  // te keuren — en uit dezelfde bronnen. Twee eerdere versies vuurden daarom
+  // nooit op de vorm waarvoor de regel is geschreven: eerst ankerde zij op
+  // "Stap N:" in de toelichting, en daarna keek zij alleen naar de toelichting
+  // terwijl de stapregels van een LRN-0014-punt in `regels` zitten en de
+  // toelichting alleen de vette kop draagt (QA-ronde 5, N3).
+  const bronnen = [
+    punt.tekst,
+    ...regels.filter((r) => /^(keuze|stap\s*\d+)$/i.test(r.label.trim())).map((r) => r.tekst),
+  ];
+  return bronnen.some((t) => leesIngebedeKeuze(t).length >= 2);
 }
 
 /**
@@ -408,10 +420,14 @@ export function keuzeNietUitgesplitst(tekst: string): boolean {
 export function keuzeZonderAlternatieven(regels: readonly { label: string; tekst: string }[]): boolean {
   const heeftKeuze = regels.some((r) => r.label.trim().toLowerCase() === "keuze");
   if (!heeftKeuze) return false;
-  const sleutels = new Set(
-    regels.filter((r) => /^optie\b/i.test(r.label.trim()) && r.tekst.trim().length > 0).map((r) => r.label.trim().toLowerCase()),
-  );
-  return sleutels.size < 2;
+  // Letterlijk de functie van de engine, niet een tweede telling ernaast: zolang
+  // de lint op `label.trim().toLowerCase()` ontdubbelde en de engine op
+  // `sleutelVan`, ging `- Optie A:` naast `- Optie-A:` groen door de poort
+  // terwijl de kaart de eigenaar alleen "Later" gaf (QA-ronde 5, B1).
+  // Een keuze die haar alternatieven in de `Keuze`-regel zelf schrijft, leest
+  // het vangnet wel; die vorm meldt `eigenaarslijst_keuze_niet_uitgesplitst`.
+  if (leesIngebedeKeuze(regels.find((r) => r.label.trim().toLowerCase() === "keuze")?.tekst ?? "").length >= 2) return false;
+  return leesAlternatieven(regels).length < 2;
 }
 
 export function isAdministratieveBevestiging(tekst: string): boolean {
@@ -445,7 +461,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
   // Een keuze hoort haar alternatieven als eigen optieregels te schrijven; in
   // een stapregel verstopt bereiken ze de knoppen niet.
   for (const punt of invoer.eigenaarsPunten ?? []) {
-    if (!keuzeNietUitgesplitst(punt.tekst)) continue;
+    if (!keuzeNietUitgesplitst(punt)) continue;
     bevindingen.push(
       bevinding(
         "eigenaarslijst_keuze_niet_uitgesplitst",

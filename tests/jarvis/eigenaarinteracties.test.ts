@@ -140,15 +140,15 @@ describe("criterium 4 — een akkoordknop komt alleen uit de governance", () => 
 
 describe("de poort bewaakt het dossierformaat van een keuze", () => {
   it("herkent een keuze die niet in optieregels is uitgesplitst", () => {
-    expect(keuzeNietUitgesplitst("kies tussen (a) een ignoreCommand, of (b) niets doen.")).toBe(true);
-    expect(keuzeNietUitgesplitst("welke weg: (A) dit of (B) dat")).toBe(true);
+    expect(keuzeNietUitgesplitst({ tekst: "kies tussen (a) een ignoreCommand, of (b) niets doen." })).toBe(true);
+    expect(keuzeNietUitgesplitst({ tekst: "welke weg: (A) dit of (B) dat" })).toBe(true);
   });
 
   it("laat een handeling met twee delen met rust", () => {
     // "en", geen "of": beide dingen moeten gebeuren, dat is geen keuze.
-    expect(keuzeNietUitgesplitst("doe (a) het ene en (b) het andere.")).toBe(false);
-    expect(keuzeNietUitgesplitst("controleer artikel 5 lid (a) en lid (b) van het contract.")).toBe(false);
-    expect(keuzeNietUitgesplitst("zet de sleutel in de kluis.")).toBe(false);
+    expect(keuzeNietUitgesplitst({ tekst: "doe (a) het ene en (b) het andere." })).toBe(false);
+    expect(keuzeNietUitgesplitst({ tekst: "controleer artikel 5 lid (a) en lid (b) van het contract." })).toBe(false);
+    expect(keuzeNietUitgesplitst({ tekst: "zet de sleutel in de kluis." })).toBe(false);
   });
 
   it("keurt een half geschreven keuze af, op bruikbare alternatieven", () => {
@@ -366,5 +366,110 @@ describe("een halve keuze krijgt nooit een handelingsknop (QA-ronde 4, B4)", () 
     const item = eerste("- **Beslispunt.**\n  - Keuze: welke weg?\n  - Optie A: dit — g\n  - Optie B: dat — g");
     expect(item.interactie).toBe("keuze");
     expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+  });
+});
+
+describe("QA-ronde 5 — de alternatieven bereiken de eigenaar, of de poort keurt af", () => {
+  const r = (...paren: readonly (readonly [string, string])[]) => paren.map(([label, tekst]) => ({ label, tekst }));
+
+  describe("B1: lint en engine ontdubbelen op dezelfde sleutel", () => {
+    // `Optie A` en `Optie-A` verschillen als tekst maar niet als sleutel. De
+    // engine telde op `sleutelVan` en hield één alternatief over; de lint telde
+    // op de ruwe labeltekst en zag er twee. Uitkomst: poort groen, kaart met
+    // alleen "Later", en de eigenaar kan de vraag niet beantwoorden.
+    for (const [eerst, tweede] of [
+      ["Optie A", "Optie-A"],
+      ["Optie A", "Optie A."],
+      ["Optie A", "Optie  A"],
+      ["Optie 1", "Optie (1)"],
+    ] as const) {
+      it(`keurt "${eerst}" naast "${tweede}" af in plaats van er stil één van te maken`, () => {
+        const regels = r(["Keuze", "welke weg kiezen we?"], [eerst, "de ene weg"], [tweede, "de andere weg"]);
+        expect(keuzeZonderAlternatieven(regels)).toBe(true);
+        const item = eerste(
+          `- **Het beslispunt.**\n  - Keuze: welke weg kiezen we?\n  - ${eerst}: de ene weg\n  - ${tweede}: de andere weg`,
+        );
+        expect(item.interactie).toBe("uitstel");
+      });
+    }
+  });
+
+  describe("B2: een `Keuze`-regel die haar eigen alternatieven draagt, verliest ze niet", () => {
+    it("leest de keuze uit de `Keuze`-regel zelf", () => {
+      const item = eerste("- Het beslispunt.\n  - Keuze: kies (a) een ignoreCommand toevoegen, of (b) niets doen.");
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+    });
+
+    it("meldt die vorm als niet-uitgesplitst, want de norm is een eigen optieregel", () => {
+      const regels = r(["Keuze", "kies (a) een ignoreCommand toevoegen, of (b) niets doen."]);
+      expect(keuzeNietUitgesplitst({ tekst: "Het beslispunt.", regels })).toBe(true);
+      // En niet twee keer: een halve keuze is het niet, de alternatieven staan er.
+      expect(keuzeZonderAlternatieven(regels)).toBe(false);
+    });
+  });
+
+  describe("B3: een keuze onder een akkoordcontext houdt haar alternatieven", () => {
+    it("geeft de vraag haar eigen knoppen in plaats van Akkoord/Niet akkoord", () => {
+      const item = eerste(
+        "**akkoord_pr**\n\n- Het beslispunt.\n  - Keuze: welke weg?\n  - Optie A: de ene weg\n  - Optie B: de andere weg",
+      );
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["optie-a", "optie-b", "later"]);
+    });
+
+    it("houdt een akkoord zonder `Keuze`-regel wél een akkoord, ook met optieregels erbij", () => {
+      expect(bepaalEigenaarSoort({ akkoordContext: true, alternatieven: 2, labels: ["Optie A", "Optie B"] })).toBe("akkoord");
+    });
+
+    it("zet geen akkoordknop onder een vraag die het punt zelf stelt", () => {
+      expect(bepaalEigenaarSoort({ akkoordContext: true, alternatieven: 2, labels: ["Keuze", "Optie A", "Optie B"] })).toBe("keuze");
+      expect(bepaalEigenaarSoort({ akkoordContext: true, alternatieven: 0, labels: ["Keuze"] })).toBe("uitstel");
+    });
+  });
+
+  describe("N1: `Keuze A` / `Keuze B` zijn alternatieven, `Keuze` is de vraag", () => {
+    it("leest twee `Keuze X`-regels als alternatieven", () => {
+      const item = eerste("- Het beslispunt.\n  - Keuze A: de ene weg\n  - Keuze B: de andere weg");
+      expect(item.interactie).toBe("keuze");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["keuze-a", "keuze-b", "later"]);
+    });
+  });
+
+  describe("N2: alleen opmaak is geen gevolg", () => {
+    for (const leeg of ["**", "-", "…"]) {
+      it(`telt "${leeg}" niet als alternatief`, () => {
+        const regels = r(["Keuze", "welke weg?"], ["Optie A", "de ene weg"], ["Optie B", leeg]);
+        expect(keuzeZonderAlternatieven(regels)).toBe(true);
+      });
+    }
+  });
+
+  describe("N3: de lint leest de stapregels waar de norm ze verwacht", () => {
+    it("vuurt op de LRN-0014-vorm, waar de keuze in een `Stap 1`-regel staat", () => {
+      const regels = r(["Stap 1", "kies tussen (a) de ene weg, of (b) de andere weg."]);
+      expect(keuzeNietUitgesplitst({ tekst: "Het beslispunt.", regels })).toBe(true);
+    });
+
+    it("zwijgt zodra dezelfde keuze wél is uitgesplitst", () => {
+      const regels = r(
+        ["Stap 1", "kies tussen (a) de ene weg, of (b) de andere weg."],
+        ["Keuze", "welke weg?"],
+        ["Optie A", "de ene weg"],
+        ["Optie B", "de andere weg"],
+      );
+      expect(keuzeNietUitgesplitst({ tekst: "Het beslispunt.", regels })).toBe(false);
+    });
+  });
+
+  describe("N4: een punt dat zegt te wachten krijgt geen handelingsknop", () => {
+    it("laat `Wacht` vóórgaan op twee optieregels", () => {
+      expect(bepaalEigenaarSoort({ akkoordContext: false, alternatieven: 2, labels: ["Wacht", "Optie A", "Optie B"] })).toBe("uitstel");
+      const item = eerste(
+        "- Het beslispunt.\n  - Wacht: op antwoord van de klant\n  - Optie A: de ene weg\n  - Optie B: de andere weg",
+      );
+      expect(item.interactie).toBe("uitstel");
+      expect(item.opties.map((o) => o.keuze)).toEqual(["later"]);
+    });
   });
 });

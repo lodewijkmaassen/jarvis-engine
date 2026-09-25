@@ -801,10 +801,50 @@ export function leesIngebedeKeuze(tekst: string): readonly Optie[] {
  * wint. Geen enkele stap leest het eerste woord van een titel — dat was de
  * fout: een keuze die met "kies" begon werd een handeling met één knop.
  */
-/** Alternatieven met dezelfde sleutel zijn niet toe te wijzen aan een antwoord. */
-function ontdubbelOpties(opties: readonly Optie[]): readonly Optie[] {
-  const gezien = new Set<string>();
-  return opties.filter((o) => (gezien.has(o.keuze) ? false : (gezien.add(o.keuze), true)));
+/**
+ * Is dit label een alternatief (`Optie A`, `Keuze B`) of de aankondiging van de
+ * vraag (`Optie`, `Keuze`)? Twee labelwoorden, want een dossier schrijft beide:
+ * QA-ronde 5 (N1) mat dat `- Keuze A:` / `- Keuze B:` als gewone labelregels
+ * verdwenen en de eigenaar "Gedaan" kreeg onder een vraag met twee genoemde
+ * alternatieven.
+ */
+export function isAlternatiefLabel(label: string): boolean {
+  if (!/^(optie|keuze)\b/i.test(label.trim())) return false;
+  return sleutelVan(label).replace(/^(optie|keuze)-?/, "").length > 0;
+}
+
+/**
+ * Draagt deze optietekst werkelijk een gevolg? Alleen opmaak (`**`, `-`) is
+ * geen gevolg: de eigenaar kreeg dan een knop zonder uitleg (QA-ronde 5, N2).
+ */
+export function heeftGevolg(tekst: string): boolean {
+  return tekst.replace(/[^\p{L}\p{N}]+/gu, "").length > 0;
+}
+
+/**
+ * De bruikbare, ondubbelzinnige alternatieven van een eigenaarspunt — de enige
+ * plek waar dat geteld wordt. De lint gebruikt letterlijk deze functie; zolang
+ * zij haar eigen kopie had, telde zij op `label.trim().toLowerCase()` terwijl
+ * de engine op `sleutelVan` telde, en glipte `- Optie A:` naast `- Optie-A:`
+ * groen door de poort terwijl de kaart de eigenaar geen antwoord liet geven
+ * (QA-ronde 5, B1).
+ *
+ * Een onbruikbaar alternatief maakt de hele keuze onbruikbaar in plaats van
+ * stil weg te vallen: twee labels met dezelfde sleutel zijn niet aan een
+ * antwoord toe te wijzen, en een optie zonder gevolg is geen alternatief. Het
+ * punt wordt dan een halve keuze — alleen "Later" — en de poort keurt het af.
+ * Dezelfde strengheid als `leesIngebedeKeuze` hierboven.
+ */
+export function leesAlternatieven(regels: readonly { label: string; tekst: string }[]): readonly Optie[] {
+  const uit: Optie[] = [];
+  for (const r of regels) {
+    if (!isAlternatiefLabel(r.label)) continue;
+    if (!heeftGevolg(r.tekst)) return [];
+    const keuze = sleutelVan(r.label);
+    if (uit.some((o) => o.keuze === keuze)) return [];
+    uit.push({ keuze, label: r.label.trim(), gevolg: r.tekst.trim() });
+  }
+  return uit;
 }
 
 export function bepaalEigenaarSoort(invoer: {
@@ -812,21 +852,28 @@ export function bepaalEigenaarSoort(invoer: {
   readonly alternatieven: number;
   readonly labels: readonly string[];
 }): EigenaarSoort {
-  const noemtZichKeuze = invoer.labels.some((l) => l.trim().toLowerCase() === "keuze");
-  if (invoer.akkoordContext) return "akkoord";
+  const heeft = (naam: string) => invoer.labels.some((l) => l.trim().toLowerCase() === naam);
+  const noemtZichKeuze = heeft("keuze");
+  // 1. Een punt dat zégt te wachten is geen handeling en ook geen keuze: er is
+  // niets af te handelen zolang het wacht, dus ook geen knop die suggereert van
+  // wel (CON-0016). Dit stond onder de keuzetak, waardoor twee optieregels naast
+  // een `- Wacht:`-regel alsnog handelingsknoppen opleverden (QA-ronde 5, N4).
+  if (heeft("wacht")) return "uitstel";
+  // 2. Governance gaat voor — tenzij het punt zelf een vraag stelt. Een punt in
+  // een akkoordcontext dat `- Keuze:` schrijft, kreeg "Akkoord"/"Niet akkoord"
+  // onder de vraagtitel en zijn alternatieven verdwenen volledig uit de kaart
+  // (QA-ronde 5, B3). Geen van beide knoppen antwoordt "welke weg?", dus de
+  // vraag wint van de context; zonder `- Keuze:`-regel blijft het een akkoord,
+  // ook met optieregels erbij.
+  if (invoer.akkoordContext && !noemtZichKeuze) return "akkoord";
   if (invoer.alternatieven >= 2) return "keuze";
-  const heeft = (naam: string) => invoer.labels.some((l) => l.toLowerCase() === naam);
-  // Een punt dat in het dossier letterlijk `- Keuze:` schrijft maar te weinig
+  // 3. Een punt dat in het dossier letterlijk `- Keuze:` schrijft maar te weinig
   // bruikbare alternatieven heeft, is een halve keuze. Het mag nooit op een
   // handelingssoort terugvallen: dan krijgt de eigenaar "Gedaan" op een open
   // vraag, en dat is woordelijk de klacht waarmee deze taak begon. Het wordt
   // `uitstel` — alleen "Later" — en de poort keurt het dossier af.
   if (noemtZichKeuze) return "uitstel";
   if (heeft("extern")) return "externe-handeling";
-  if (heeft("bevestig")) return "bevestiging";
-  // Een punt dat zegt te wachten is geen handeling; dan ook geen knop die
-  // suggereert van wel (CON-0016).
-  if (heeft("wacht")) return "uitstel";
   // Anders: bevestiging, niet uitstel.
   //
   // Het uitvoeringsplan zet `uitstel` als terugval, en dat klopt zodra elk
@@ -992,8 +1039,8 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // leverde stil een "keuze" met één knop — of met alleen "Later" — en dat
       // is precies de kaart waarover de eigenaar klaagde: een vraag zonder
       // manier om te antwoorden.
-      const uitRegels = item.regels.filter((r) => /^optie\b/i.test(r.label.trim()) && r.tekst.trim().length > 0);
-      const keuzeRegel = item.regels.find((r) => r.label.toLowerCase() === "keuze");
+      const uitOptieregels = leesAlternatieven(item.regels);
+      const keuzeRegel = item.regels.find((r) => r.label.trim().toLowerCase() === "keuze");
       // Eén bron per keer, niet alles aan elkaar geplakt: dezelfde zin staat
       // vaak in de titel én in de toelichting én in de stapregel, en samen
       // geplakt levert dat elk alternatief drie keer op.
@@ -1002,14 +1049,23 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // `- Controle: …` stond, maakte anders het hele punt tot keuze en gaf de
       // eigenaar knoppen uit een waarschuwing; een `Controle` is bovendien werk
       // van Jarvis en nooit een handeling van de eigenaar (CON-0016).
+      // De `Keuze`-regel staat vooraan, want zij *is* de vraag: een punt dat
+      // zijn alternatieven in die ene regel schrijft ("kies (a) … of (b) …")
+      // verloor ze volledig, omdat het vangnet elke labelregel oversloeg. De
+      // eigenaar zag de hele vraag als titel en één knop "Later" (QA-ronde 5,
+      // B2). Overgeslagen worden nog altijd de andere labelregels: een keuze in
+      // `- Let op:` of `- Controle:` maakt van een waarschuwing geen kaart met
+      // knoppen, en een `Controle` is werk van Jarvis (CON-0016).
       const vangnetBronnen = [
+        ...(keuzeRegel ? [keuzeRegel.tekst] : []),
         ...item.regels.filter((r) => /^stap\s*\d+$/i.test(r.label.trim())).map((r) => r.tekst),
         item.toelichting,
         item.titel,
       ];
       const ingebed =
-        uitRegels.length >= 2 ? [] : (vangnetBronnen.map((t) => leesIngebedeKeuze(t)).find((o) => o.length >= 2) ?? []);
-      const alternatieven = uitRegels.length >= 2 ? ontdubbelOpties(uitRegels.map((r) => ({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst }))).length : ingebed.length;
+        uitOptieregels.length >= 2 ? [] : (vangnetBronnen.map((t) => leesIngebedeKeuze(t)).find((o) => o.length >= 2) ?? []);
+      const alternatieveOpties = uitOptieregels.length >= 2 ? uitOptieregels : ingebed;
+      const alternatieven = alternatieveOpties.length;
       const interactie = bepaalEigenaarSoort({
         akkoordContext,
         alternatieven,
@@ -1030,8 +1086,6 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // De alternatieven komen uit de optieregels zelf, niet uit wat
       // `bouwOpties` er verder van maakt: anders glippen losse labelregels als
       // `- Let op: …` er alsnog als knop tussen.
-      const uitOptieregels = uitRegels.map((r) => ({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst }));
-      const alternatieveOpties = uitOptieregels.length >= 2 ? ontdubbelOpties(uitOptieregels) : ingebed;
       const opties =
         interactie === "keuze" && alternatieveOpties.length >= 2
           ? [...alternatieveOpties, OPTIE_LATER]
