@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Overzicht, TaakItem } from "@/jarvis/src/overzicht";
 import { readFileSync } from "node:fs";
-import { HEARTBEAT_MINUTEN, UITVOERDER_TERMIJN_MINUTEN, bepaalRegie, rolVoorStap, uitvoerderToestand, type Activiteit, type UitvoerderItem, type Uitvoerders } from "@/jarvis/src/regie";
+import { HEARTBEAT_MINUTEN, UITVOERDER_TERMIJN_MINUTEN, bepaalRegie, registerGeldig, rolVoorStap, uitvoerderToestand, type Activiteit, type UitvoerderItem, type Uitvoerders } from "@/jarvis/src/regie";
 
 const NU = new Date("2026-09-14T22:00:00Z");
 const iso = (minutenGeleden: number) => new Date(NU.getTime() - minutenGeleden * 60_000).toISOString();
@@ -452,5 +452,74 @@ describe("uitvoerderToestand", () => {
     expect(uitvoerderToestand(null, null, NU)).toBe("GEBLOKKEERD");
     expect(uitvoerderToestand(null, iso(5), NU)).toBe("ACTIEF");
     expect(uitvoerderToestand(null, iso(UITVOERDER_TERMIJN_MINUTEN + 1), NU)).toBe("GEBLOKKEERD");
+  });
+});
+
+// T-20260917-uitvoerderbewaking, QA-ronde 1, criterium C. Drie registers die
+// hadden moeten blokkeren en dat niet deden: een toestandswaarde die de engine
+// niet kent, een register dat niemand meer bijwerkt, en twee ingangen onder
+// dezelfde naam waarvan de gezonde de zieke wegdrukte. Alle drie faalden
+// aantoonbaar op de code van vóór deze wijziging.
+describe("regie — de drie stille gaten in het uitvoerdersregister", () => {
+  const act2 = (op: string): Activiteit => act({ soort: "stap", op, tekst: "bezig" });
+  const levendeClaim = [act({ soort: "claim", op: iso(20) }), act2(iso(5))];
+
+  it("een toestandswaarde die de engine niet kent telt als onbekend, en dus als blokkade", () => {
+    const kapot: Uitvoerders = {
+      gegenereerd_op: iso(1),
+      // `requires-action` met een streepje: een typefout, geen toestand.
+      uitvoerders: [{ naam: "cloud", soort: "routine", platformtoestand: "requires-action" as never, laatste_teken: iso(1) }],
+    };
+    expect(uitvoerderToestand(kapot.uitvoerders[0], iso(1), NU)).toBe("GEBLOKKEERD");
+    const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, kapot);
+    expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+    expect(r.afwijkingen.length).toBeGreaterThan(0);
+  });
+
+  it("een register ouder dan de houdbaarheid telt als afwezig, hoe blokkerend de items ook beweren te zijn", () => {
+    const items = [{ naam: "cloud", soort: "routine" as const, platformtoestand: "blocked" as const, laatste_teken: iso(1) }];
+    const vers: Uitvoerders = { gegenereerd_op: iso(1), uitvoerders: items };
+    const oud: Uitvoerders = { gegenereerd_op: iso(UITVOERDER_TERMIJN_MINUTEN + 60), uitvoerders: items };
+
+    expect(registerGeldig(vers, NU)).toBe(true);
+    expect(registerGeldig(oud, NU)).toBe(false);
+    // Hetzelfde register, alleen ouder: het telt niet meer mee, dus de taak
+    // valt terug op de werkactiviteit en is niet langer geblokkeerd.
+    expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, vers).taken[0].toestand).toBe("BLOCKED");
+    expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, oud).taken[0].toestand).not.toBe("BLOCKED");
+  });
+
+  it("een register zonder bruikbare gegenereerd_op telt eveneens als afwezig", () => {
+    const items = [{ naam: "cloud", soort: "routine" as const, platformtoestand: "blocked" as const, laatste_teken: iso(1) }];
+    for (const op of [undefined, "", "geen datum"]) {
+      const kapot = { gegenereerd_op: op, uitvoerders: items } as unknown as Uitvoerders;
+      expect(registerGeldig(kapot, NU)).toBe(false);
+      expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, kapot).taken[0].toestand).not.toBe("BLOCKED");
+    }
+    expect(registerGeldig(null, NU)).toBe(false);
+  });
+
+  it("twee ingangen onder dezelfde naam: het ergste geval wint, de sessie drukt de routine niet weg", () => {
+    const dubbel: Uitvoerders = {
+      gegenereerd_op: iso(1),
+      uitvoerders: [
+        { naam: "cloud", soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+        { naam: "cloud", soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1), toelichting: "routine staat op pauze" },
+      ],
+    };
+    const r = bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, dubbel);
+    expect(r.taken[0]).toMatchObject({ toestand: "BLOCKED", blokkade: "uitvoerder_geblokkeerd" });
+    expect(r.taken[0].waarom).toMatch(/blocked/);
+  });
+
+  it("dezelfde twee ingangen in omgekeerde volgorde geven dezelfde uitkomst", () => {
+    const dubbel: Uitvoerders = {
+      gegenereerd_op: iso(1),
+      uitvoerders: [
+        { naam: "cloud", soort: "routine", platformtoestand: "blocked", laatste_teken: iso(1) },
+        { naam: "cloud", soort: "sessie", platformtoestand: "working", laatste_teken: iso(1) },
+      ],
+    };
+    expect(bepaalRegie(overzicht([taak("T-1")]), levendeClaim, NU, dubbel).taken[0].toestand).toBe("BLOCKED");
   });
 });
