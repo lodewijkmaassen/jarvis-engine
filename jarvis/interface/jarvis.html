@@ -427,7 +427,7 @@ function bouwBoom() {
   const projectTakken = (p) => {
     const kinderen = [];
     const taakIds = new Set(p.taken.map((t) => t.id));
-    for (const t of p.taken.filter((t) => t.status !== "afgerond")) {
+    for (const t of p.taken.filter((t) => !sluitDossier(t.status))) {
       const items = p.aandacht.filter((a) => a.bron.startsWith(`tasks/${t.id}/`));
       kinderen.push({ id: `t:${t.id}`, soort: "taak", label: t.titel, taak: t, project: p, kinderen: items.map((a) => bladVan(a, p)) });
     }
@@ -740,8 +740,14 @@ function lijstRegel(a) {
    akkoord op de huidige scope ligt; een apart akkoord voor één pull request (harde uitzondering); een open
    beslissing, actie, conflict of blokkade uit een dossier. Later: open risico's (accepteren of aanpakken).
    Statusmeldingen en verificaties staan hier nooit: die handelt Jarvis zelf af. */
+/* Of dit statuswoord een dossier sluit. Spiegelt `sluitDossier` in overzicht.ts: `afgerond` is
+   opgeleverd, `vervallen` is beëindigd zonder oplevering. Beide horen uit de tellingen en uit de
+   akkoordvraag; een vervallen taak die nog om akkoord vroeg, zou de eigenaar elke ronde opnieuw
+   een verzoek geven voor werk dat juist is beëindigd. */
+function sluitDossier(status) { return status === "afgerond" || status === "vervallen"; }
+
 function akkoordNodig(t) {
-  if (t.status === "afgerond" || !t.scope) return false;
+  if (sluitDossier(t.status) || !t.scope) return false;
   const stap = (t.stappen ?? []).find((x) => !x.gedaan)?.tekst ?? "";
   const nodig = t.akkoord_nodig ?? (/\bakkoord\b/i.test(stap) && /\beigenaar\b/i.test(stap));
   if (!nodig) return false;
@@ -859,13 +865,13 @@ function rootHtml(n) {
   s += `<div class="agent ${live.bezig ? "bezig" : live.live ? "actief" : ""}"><span class="naam"><span class="dot"></span>${esc(j?.sessie?.naam ?? "Jarvis")}</span><span class="mono" style="font-size:11px;color:var(--gedempt)">${esc(j?.sessie?.rol ?? "orchestrator")}</span><span class="wat">${esc(live.tekst)}</span><span class="meta">${j?.sessie?.model ? esc(j.sessie.model) : ""}${j?.sessie?.laatste ? " · laatste update " + esc(tijd(j.sessie.laatste)) : ""}. Eén model, vijf rollen; geen andere AI.</span></div>`;
   for (const a of j?.agenten ?? []) s += `<div class="agent ${a.status === "bezig" ? "bezig" : "actief"}"><span class="naam"><span class="dot"></span>${esc(a.naam)}</span><span class="mono" style="font-size:11px">${esc(a.rol ?? "")}</span><span class="wat">${esc(a.wat ?? "")}</span></div>`;
   if (eigen.length) s += `<div class="blok"><span class="eyebrow">Wat Jarvis doet</span>${eigen.map((k) => `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" && k.taak.stappen?.length ? `<small>${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : ""}</span></button>`).join("")}</div>`;
-  s += `<div class="blok"><span class="eyebrow">Projecten</span>${n.kinderen.filter((k) => k.soort === "project").map((k) => `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}<small>${k.project.taken.filter((t) => t.status !== "afgerond").length} taken · ${k.project.recent.length} commits / ${RECENT_DAGEN} d${k.project.aangesloten ? "" : " · niet aangesloten"}</small></span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : ""}</span></button>`).join("")}</div>`;
+  s += `<div class="blok"><span class="eyebrow">Projecten</span>${n.kinderen.filter((k) => k.soort === "project").map((k) => `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}<small>${k.project.taken.filter((t) => !sluitDossier(t.status)).length} taken · ${k.project.recent.length} commits / ${RECENT_DAGEN} d${k.project.aangesloten ? "" : " · niet aangesloten"}</small></span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : ""}</span></button>`).join("")}</div>`;
   return s;
 }
 function projectHtml(n) {
   const p = n.project; const open = p.aandacht.filter(isOpen);
   let s = `<div class="itemmeta"><span class="chip project">${p.hoofdbranch ? esc(p.hoofdbranch.naam) + " @ " + esc(p.hoofdbranch.commit) : "geen hoofdbranch"}</span><span class="chip">${p.aangesloten ? "aangesloten" : "niet aangesloten"}</span></div>`;
-  s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${open.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${p.recent.length}<small>/ ${RECENT_DAGEN} d</small></div></div><div class="tegel"><span class="eyebrow">Taken</span><div class="n">${p.taken.filter((t) => t.status !== "afgerond").length}</div></div></div>`;
+  s += `<div class="tegels"><div class="tegel"><span class="eyebrow">Voor jou</span><div class="n">${open.length}</div></div><div class="tegel"><span class="eyebrow">Beweging</span><div class="n">${p.recent.length}<small>/ ${RECENT_DAGEN} d</small></div></div><div class="tegel"><span class="eyebrow">Taken</span><div class="n">${p.taken.filter((t) => !sluitDossier(t.status)).length}</div></div></div>`;
   if (n.kinderen.length) s += `<div class="blok"><span class="eyebrow">Takken</span>${n.kinderen.map((k) => k.soort === "item" ? lijstRegel(k.item) : `<button class="regel" data-actie="kies" data-id="${esc(k.id)}"><span class="t">${esc(k.label)}${k.soort === "taak" ? `<small>${k.taak.stappen?.length ? `${k.taak.stappen.filter((x) => x.gedaan).length} van ${k.taak.stappen.length} stappen · ` : ""}${k.taak.stil ? "stil" : zetKort(k.taak)}${k.taak.laatste_beweging ? " · " + esc(relatief(k.taak.laatste_beweging)) : ""}</small>` : ""}</span><span class="m">${openItems(k) ? `${openItems(k)} voor jou` : `${k.kinderen.length}`}</span></button>`).join("")}</div>`;
   else s += `<div class="blok"><div class="leeg"><strong>Niets open</strong>${p.aangesloten ? "Geen taak en niets voor jou." : "Sluit dit project aan om hier meer te zien."}</div></div>`;
   if (p.stand?.length) s += `<div class="blok"><span class="eyebrow">Stand</span>${p.stand.map((st, i) => `<details class="stand" ${i === 0 ? "open" : ""}><summary>${esc(st.kop)}</summary><div class="md">${md(st.tekst)}</div></details>`).join("")}</div>`;
@@ -889,7 +895,7 @@ function taakHtml(n) {
    Alleen op de eigen database: daar staat vast wie schreef. */
 function akkoordVan(t) { return staat.autorisaties.filter((a) => a.soort === "taak" && a.taak === t.id).sort((a, b) => String(b.op).localeCompare(String(a.op)))[0] ?? null; }
 function akkoordHtml(t) {
-  if (!t.scope || t.status === "afgerond") return "";
+  if (!t.scope || sluitDossier(t.status)) return "";
   const laatste = akkoordVan(t);
   const geldig = laatste && laatste.scope_hash === t.scope_hash;
   const kanHier = staat.bron?.soort === "supabase";

@@ -793,7 +793,12 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
   for (const taak of invoer.taken) {
     if (!taak.resultaat) continue;
     const status = taak.opdracht["status"] ?? "";
-    if (status === "afgerond") continue;
+    // Een gesloten dossier levert geen punten voor de eigenaarslijst meer, en
+    // dat geldt voor beide manieren van sluiten. Een `vervallen` taak die zijn
+    // akkoordverzoek bleef aanbieden, zou de reset ongedaan maken: het dossier
+    // is dan wel uit de voorraad, maar de eigenaar krijgt het verzoek elke
+    // ronde opnieuw.
+    if (GESLOTEN_STATUSSEN.has(status)) continue;
     for (const item of leesItemsOnder(taak.resultaat, KOP_EIGENAAR)) {
       // Reconciliatie vóór de lijst, niet erna. Een punt dat aantoonbaar al
       // gedaan is (afgevinkt) of dat het akkoord op deze taak vraagt (dat
@@ -946,6 +951,32 @@ export function leesTaken(
 const OPEN_STATUSSEN = new Set(["actief", "review"]);
 
 /**
+ * De twee manieren waarop een dossier uit de werkvoorraad verdwijnt, en het
+ * verschil tussen die twee is de hele reden dat er twee woorden zijn.
+ *
+ * `afgerond` betekent opgeleverd: het werk is gedaan en het resultaat staat er.
+ * `vervallen` betekent beëindigd zonder oplevering: het dossier is bewust
+ * gesloten en blijft staan als historie, maar er is niets geleverd en er wordt
+ * ook niets meer geleverd. Wie die twee op één woord gooit, laat de interface
+ * beweren dat niet-opgeleverd werk klaar is — precies de soort onwaarheid die
+ * `openTakenUitDossiers` hieronder dichtzette, alleen omgekeerd.
+ *
+ * Het woord sluit aan op wat de kennisrecords al doen (`records.ts`:
+ * `actief | vervallen`), zodat er niet twee vocabulaires naast elkaar leven
+ * voor hetzelfde begrip.
+ */
+const GESLOTEN_STATUSSEN = new Set(["afgerond", "vervallen"]);
+
+/**
+ * Of dit statuswoord een dossier sluit. Eén bron, zodat de regie, het
+ * feitenblok en de interface niet elk hun eigen lijstje bijhouden — dat is hoe
+ * `vervallen` in één van de drie kon blijven meetellen als open werk.
+ */
+export function sluitDossier(status: string): boolean {
+  return GESLOTEN_STATUSSEN.has(status);
+}
+
+/**
  * De open taken zoals het feitenblok ze noemt: afleidbaar uit de
  * taakdossiers in de repository, dus een feit en geen narratief.
  *
@@ -981,7 +1012,7 @@ function velden(t: TaakDossier): OpenTaak {
 }
 
 /** De statussen die een taakdossier bewust kan dragen. */
-const BEKENDE_STATUSSEN = new Set([...OPEN_STATUSSEN, "afgerond"]);
+const BEKENDE_STATUSSEN = new Set([...OPEN_STATUSSEN, ...GESLOTEN_STATUSSEN]);
 
 /**
  * De dossiers die noch open noch afgerond zijn — kapotte front-matter, een
@@ -1212,6 +1243,10 @@ const WACHT_REDEN: Record<NonNullable<TaakItem["wacht_soort"]>, string> = {
 
 /** In welk vak deze taak valt, en waarom. */
 function vakVan(t: TaakItem): { readonly vak: StandVak; readonly reden: string } {
+  // Beide sluitwoorden vallen in hetzelfde vak — het is één lijst met werk dat
+  // niet meer loopt — maar de reden houdt ze uit elkaar, want daar leest de
+  // eigenaar of er iets is opgeleverd.
+  if (t.status === "vervallen") return { vak: "afgerond", reden: "vervallen, niet opgeleverd" };
   if (t.status === "afgerond") return { vak: "afgerond", reden: "afgerond" };
   if (t.aan_zet === "eigenaar") return { vak: "bij_jou", reden: t.wacht_op ?? "een handeling van jou" };
   if (t.aan_zet === "wacht") return { vak: "wacht", reden: t.wacht_soort === null ? "wacht" : WACHT_REDEN[t.wacht_soort] };

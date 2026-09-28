@@ -54,6 +54,34 @@ function commit(taak: string): ProjectInvoer["gitLog"][number] {
 
 const VAKSLEUTELS: readonly StandVak[] = ["actief", "backlog", "bij_jou", "wacht", "geparkeerd", "afgerond"];
 
+describe("een vervallen taak", () => {
+  it("valt in het vak afgerond, maar met een reden die zegt dat er niets is opgeleverd", () => {
+    const o = bouwOverzicht([project([dossier("T-vervallen", "Nooit gedaan", "vervallen")])], NU);
+    const ind = deelIn(o.projecten, o.voor_jou);
+    const t = ind.afgerond.find((x) => x.id === "T-vervallen");
+    expect(t?.reden).toBe("vervallen, niet opgeleverd");
+    // Niet in een van de vakken die om aandacht vragen.
+    for (const vak of ["actief", "backlog", "bij_jou", "wacht", "geparkeerd"] as const) {
+      expect(ind[vak].map((x) => x.id)).not.toContain("T-vervallen");
+    }
+  });
+
+  it("levert geen punt voor de eigenaarslijst meer, zodat een oud akkoordverzoek niet terugkomt", () => {
+    const met = (status: string): TaakDossier =>
+      ({
+        id: "T-akkoord",
+        opdracht: { status, titel: "T-akkoord", project: "jarvis", klasse: "S" },
+        resultaat:
+          "# Resultaat\n\n## Voortgang\n\n- [ ] Iets\n\n## Wat de eigenaar nog moet doen\n\n- Stap 1: zet de sleutel aan\n",
+        tekst: "---\nid: T-akkoord\n---\n\nscope\n",
+      }) as unknown as TaakDossier;
+    const open = bouwOverzicht([project([met("actief")])], NU);
+    expect(open.voor_jou.length).toBeGreaterThan(0);
+    const dicht = bouwOverzicht([project([met("vervallen")])], NU);
+    expect(dicht.voor_jou).toEqual([]);
+  });
+});
+
 describe("de indeling is volledig en uitsluitend", () => {
   it("zet elke taak in precies één vak", () => {
     const o = bouwOverzicht(

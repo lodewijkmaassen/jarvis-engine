@@ -38,6 +38,7 @@ import {
   dossiersZonderBekendeStatus,
   leesItemsOnder,
   openTakenUitDossiers,
+  sluitDossier,
   type Overzicht,
   type GitRegel,
   type ProjectInvoer,
@@ -807,7 +808,9 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
     const extern = await leesExternProject(pad);
     // Loopt er in deze repository al een taak over dat project (front-matter
     // `project:`), dan is "aansluiten" geen open vraag meer maar werk in uitvoering.
-    const loopt = eigen.taken.some((t) => t.opdracht["project"] === extern.id && t.opdracht["status"] !== "afgerond");
+    const loopt = eigen.taken.some(
+      (t) => t.opdracht["project"] === extern.id && !sluitDossier(t.opdracht["status"] ?? ""),
+    );
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
@@ -1202,7 +1205,8 @@ async function verzamelFeiten(
     const genoemd = zonderStatus.map((t) => `${t.id} (${t.status})`).join(", ");
     console.warn(
       `jarvis state: ${zonderStatus.length} taakdossier(s) zonder bekende status, buiten het feitenblok ` +
-        `gelaten: ${genoemd}. Verwacht \`actief\`, \`review\` of \`afgerond\` in de front-matter van opdracht.md.`,
+        `gelaten: ${genoemd}. Verwacht \`actief\`, \`review\`, \`afgerond\` of \`vervallen\` ` +
+        `in de front-matter van opdracht.md.`,
     );
   }
 
