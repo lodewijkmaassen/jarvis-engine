@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-25._
+_Gegenereerd op 2026-09-28._
 
 | Feit | Waarde |
 |---|---|
@@ -31,6 +31,27 @@ _Gegenereerd op 2026-09-25._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
+`afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard
+als historie, en niets geleverd. Eén bron bepaalt dat — `sluitDossier` in
+`overzicht.ts` — en de regie, het feitenblok, de eigenaarslijst en de interface
+lezen alle vier uit die ene bron. Dat was nodig omdat dezelfde vraag op vier
+plaatsen zijn eigen antwoord had: vier keer `status !== "afgerond"`, elk met
+zijn eigen kans om een nieuw sluitwoord te missen.
+
+Het onderscheid is geen woordenspel. Werk beëindigen door het `afgerond` te
+noemen, laat de interface tegen de eigenaar zeggen dat niet-opgeleverd werk
+klaar is — een statusdocument dat achterloopt maar wél vertrouwd wordt, precies
+het faalpad dat `openTakenUitDossiers` ooit dichtzette. Daarom draagt het vak
+`afgerond` voor zo'n taak de reden "vervallen, niet opgeleverd", en niet
+"afgerond".
+
+Twee gevolgen die uit de regel volgen en apart zijn vastgelegd: een vervallen
+dossier levert geen punten meer voor de eigenaarslijst (anders blijft een
+beëindigd akkoordverzoek elke ronde terugkomen), en een stap die op een
+vervallen taak wacht is een AFWIJKING en geen wachttoestand — die taak wordt
+nooit meer afgerond, dus wachten is eeuwig wachten.
 
 De controle schaalt mee met de wijziging. Het rolcontract eiste vóór elke
 commit alle vier de projectcontroles, ook bij een commit die alleen een dossier

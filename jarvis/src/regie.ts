@@ -363,6 +363,16 @@ function bepaalTaak(t: TaakItem, project: string, overzicht: Overzicht, activite
           volgende_stap: `De verwijzing naar ${taakDep[1]} in het dossier herstellen`,
           waarom: `de stap wacht op taak ${taakDep[1]}, maar die taak bestaat in geen enkel project` + opruimen };
       }
+      // Een dependency op een *vervallen* taak wacht anders eeuwig: die taak
+      // wordt nooit meer afgerond, want ze is beëindigd zonder oplevering. Dat
+      // is dezelfde eeuwige wachttoestand als een dependency die niet bestaat,
+      // en dus ook dezelfde uitkomst: een afwijking die iemand repareert, geen
+      // stille wachtstand.
+      if (dep.status === "vervallen") {
+        return { ...grond, toestand: "AFWIJKING", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: true, wacht_op: taakDep[1],
+          volgende_stap: `De verwijzing naar de vervallen taak ${taakDep[1]} in het dossier herstellen of laten vallen`,
+          waarom: `de stap wacht op taak ${taakDep[1]}, maar die is vervallen en wordt dus nooit afgerond` + opruimen };
+      }
       if (dep.status !== "afgerond") {
         return { ...grond, toestand: "WAITING_FOR_DEPENDENCY", verantwoordelijke: "task-controller", uitvoerder: null, sinds: laatste, uitvoerbaar: false, wacht_op: taakDep[1],
           waarom: `wacht op taak ${taakDep[1]}, die nog niet is afgerond; de controller hervat zodra dat wel zo is` + opruimen };

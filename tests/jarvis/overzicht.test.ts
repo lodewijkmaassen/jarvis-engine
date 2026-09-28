@@ -565,6 +565,10 @@ describe("openTakenUitDossiers", () => {
     expect(uit).toEqual([]);
   });
 
+  it("laat een vervallen taak buiten het feitenblok: beëindigd is uit de werkvoorraad", () => {
+    expect(openTakenUitDossiers([d("T-a", "vervallen", "Beëindigd zonder oplevering")])).toEqual([]);
+  });
+
   it("valt terug op het id als titel, zodat een taak nooit onzichtbaar wordt", () => {
     expect(openTakenUitDossiers([d("T-a", "actief")])).toEqual([{ id: "T-a", titel: "T-a", status: "actief" }]);
   });
@@ -734,8 +738,17 @@ describe("dossiersZonderBekendeStatus", () => {
 
   it("zwijgt over de statussen die de engine wél kent", () => {
     expect(
-      dossiersZonderBekendeStatus([d("T-a", "actief"), d("T-b", "review"), d("T-c", "afgerond")]),
+      dossiersZonderBekendeStatus([
+        d("T-a", "actief"),
+        d("T-b", "review"),
+        d("T-c", "afgerond"),
+        d("T-d", "vervallen"),
+      ]),
     ).toEqual([]);
 
+  });
+
+  it("waarschuwt niet over `vervallen`, want dan zou een beëindigd dossier stil uit het feitenblok vallen", () => {
+    expect(dossiersZonderBekendeStatus([d("T-a", "vervallen", "Beëindigd")])).toEqual([]);
   });
 });
