@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-25._
+_Gegenereerd op 2026-09-28._
 
 | Feit | Waarde |
 |---|---|
@@ -27,6 +27,7 @@ _Gegenereerd op 2026-09-25._
 | T-20260914-agent-operations | actief | Jarvis als observeerbaar en autonoom digitaal team — Operations-view en Task Controller |
 | T-20260914-eigen-laag | actief | De eigen Jarvis-laag (app en database) leidend; de artifact-database en sessiegebonden bestanden geen afhankelijkheid meer |
 | T-20260917-chatgpt-review | actief | Een tweede model als onafhankelijke reviewer in de keten, en eigenaarstaal in de app |
+| T-20260917-eigenaarinteracties | actief | Een eigenaarinteractie toont wat zij werkelijk is - een keuze krijgt opties, een akkoord een akkoordknop, en alleen een externe handeling krijgt "Gedaan" |
 
 <!-- jarvis:feiten:eind -->
 
