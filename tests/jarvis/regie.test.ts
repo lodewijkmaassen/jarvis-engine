@@ -134,6 +134,20 @@ describe("regie — toestand per open taak", () => {
     expect(r.taken[0]).toMatchObject({ toestand: "QUEUED", uitvoerbaar: true });
   });
 
+  it("geen WAITING_FOR_USER meer zodra het akkoord er ligt: de akkoordstap telt dan als gedaan", () => {
+    // De regie leest `aan_zet`, `akkoord_nodig` en de stappen van het overzicht;
+    // die leiden het akkoord af uit de autorisatietabel. Ligt het akkoord er,
+    // dan komt de akkoordstap hier als gedaan binnen en is de taak weer werk
+    // voor Jarvis in plaats van een kaart die bij de eigenaar blijft staan.
+    const stappen = [
+      { tekst: "Gebouwd", gedaan: true },
+      { tekst: "Akkoord van de eigenaar op deze taak in de Jarvis-app", gedaan: true },
+      { tekst: "Uitrollen door de developer", gedaan: false },
+    ];
+    const r = bepaalRegie(overzicht([taak("T-1", { stappen, aan_zet: "jarvis", akkoord_nodig: false, wacht_op: "Uitrollen door de developer" })]), [], NU);
+    expect(r.taken[0].toestand).not.toBe("WAITING_FOR_USER");
+    expect(r.taken[0]).toMatchObject({ toestand: "QUEUED", verantwoordelijke: "developer", volgende_stap: "Uitrollen door de developer" });
+  });
   it("geeft de eigenaar voorrang: een akkoordstap blijft WAITING_FOR_USER, ook met een gebeurtenisstap erna", () => {
     const stappen = [
       { tekst: "Akkoord van de eigenaar op deze taak", gedaan: false },

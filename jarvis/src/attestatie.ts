@@ -204,6 +204,41 @@ export type AttestatieFeiten = {
   readonly verplichteCheck: string;
 };
 
+/**
+ * Waarom het taakakkoord deze scope niet dekt. Leeg betekent: er ligt een
+ * geldig akkoord van de eigenaar op precies deze opdracht.
+ *
+ * Eén vergelijking, twee lezers. De attestatie gebruikte hem al; sinds
+ * 2026-09-28 leest ook de toestandsbepaling van het overzicht hier of het
+ * akkoord er ligt. Daarvoor leidde die toestand "de eigenaar is aan zet" af
+ * uit de *tekst* van de eerstvolgende open voortgangsstap: zodra ergens de
+ * regel "Akkoord van de eigenaar op deze taak in de Jarvis-app" als open stap
+ * stond, bleef de taak bij de eigenaar staan tot iemand die stap met de hand
+ * afvinkte — ook wanneer zijn akkoord al dagen in de database stond. Vier
+ * taken meldden zich zo op 2026-09-18 als WAITING_FOR_USER terwijl er niets
+ * te doen was. Een tweede, eigen vergelijking zou opnieuw uiteenlopen met
+ * deze; daarom staat ze hier en nergens anders.
+ */
+export function redenenTaakakkoord(t: TaakFeiten): readonly string[] {
+  if (t.autorisatie === null) return [`geen akkoord van de eigenaar op taak ${t.taak} in de database`];
+  if (t.autorisatie.soort !== "taak" || t.autorisatie.taak !== t.taak) {
+    return [`de gevonden autorisatie ${t.autorisatie.id} is geen taakakkoord voor ${t.taak}`];
+  }
+  if (t.scopeHashKop === null) return [`tasks/${t.taak}/opdracht.md ontbreekt op de kop; zonder scope geen akkoord`];
+  if (t.autorisatie.scope_hash !== t.scopeHashKop) {
+    return [
+      `de scope van ${t.taak} is veranderd sinds het akkoord van ${t.autorisatie.op} ` +
+        `(akkoord op ${(t.autorisatie.scope_hash ?? "?").slice(0, 12)}, kop ${t.scopeHashKop.slice(0, 12)}); opnieuw autoriseren`,
+    ];
+  }
+  return [];
+}
+
+/** Is er een geldig taakakkoord op precies deze scope? Dezelfde toets als de attestatie. */
+export function akkoordDektScope(t: TaakFeiten): boolean {
+  return redenenTaakakkoord(t).length === 0;
+}
+
 /** Is deze PR administratief (DEC-0044)? Dan is er geen taakakkoord en geen toetsing nodig. */
 export function isAdministratievePr(f: AttestatieFeiten): boolean {
   return (
@@ -226,20 +261,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   const administratief = isAdministratievePr(f);
   if (!administratief) {
     if (f.taken.length === 0 && f.taakRedenen.length === 0) redenen.push("geen taak bekend voor deze pull request");
-    for (const t of f.taken) {
-      if (t.autorisatie === null) {
-        redenen.push(`geen akkoord van de eigenaar op taak ${t.taak} in de database`);
-      } else if (t.autorisatie.soort !== "taak" || t.autorisatie.taak !== t.taak) {
-        redenen.push(`de gevonden autorisatie ${t.autorisatie.id} is geen taakakkoord voor ${t.taak}`);
-      } else if (t.scopeHashKop === null) {
-        redenen.push(`tasks/${t.taak}/opdracht.md ontbreekt op de kop; zonder scope geen akkoord`);
-      } else if (t.autorisatie.scope_hash !== t.scopeHashKop) {
-        redenen.push(
-          `de scope van ${t.taak} is veranderd sinds het akkoord van ${t.autorisatie.op} ` +
-            `(akkoord op ${(t.autorisatie.scope_hash ?? "?").slice(0, 12)}, kop ${t.scopeHashKop.slice(0, 12)}); opnieuw autoriseren`,
-        );
-      }
-    }
+    for (const t of f.taken) redenen.push(...redenenTaakakkoord(t));
 
     if (f.toetsing === null) {
       redenen.push(`geen toetsing met oordeel GO op de kop ${f.kop.slice(0, 7)}`);

@@ -842,6 +842,31 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
 }
 
 /**
+ * Het laatste taakakkoord per actief taakdossier, uit de autorisatietabel.
+ *
+ * Zonder deze tabel hangt "de eigenaar is aan zet" aan de tekst van een open
+ * voortgangsstap, en sluit een gegeven akkoord zijn eigen stap nooit. Geen
+ * database binnen bereik is geen fout maar een lege tabel: het overzicht blijft
+ * dan bouwen, en een akkoordstap blijft open staan zoals voorheen.
+ */
+async function leesTaakakkoorden(taken: readonly (readonly TaakDossier[])[]): Promise<Record<string, Autorisatie | null>> {
+  const ids = [...new Set(taken.flat().filter((t) => t.opdracht["status"] !== "afgerond").map((t) => t.id))];
+  if (ids.length === 0) return {};
+  const verbinding = await verbindDb();
+  if (verbinding === null) return {};
+  const akkoorden: Record<string, Autorisatie | null> = {};
+  try {
+    for (const id of ids) akkoorden[id] = alsAutorisatie((await verbinding.sql.unsafe(AUTORISATIE_TAAK_SQL, [id]))[0]);
+  } catch {
+    // Een onbereikbare database mag het overzicht niet tegenhouden; wat we niet
+    // weten, telt als "geen akkoord" en dat is de veilige kant.
+  } finally {
+    await verbinding.sql.end({ timeout: 2 });
+  }
+  return akkoorden;
+}
+
+/**
  * `jarvis overzicht [--extern <pad,pad>] [--uit <bestand>] [--schrijf]`
  *
  * Bouwt het overzicht dat de interface toont: deze repository als aangesloten
@@ -902,7 +927,13 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
-  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+  const taakakkoorden = await leesTaakakkoorden([eigen.taken, ...externen.map((e) => e.taken)]);
+  const metAkkoorden = (p: ProjectInvoer): ProjectInvoer => ({ ...p, taakakkoorden });
+  return {
+    wortel,
+    wortels: [wortel, ...externPaden],
+    overzicht: bouwOverzicht([...kern, eigen, ...externen].map(metAkkoorden), nu, kernId),
+  };
 }
 
 /**

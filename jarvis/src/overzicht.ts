@@ -13,7 +13,7 @@
 //
 // Volgorde en sortering zijn vast. Een overzicht dat bij elke run anders
 // gesorteerd is, leest als beweging waar geen beweging is.
-import { scopeHash } from "./attestatie";
+import { akkoordDektScope, scopeHash, type Autorisatie } from "./attestatie";
 import type { KnowledgeRecord, RecordType } from "./records";
 import type { OpenTaak } from "./state";
 
@@ -326,6 +326,13 @@ export type ProjectInvoer = {
   readonly records: readonly KnowledgeRecord[];
   readonly taken: readonly TaakDossier[];
   readonly gitLog: readonly GitRegel[];
+  /**
+   * Het laatste taakakkoord per taak-id, zoals de autorisatietabel het kent;
+   * een taak die er niet in staat heeft er geen. Zonder deze tabel leidt de
+   * toestandsbepaling "de eigenaar is aan zet" af uit de tekst van een open
+   * stap, en dan sluit een gegeven akkoord zijn eigen stap nooit.
+   */
+  readonly taakakkoorden?: Readonly<Record<string, Autorisatie | null>>;
 };
 
 // ---------------------------------------------------------------------------
@@ -1375,17 +1382,39 @@ function vraagtAkkoord(resultaat: string | null): boolean {
   );
 }
 
+/**
+ * Ligt er een geldig taakakkoord op de huidige scope van dit dossier? De
+ * vergelijking is die van de attestatie (`akkoordDektScope`): gelijk aan de
+ * scope waarop de eigenaar akkoord gaf betekent akkoord, en een werkelijk
+ * gewijzigde `opdracht.md` brengt de taak wél terecht bij hem terug.
+ */
+function akkoordLigt(t: TaakDossier, akkoorden: Readonly<Record<string, Autorisatie | null>>): boolean {
+  if (t.tekst === undefined) return false;
+  return akkoordDektScope({ taak: t.id, autorisatie: akkoorden[t.id] ?? null, scopeHashKop: scopeHash(t.tekst) });
+}
+
 export function leesTaken(
   taken: readonly TaakDossier[],
   gastheer: string,
   recent: readonly RecentItem[] = [],
   aandacht: readonly AandachtItem[] = [],
   nu: Date = new Date(),
+  taakakkoorden: Readonly<Record<string, Autorisatie | null>> = {},
 ): readonly TaakItem[] {
   return taken
     .map((t): TaakItem => {
       const status = t.opdracht["status"] ?? "onbekend";
-      const stappen = leesVoortgang(t.resultaat);
+      // Het akkoord sluit zijn eigen stap. Een akkoordstap in de
+      // voortgangslijst is gedaan zodra het akkoord in de autorisatietabel
+      // staat op precies deze scope — zonder dat iemand het vinkje zet. Tot
+      // 2026-09-28 gebeurde dat niet, en dan bleef de taak bij de eigenaar
+      // staan omdat de toestand aan de tekst van de stap hing in plaats van
+      // aan de autorisatie. Het vinkje in het dossier blijft leeg (die tekst
+      // is van de rol die de stap afrondt); de toestand telt hem als gedaan.
+      const gegeven = akkoordLigt(t, taakakkoorden);
+      const stappen = leesVoortgang(t.resultaat).map((s) =>
+        gegeven && !s.gedaan && isAkkoordStap(s.tekst) ? { ...s, gedaan: true } : s,
+      );
       const openVoorEigenaar = aandacht.filter((a) => a.bron.startsWith(`tasks/${t.id}/`));
       const laatste = recent.filter((r) => r.taak === t.id).map((r) => r.datum).sort().pop() ?? null;
       const volgendeStap = stappen.find((s) => !s.gedaan)?.tekst ?? null;
@@ -1398,6 +1427,7 @@ export function leesTaken(
       const akkoord_nodig =
         actief &&
         t.tekst !== undefined &&
+        !gegeven &&
         ((volgendeStap !== null && isAkkoordStap(volgendeStap)) || vraagtAkkoord(t.resultaat));
       // De eigenaar gaat voor: een openstaand punt of een akkoordvraag is een
       // echte handeling van een mens, en die verdwijnt niet doordat de stap
@@ -1513,7 +1543,7 @@ export function bouwProjectOverzicht(invoer: ProjectInvoer, nu: Date): ProjectOv
     stand: invoer.statusDocument ? leesStandSecties(invoer.statusDocument) : [],
     feiten: invoer.statusDocument ? leesFeiten(invoer.statusDocument) : [],
     recent: leesRecent(invoer.gitLog, nu),
-    taken: leesTaken(invoer.taken, invoer.id, leesRecent(invoer.gitLog, nu), leesAandacht(invoer), nu),
+    taken: leesTaken(invoer.taken, invoer.id, leesRecent(invoer.gitLog, nu), leesAandacht(invoer), nu, invoer.taakakkoorden ?? {}),
     kennis: telKennis(invoer.records),
     aandacht: leesAandacht(invoer),
   };

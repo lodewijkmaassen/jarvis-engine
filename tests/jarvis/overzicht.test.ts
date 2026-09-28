@@ -29,6 +29,7 @@ import {
   type TaakDossier,
 } from "@/jarvis/src/overzicht";
 import type { KnowledgeRecord } from "@/jarvis/src/records";
+import { scopeHash, type Autorisatie } from "@/jarvis/src/attestatie";
 
 const NU = new Date("2026-09-11T12:00:00Z");
 
@@ -547,6 +548,36 @@ describe("wie is aan zet", () => {
     // Zonder scope (geen opdrachttekst) is er niets om akkoord op te geven.
     const zonder = dossier("T-20260901-f", "## Voortgang" + "\n" + "- [ ] Akkoord van de eigenaar" + "\n");
     expect(bouwOverzicht([project({ taken: [zonder] })], NU).projecten[0].taken[0].akkoord_nodig).toBe(false);
+  });
+  it("sluit de akkoordstap zodra het akkoord op deze scope in de autorisatietabel staat", () => {
+    // Het faalpad: de toestand hing aan de tékst van de open stap, niet aan de
+    // autorisatie. Vier taken meldden zich zo als WAITING_FOR_USER terwijl het
+    // akkoord er al dagen lag; alleen een handmatig vinkje hielp.
+    const tekst = "---" + "\n" + "status: actief" + "\n" + "---" + "\n" + "Scope." + "\n";
+    const res = "## Voortgang" + "\n" + "- [x] Gebouwd" + "\n" + "- [ ] Akkoord van de eigenaar op deze taak in de Jarvis-app" + "\n" + "- [ ] Uitrollen" + "\n";
+    const taak = { ...dossier("T-20260901-g", res), tekst };
+    const akkoord = (scope_hash: string | null): Autorisatie => ({
+      id: "a1", soort: "taak", project: "jarvis", taak: "T-20260901-g",
+      scope_hash, pr_repo: null, pr_nummer: null, commit_sha: null, op: "2026-09-17T11:30:00Z",
+    });
+
+    // Geldig akkoord op precies deze scope: de eigenaar is klaar, Jarvis gaat verder
+    // met de eerstvolgende stap die echt nog open is.
+    const met = bouwOverzicht([project({ taken: [taak], taakakkoorden: { "T-20260901-g": akkoord(scopeHash(tekst)) } })], NU)
+      .projecten[0].taken[0];
+    expect([met.aan_zet, met.akkoord_nodig]).toEqual(["jarvis", false]);
+    expect(met.wacht_op).toBe("Uitrollen");
+    expect(met.stappen.find((st) => isAkkoordStap(st.tekst))?.gedaan).toBe(true);
+
+    // Een werkelijk gewijzigde scope brengt de taak wél bij de eigenaar terug;
+    // dezelfde vergelijking als de attestatie maakt.
+    const oud = bouwOverzicht([project({ taken: [taak], taakakkoorden: { "T-20260901-g": akkoord(scopeHash("Andere scope.")) } })], NU)
+      .projecten[0].taken[0];
+    expect([oud.aan_zet, oud.akkoord_nodig]).toEqual(["eigenaar", true]);
+
+    // Geen akkoord in de tabel: onveranderd bij de eigenaar.
+    const geen = bouwOverzicht([project({ taken: [taak] })], NU).projecten[0].taken[0];
+    expect([geen.aan_zet, geen.akkoord_nodig]).toEqual(["eigenaar", true]);
     // Een stap die het woord slechts noemt is geen akkoordstap (jarvis-app: "… akkoord vanuit de app verwerkt").
     expect(isAkkoordStap("Akkoord van de eigenaar op deze taak (DEC-0043)")).toBe(true);
     expect(isAkkoordStap("Wake-loop: vraag en akkoord vanuit de app verwerkt, ook als de eigenaar niet reageert")).toBe(false);
