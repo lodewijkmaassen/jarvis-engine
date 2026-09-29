@@ -45,19 +45,39 @@ export type Check = {
   readonly conclusie: string | null;
   /** Wanneer de run begon (ISO); bepaalt welke run van een naam de laatste is. */
   readonly gestart?: string | null;
+  /**
+   * Waar deze run vandaan komt: bij GitHub Actions het workflow-id, als tekst.
+   * Twee runs met dezelfde naam zijn alleen herhalingen van elkaar als ook
+   * hun herkomst gelijk is. Leeg of onbekend betekent: geen herhaling van
+   * wat dan ook, en dan blijft elke run staan (fail closed).
+   */
+  readonly herkomst?: string | null;
 };
 
 /**
- * Laat alleen een OPGEVOLGDE, GEANNULEERDE run weg. GitHub bewaart alle runs
- * van een commit: start een tweede run van dezelfde workflow (een
- * review-event tijdens een lopende run), dan annuleert de concurrency-groep
- * de eerste en blijft die als "cancelled" aan de commit hangen. Zo'n run
- * zegt niets over de commit zodra er een later gestarte run met dezelfde naam
- * is. Al het andere blijft staan en moet groen zijn: een rode run wordt
- * nooit overstemd door een latere groene met dezelfde naam (QA-bevinding
- * N-1 — anders kon een toegevoegde workflow met een job "poort" een echte
- * rode poort onzichtbaar maken). Een run zonder starttijd geldt als eerder
- * dan een run met starttijd; twee zonder starttijd volgen de lijstvolgorde.
+ * Houdt per controle alleen het resultaat over dat nog geldt.
+ *
+ * GitHub bewaart alle runs van een commit. Dezelfde workflow draait op deze
+ * repository op `push`, op `pull_request` en op `pull_request_review`, dus op
+ * één kop staan al snel meerdere runs met dezelfde jobnaam. Twee dingen
+ * vallen daardoor weg:
+ *
+ *  - een OPGEVOLGDE, GEANNULEERDE run: de concurrency-groep brak hem af toen
+ *    een tweede run startte, en hij zegt niets over de commit;
+ *  - een run die door een LATERE GELDIGE run van DEZELFDE WORKFLOW is
+ *    vervangen: dat is een herhaalde controle van hetzelfde type op dezelfde
+ *    versie, en dan telt alleen de meest recente.
+ *
+ * Dat tweede is bewust smal. QA-bevinding N-1 wees erop dat een toegevoegde
+ * workflow met een job `poort` een echte rode poort onzichtbaar zou kunnen
+ * maken; daarom vergelijkt deze functie niet op naam alleen maar op naam
+ * *en* herkomst. Een groene run uit een andere workflow overstemt een rode
+ * dus nog steeds niet, en zonder bekende herkomst overstemt niets iets:
+ * beide runs blijven staan en de rode blokkeert. Een geannuleerde run
+ * vervangt evenmin iets — hij is geen geldig resultaat.
+ *
+ * Een run zonder starttijd geldt als eerder dan een run met starttijd; twee
+ * zonder starttijd volgen de lijstvolgorde.
  */
 export function laatstePerNaam(checks: readonly Check[]): readonly Check[] {
   const positie = new Map<Check, number>();
@@ -69,9 +89,15 @@ export function laatstePerNaam(checks: readonly Check[]): readonly Check[] {
     if (ta !== tb) return tb > ta;
     return (positie.get(b) ?? 0) > (positie.get(a) ?? 0);
   };
-  return checks.filter(
-    (c) => !(c.status === "completed" && c.conclusie === "cancelled" && checks.some((d) => d !== c && d.naam === c.naam && later(c, d))),
-  );
+  const geannuleerd = (c: Check): boolean => c.status === "completed" && c.conclusie === "cancelled";
+  // Alleen runs uit dezelfde workflow zijn herhalingen van elkaar. Een lege
+  // of ontbrekende herkomst matcht niets, ook geen andere lege.
+  const zelfdeControle = (a: Check, b: Check): boolean =>
+    a !== b && a.naam === b.naam && typeof a.herkomst === "string" && a.herkomst !== "" && a.herkomst === b.herkomst;
+  return checks.filter((c) => {
+    if (geannuleerd(c) && checks.some((d) => d !== c && d.naam === c.naam && later(c, d))) return false;
+    return !checks.some((d) => zelfdeControle(c, d) && !geannuleerd(d) && later(c, d));
+  });
 }
 
 export type PullRequestFeiten = {
