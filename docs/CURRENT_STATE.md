@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-09-28._
+_Gegenereerd op 2026-09-29._
 
 | Feit | Waarde |
 |---|---|
@@ -312,6 +312,22 @@ overzicht ten slotte zelf in de database, net als `jarvis regie --schrijf`:
 publiceren was een losse tweede opdracht die alleen in de afsluitstap van een
 routine stond, en een ronde die anders eindigde liet de interface zonder
 melding op een oude wereld staan.
+
+Sinds 2026-09-29 telt per controle alleen nog het resultaat dat nog geldt. De
+poortworkflow draait op `push`, op `pull_request` en op `pull_request_review`,
+en alle drie checken dezelfde commit uit; op één kop staan dus meerdere runs met
+dezelfde jobnaam. `laatstePerNaam` liet daarvan alleen een opgevolgde
+GEANNULEERDE run weg, zodat een eerdere rode run voorgoed bleef meetellen naast
+een latere groene. Dat zette de ack-constructie buiten werking voor precies het
+geval waarvoor ze is gebouwd: de `pull_request_review`-run is de enige die de
+`REVIEW_*`-omgeving krijgt en dus de ack van de eigenaar ziet, maar zij kon de
+rode run vóór haar niet overstemmen. Een run vervalt nu voor een latere geldige
+run van dezelfde workflow. Bewust smal: vergeleken wordt op naam én herkomst
+(het workflow-id), zodat QA-bevinding N-1 blijft staan en een toegevoegde
+workflow met een job `poort` een echte rode poort niet onzichtbaar maakt. Een
+geannuleerde run vervangt niets, en zonder bekende herkomst vervalt er niets.
+Aan de autorisatie — goedkeuring, attestatie, scopecontrole — is niets gewijzigd.
+
 
 ## Volgende stap
 
