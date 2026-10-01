@@ -1594,6 +1594,51 @@ async function slugUitOrigin(wortel: string): Promise<string | null> {
   return m ? `${m[1]}/${m[2]}` : null;
 }
 
+/**
+ * Het id van de workflow-run waar een check-run bij hoort, uit zijn URL.
+ * GitHub zet het niet als eigen veld in het check-runs-antwoord, maar beide
+ * URL's dragen de vorm `/actions/runs/<run-id>/job/<job-id>`. Komt die vorm
+ * er niet in voor (een check van een andere app dan Actions), dan is er geen
+ * run-id en blijft de herkomst onbekend.
+ */
+function workflowRunId(r: { html_url?: string | null; details_url?: string | null }): string {
+  for (const url of [r.html_url, r.details_url]) {
+    const m = /\/actions\/runs\/(\d+)(?:\/|$)/.exec(url ?? "");
+    if (m) return m[1];
+  }
+  return "";
+}
+
+/**
+ * De workflow achter elke check-run, als `run-id -> workflow-id`.
+ *
+ * `laatstePerNaam` mag een run alleen laten vervallen voor een latere run van
+ * *dezelfde* workflow (QA-bevinding N-1). Het check-runs-antwoord noemt de
+ * workflow niet, dus die wordt hier opgehaald — alleen voor namen die meer
+ * dan één keer op de kop staan, want alleen daar kan iets vervallen. Faalt
+ * zo'n call, dan blijft de herkomst onbekend en vervalt er niets: de
+ * beoordeling valt terug op "elke run moet groen zijn".
+ */
+async function herkomstPerRun(
+  token: string,
+  slug: string,
+  runs: readonly { name: string; html_url?: string | null; details_url?: string | null }[],
+): Promise<Map<string, string>> {
+  const aantalPerNaam = new Map<string, number>();
+  for (const r of runs) aantalPerNaam.set(r.name, (aantalPerNaam.get(r.name) ?? 0) + 1);
+  const teZoeken = new Set(
+    runs.filter((r) => (aantalPerNaam.get(r.name) ?? 0) > 1).map(workflowRunId).filter((id) => id !== ""),
+  );
+  const uit = new Map<string, string>();
+  for (const runId of teZoeken) {
+    const a = await github(token, "GET", `/repos/${slug}/actions/runs/${runId}`);
+    if (a.status !== 200) continue;
+    const w = (a.lading as { workflow_id?: unknown }).workflow_id;
+    if (typeof w === "number" || typeof w === "string") uit.set(runId, String(w));
+  }
+  return uit;
+}
+
 async function leesPullRequest(token: string, slug: string, nummer: number): Promise<PullRequestFeiten | string> {
   const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
   if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
@@ -1618,7 +1663,17 @@ async function leesPullRequest(token: string, slug: string, nummer: number): Pro
       tekst: r.body ?? "",
     }),
   );
-  const runs = (checks.lading as { check_runs: { name: string; status: string; conclusion: string | null; started_at?: string | null }[] }).check_runs;
+  const runs = (checks.lading as {
+    check_runs: {
+      name: string;
+      status: string;
+      conclusion: string | null;
+      started_at?: string | null;
+      html_url?: string | null;
+      details_url?: string | null;
+    }[];
+  }).check_runs;
+  const herkomsten = await herkomstPerRun(token, slug, runs);
   return {
     nummer,
     auteur: p.user.login,
@@ -1629,7 +1684,13 @@ async function leesPullRequest(token: string, slug: string, nummer: number): Pro
     samenvoegbaar: p.mergeable,
     samenvoegStaat: p.mergeable_state,
     reviews: lijst,
-    checks: runs.map((r) => ({ naam: r.name, status: r.status, conclusie: r.conclusion, gestart: r.started_at ?? null })),
+    checks: runs.map((r) => ({
+      naam: r.name,
+      status: r.status,
+      conclusie: r.conclusion,
+      gestart: r.started_at ?? null,
+      herkomst: herkomsten.get(workflowRunId(r)) ?? null,
+    })),
   };
 }
 

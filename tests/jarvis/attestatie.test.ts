@@ -345,8 +345,9 @@ describe("laatstePerNaam", () => {
     // Andersom — de laatste run is geannuleerd — blijft geweigerd.
     const omgekeerd = { ...pr, checks: [...pr.checks].reverse().map((c, i) => ({ ...c, gestart: `2026-09-13T19:0${i}:00Z` })) };
     expect(beoordeelSamenvoegen(omgekeerd, "eigenaar")[0]).toMatch(/niet geslaagd \(cancelled\)/);
-    // Alleen een opgevolgde geannuleerde run valt weg; een rode run blijft altijd staan (QA N-1).
+    // Een opgevolgde geannuleerde run valt weg, ook zonder bekende herkomst.
     expect(laatstePerNaam([{ naam: "a", status: "completed", conclusie: "cancelled" }, { naam: "a", status: "completed", conclusie: "success" }]).map((c) => c.conclusie)).toEqual(["success"]);
+    // Zonder herkomst blijft een rode run staan: er is niets dat haar aantoonbaar vervangt.
     expect(laatstePerNaam([{ naam: "a", status: "completed", conclusie: "failure" }, { naam: "a", status: "completed", conclusie: "success" }]).map((c) => c.conclusie)).toEqual(["failure", "success"]);
     const overstemd = { ...pr, checks: [
       { naam: "poort", status: "completed", conclusie: "failure", gestart: "2026-09-13T19:00:00Z" },
@@ -364,5 +365,90 @@ describe("REST-paden", () => {
   it("bouwen een filter op taak, respectievelijk repository, nummer en kop", () => {
     expect(restPadAutorisatieTaak("T-1")).toBe("autorisaties_open?soort=eq.taak&taak=eq.T-1&order=op.desc&limit=1");
     expect(restPadToetsingKop("e/r", 7, KOP)).toContain("pr_repo=eq.e%2Fr&pr_nummer=eq.7&commit_sha=eq.");
+  });
+});
+
+describe("laatstePerNaam met herkomst", () => {
+  const groen = (naam: string, herkomst: string | null, gestart: string) => ({
+    naam,
+    status: "completed",
+    conclusie: "success",
+    gestart,
+    herkomst,
+  });
+  const rood = (naam: string, herkomst: string | null, gestart: string) => ({
+    naam,
+    status: "completed",
+    conclusie: "failure",
+    gestart,
+    herkomst,
+  });
+
+  it("laat een rode run vervallen voor een latere geldige run van dezelfde workflow", () => {
+    // De kop van ToVas Flow-#230: dezelfde workflow draaide op push, op
+    // pull_request en op pull_request_review; alleen de middelste was rood.
+    const checks = [
+      groen("poort", "354869867", "2026-09-29T05:21:35Z"),
+      rood("poort", "354869867", "2026-09-29T05:21:37Z"),
+      groen("poort", "354869867", "2026-09-29T05:44:41Z"),
+    ];
+    expect(laatstePerNaam(checks).map((c) => c.gestart)).toEqual(["2026-09-29T05:44:41Z"]);
+  });
+
+  it("laat een rode run NIET vervallen voor een groene uit een andere workflow (QA N-1)", () => {
+    const checks = [rood("poort", "111", "2026-09-29T05:00:00Z"), groen("poort", "222", "2026-09-29T06:00:00Z")];
+    expect(laatstePerNaam(checks).map((c) => c.conclusie)).toEqual(["failure", "success"]);
+  });
+
+  it("laat niets vervallen zolang de herkomst onbekend of leeg is", () => {
+    expect(laatstePerNaam([rood("poort", null, "1"), groen("poort", null, "2")])).toHaveLength(2);
+    expect(laatstePerNaam([rood("poort", "", "1"), groen("poort", "", "2")])).toHaveLength(2);
+    expect(laatstePerNaam([rood("poort", "9", "1"), groen("poort", null, "2")])).toHaveLength(2);
+  });
+
+  it("laat een eerdere run niet vervallen voor een LATERE run die zelf geen geldig resultaat is", () => {
+    // Een afgebroken run vervangt niets; de rode ervoor blijft dus blokkeren.
+    const checks = [
+      rood("poort", "354869867", "2026-09-29T05:00:00Z"),
+      { naam: "poort", status: "completed", conclusie: "cancelled", gestart: "2026-09-29T06:00:00Z", herkomst: "354869867" },
+    ];
+    expect(laatstePerNaam(checks).map((c) => c.conclusie)).toEqual(["failure", "cancelled"]);
+  });
+
+  it("laat een nog lopende run de eerdere vervangen, zodat de poort op wachten uitkomt", () => {
+    const checks = [
+      rood("poort", "354869867", "2026-09-29T05:00:00Z"),
+      { naam: "poort", status: "in_progress", conclusie: null, gestart: "2026-09-29T06:00:00Z", herkomst: "354869867" },
+    ];
+    expect(laatstePerNaam(checks).map((c) => c.status)).toEqual(["in_progress"]);
+  });
+
+  it("raakt runs met verschillende namen niet", () => {
+    const checks = [rood("lint-test-build", "1", "1"), groen("poort", "1", "2")];
+    expect(laatstePerNaam(checks)).toHaveLength(2);
+  });
+
+  it("maakt #230 samenvoegbaar zonder aan de autorisatie te raken", () => {
+    const kop = KOP;
+    const basis: PullRequestFeiten = {
+      nummer: 230,
+      auteur: "de-bot",
+      kop,
+      basis: "main",
+      open: true,
+      concept: false,
+      samenvoegbaar: true,
+      samenvoegStaat: "clean",
+      reviews: [{ gebruiker: "eigenaar", staat: "APPROVED", commit: kop }],
+      checks: [
+        groen("poort", "354869867", "2026-09-29T05:21:35Z"),
+        rood("poort", "354869867", "2026-09-29T05:21:37Z"),
+        groen("poort", "354869867", "2026-09-29T05:44:41Z"),
+        groen("lint-test-build", "354869868", "2026-09-29T05:21:37Z"),
+      ],
+    };
+    expect(beoordeelSamenvoegen(basis, "eigenaar")).toEqual([]);
+    // Zonder goedkeuring van de eigenaar blijft het antwoord hetzelfde als eerst.
+    expect(beoordeelSamenvoegen({ ...basis, reviews: [] }, "eigenaar")[0]).toMatch(/geen goedkeurende review/);
   });
 });
