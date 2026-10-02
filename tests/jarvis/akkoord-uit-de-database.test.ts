@@ -28,8 +28,9 @@ import { describe, expect, it } from "vitest";
 import { scopeHash } from "../../jarvis/src/attestatie";
 import { bouwOverzicht, leesTaken, type Akkoordstand, type AandachtItem, type ProjectInvoer, type TaakDossier } from "../../jarvis/src/overzicht";
 import { bepaalRegie } from "../../jarvis/src/regie";
-import { leesTaakakkoorden } from "../../jarvis/src/opdrachten";
-import { PAGINA, uitPagina } from "./paginafuncties";
+import { readdirSync, existsSync } from "node:fs";
+import { bouwOverzichtVanuit, leesTaakakkoorden } from "../../jarvis/src/opdrachten";
+import { PAGINA, paginaStuk, uitPagina } from "./paginafuncties";
 
 const NU = new Date("2026-10-02T16:00:00Z");
 const SCOPE = "---\nid: T-1\n---\n\nde opdracht zoals de eigenaar haar goedkeurde\n";
@@ -264,30 +265,81 @@ describe("leesTaakakkoorden — faalt dicht, niet open", () => {
   });
 });
 
-describe("de doorgifte in bouwOverzichtVanuit", () => {
-  // Dit is bewust een test op de brontekst, en wel om de reden die de pure
-  // tests hierboven juist niet dekken: `bouwOverzichtVanuit` leest de
-  // werkmap, git en de configuratie, dus zij valt niet uit te voeren. De
-  // sabotage die ongemerkt doorkwam was `bouwOverzicht(projecten, nu, kernId,
-  // null)` — de hele reparatie dood, geen enkele test die protesteert. Op de
-  // vorm van die ene aanroep valt dat wél vast te leggen.
-  const bron = readFileSync(path.join(process.cwd(), "jarvis/src/opdrachten.ts"), "utf8");
+describe("de doorgifte in bouwOverzichtVanuit — uitgevoerd", () => {
+  // Ronde 2 weerlegde de eerdere brontest hier: er wás een uitvoerbare weg, en
+  // een test op de vórm van de aanroep liet `await leesTaakakkoorden(…) && null`
+  // door terwijl zij een gedragsneutrale herschrijving afkeurde. Nu draait de
+  // echte opdracht op de echte dossiers van deze repository, met één stub op de
+  // plaats waar de database zou zitten.
 
-  it("leest de akkoordstand en geeft hem door aan bouwOverzicht", () => {
-    const aanroep = /bouwOverzicht\(([^)]*)\)/.exec(bron);
-    expect(aanroep, "de aanroep van bouwOverzicht is niet gevonden").not.toBeNull();
-    const argumenten = aanroep![1]!.split(",").map((a) => a.trim());
-    expect(argumenten.length, "bouwOverzicht krijgt de akkoordstand niet mee").toBe(4);
-    expect(argumenten[3], "het vierde argument is geen variabele maar een vaste waarde").toBe("akkoorden");
-    expect(bron).toMatch(/const akkoorden = await leesTaakakkoorden\(/);
+  /** De open taken van deze repository, met de hash van hun eigen opdracht.md. */
+  async function openTaken(): Promise<ReadonlyMap<string, string>> {
+    const map = new Map<string, string>();
+    const wortel = path.join(process.cwd(), "tasks");
+    for (const id of readdirSync(wortel)) {
+      const bestand = path.join(wortel, id, "opdracht.md");
+      if (!existsSync(bestand)) continue;
+      const tekst = readFileSync(bestand, "utf8");
+      const status = /^status:\s*(\S+)/m.exec(tekst)?.[1] ?? "";
+      if (status === "afgerond" || status === "vervallen") continue;
+      map.set(id, scopeHash(tekst));
+    }
+    return map;
+  }
+
+  it("vraagt precies de open taken op en laat hun akkoord doorwerken", async () => {
+    const verwacht = await openTaken();
+    expect(verwacht.size, "deze repository draagt geen open taakdossier om op te meten").toBeGreaterThan(0);
+
+    let gevraagd: readonly string[] = [];
+    const { overzicht } = await bouwOverzichtVanuit(new Map(), async (taken) => {
+      gevraagd = taken;
+      return verwacht;
+    });
+
+    // Elke open taak is opgevraagd, en geen gesloten.
+    expect([...gevraagd].sort()).toEqual([...verwacht.keys()].sort());
+
+    // En de uitkomst is werkelijk doorgewerkt: met een geldig akkoord op elke
+    // open taak vraagt geen enkele er nog een, en elke taak weet dat de stand
+    // gemeten is. Dit valt om bij `… && null`, bij een lege lijst en bij
+    // verminkte id's — precies de drie sabotages die de vorige test doorliet.
+    const taken = overzicht.projecten.flatMap((p) => p.taken).filter((t) => verwacht.has(t.id));
+    expect(taken.length).toBe(verwacht.size);
+    for (const t of taken) {
+      expect(t.akkoord_gemeten, `${t.id}: de stand geldt als niet gemeten`).toBe(true);
+      expect(t.akkoord_nodig, `${t.id}: vraagt nog een akkoord dat er ligt`).toBe(false);
+    }
   });
 
-  it("vraagt de stand alleen voor taken die nog open zijn", () => {
-    expect(bron).toMatch(/leesTaakakkoorden\(\s*\n?\s*projecten\.flatMap\(\(p\) => p\.taken\.filter\(\(t\) => !sluitDossier\(/);
+  it("laat elke taak om haar akkoord vragen wanneer de stand niet te meten is", async () => {
+    const { overzicht } = await bouwOverzichtVanuit(new Map(), async () => null);
+    for (const t of overzicht.projecten.flatMap((p) => p.taken)) {
+      expect(t.akkoord_gemeten, `${t.id}: beweert gemeten te hebben`).toBe(false);
+    }
   });
 });
 
 describe("de pagina: één ijking, en alle vier de plaatsen lezen haar", () => {
+  it("leest nergens `aan_zet` rechtstreeks, behalve waar dat mag", () => {
+    // De vier leesplaatsen die QA-ronde 2 aanwees (`zetKort`, de labelkleur op
+    // de kaart, de CSS-klasse van de statusregel en `nulstand`) kwamen er elk
+    // afzonderlijk doorheen. Ze één voor één afdekken dekt de volgende niet;
+    // dit dekt ze allemaal, ook die er nog bij komen. Twee plaatsen mógen het
+    // veld lezen: `zetVan` zelf, en de filter op "niemand" — die waarde
+    // verandert `zetVan` nooit.
+    const regels = PAGINA.split("\n");
+    const toegestaan = [
+      /if \(t\.aan_zet !== "eigenaar"\) return t\.aan_zet;/,
+      /\.filter\(\(t\) => t\.aan_zet !== "niemand"\)/,
+    ];
+    const overtredingen = regels
+      .map((r, i) => ({ nr: i + 1, r }))
+      .filter(({ r }) => /\.aan_zet\b/.test(r) && !toegestaan.some((t) => t.test(r)))
+      .map(({ nr, r }) => `${nr}: ${r.trim().slice(0, 100)}`);
+    expect(overtredingen, "deze regels lezen aan_zet buiten zetVan om").toEqual([]);
+  });
+
   it("roept ijkZetten aan vóór er iets getekend wordt", () => {
     const render = /\nfunction render\(\) \{([\s\S]*?)\n\}/.exec(PAGINA);
     expect(render, "render is niet gevonden").not.toBeNull();
@@ -296,6 +348,19 @@ describe("de pagina: één ijking, en alle vier de plaatsen lezen haar", () => {
     const teken = regels.findIndex((r) => r.includes("tekenKaart()"));
     expect(ijk, "render ijkt de taken niet; akkoord_open en eigen_punten blijven undefined").toBeGreaterThanOrEqual(0);
     expect(ijk).toBeLessThan(teken);
+  });
+
+  it("schrijft de geijkte velden op precies één plaats", () => {
+    // Het aanroeppunt bewaken is niet genoeg: wie de waarden ná `ijkZetten`
+    // overschrijft, zet de correctielaag net zo dood. Er hoort maar één
+    // schrijver te zijn, en dat is `ijkZetten` zelf.
+    const binnen = paginaStuk("ijkZetten");
+    for (const veld of ["akkoord_open", "eigen_punten"]) {
+      const overal = [...PAGINA.matchAll(new RegExp(`\\.${veld}\\s*=(?!=)`, "g"))].length;
+      const hier = [...binnen.matchAll(new RegExp(`\\.${veld}\\s*=(?!=)`, "g"))].length;
+      expect(hier, `ijkZetten zet ${veld} niet`).toBe(1);
+      expect(overal, `${veld} wordt buiten ijkZetten om geschreven`).toBe(1);
+    }
   });
 
   /**
@@ -321,14 +386,22 @@ describe("de pagina: één ijking, en alle vier de plaatsen lezen haar", () => {
       ["esc", "md", "inlineMd", "MAANDEN", "datumKort", "tijd", "relatief", "RECENT_DAGEN", "WACHT_WOORD",
        "TOESTAND_TEKST", "ROLNAAM", "SOORT", "URG", "isOpen", "heeftEigenPunten", "zetVan", "zetTekst",
        "regieVan", "sluitDossier", "akkoordVan", "akkoordNodig", "akkoordHtml", "lijstRegel", "taakHtml",
-       "ijkZetten", "verzamelActies"],
+       "ijkZetten", "verzamelActies", "zetKort", "nulstand"],
       staat,
     );
     f.ijkZetten!();
     const t = o.projecten[0]!.taken[0]!;
     const knoop = { taak: t, project: o.projecten[0]!, kinderen: (o.voor_jou ?? []).filter((a) => a.bron.startsWith("tasks/T-1/")).map((a) => ({ item: a })) };
     const acties = f.verzamelActies!() as { nu: readonly unknown[] };
-    return { html: f.taakHtml!(knoop) as string, voorJou: acties.nu.length, taak: t };
+    return {
+      html: f.taakHtml!(knoop) as string,
+      voorJou: acties.nu.length,
+      taak: t,
+      // De twee andere plaatsen die `zetVan` horen te lezen en apart aan te
+      // roepen zijn: het korte woord op de kaart, en de rustmelding.
+      kort: f.zetKort!(t) as string,
+      nulstand: f.nulstand!(o, acties) as string | null,
+    };
   }
 
   const akkoordRij = (hash: string) => [{ soort: "taak", taak: "T-1", scope_hash: hash, op: "2026-10-02T07:49:22Z" }];
@@ -340,6 +413,7 @@ describe("de pagina: één ijking, en alle vier de plaatsen lezen haar", () => {
     expect(w.html).toContain("Je akkoord hierboven is wat deze taak van je vraagt.");
     expect(w.html).not.toContain("Jarvis is aan zet.");
     expect(w.voorJou).toBe(1);
+    expect(w.kort, "het woord op de kaart").toBe("wacht op jou");
   });
 
   it("B — akkoord gemeten en geldig: alle vier zeggen dat Jarvis aan zet is", () => {
@@ -348,7 +422,10 @@ describe("de pagina: één ijking, en alle vier de plaatsen lezen haar", () => {
     expect(w.html).toContain("JARVIS AAN ZET");
     expect(w.html).not.toContain("WACHT OP JOU");
     expect(w.html).toContain("Jarvis is aan zet.");
+    expect(w.html, "de CSS-klasse van de statusregel").toContain('class="zet jarvis"');
     expect(w.voorJou).toBe(0);
+    expect(w.kort, "het woord op de kaart").toBe("Jarvis aan zet");
+    expect(w.nulstand, "Jarvis heeft werk, dus geen rustmelding").toBeNull();
   });
 
   it("C — akkoord net gegeven, de bouw nog niet bij: geen tegenspraak, en de pagina zegt waarom", () => {
@@ -360,7 +437,10 @@ describe("de pagina: één ijking, en alle vier de plaatsen lezen haar", () => {
     expect(w.html).toContain("JARVIS AAN ZET");
     expect(w.html).toContain("Jarvis is aan zet.");
     expect(w.html).toContain("die bouw kon de akkoorden niet lezen");
+    expect(w.html, "de CSS-klasse van de statusregel").toContain('class="zet jarvis"');
     expect(w.voorJou).toBe(0);
+    expect(w.kort, "het woord op de kaart").toBe("Jarvis aan zet");
+    expect(w.nulstand, "Jarvis heeft werk, dus geen rustmelding").toBeNull();
   });
 
   it("D — akkoord op een oudere scope: terug naar de vraag", () => {

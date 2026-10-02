@@ -21,9 +21,18 @@ export const PAGINA = readFileSync(path.join(process.cwd(), "jarvis/interface/ja
 
 /**
  * De volledige declaratie van één functie of constante op het hoogste niveau.
- * Een functie wordt met haakjestelling afgebakend, zodat een `}` in een
- * sjabloonstring of een geneste functie haar niet voortijdig afkapt; een
- * constante loopt tot het einde van haar regel, want die zijn hier eenregelig.
+ *
+ * Een functie wordt met haakjestelling afgebakend. De teller kent geen strings
+ * of commentaar, dus een losse `{` of `}` daarbinnen zou de grens verleggen —
+ * maar dat faalt luid en niet stil: een verkeerd afgebakende functie is bijna
+ * altijd ongeldige JavaScript, en `new Function` ontleedt de hele tekst vooraf.
+ * In de huidige pagina gaan alle 71 declaraties goed; QA heeft dat nagemeten.
+ *
+ * Een constante loopt tot het einde van haar regel. Dat is hier juist, want ze
+ * zijn alle eenregelig, maar het is wél het ene geval dat stil kan afkappen:
+ * een meerregelige `const` waarvan de eerste regel op zichzelf geldig is,
+ * levert de verkeerde waarde zonder te klagen. Wie er een toevoegt, moet dit
+ * weten.
  */
 export function paginaStuk(naam: string, html: string = PAGINA): string {
   const functie = new RegExp(`\\nfunction ${naam}\\s*\\(`).exec(html);
@@ -43,7 +52,13 @@ export function paginaStuk(naam: string, html: string = PAGINA): string {
   const constante = new RegExp(`\\nconst ${naam}\\s*=`).exec(html);
   if (constante === null) throw new Error(`${naam} is niet gevonden in jarvis.html`);
   const eind = html.indexOf("\n", constante.index + 1);
-  return html.slice(constante.index + 1, eind);
+  const regel = html.slice(constante.index + 1, eind);
+  // Het ene geval dat anders stil fout gaat: een meerregelige constante. Een
+  // afgekapte declaratie zonder puntkomma is het signaal.
+  if (!regel.trimEnd().endsWith(";")) {
+    throw new Error(`de constante ${naam} loopt over meer dan één regel; paginaStuk knipt haar verkeerd af`);
+  }
+  return regel;
 }
 
 /**

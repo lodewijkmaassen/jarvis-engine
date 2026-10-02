@@ -768,7 +768,15 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
  * database, zodat de interface het toont zonder een tweede opdracht.
  */
 /** Het overzicht zoals `jarvis overzicht` het bouwt, voor hergebruik door `jarvis regie`. */
-async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
+export async function bouwOverzichtVanuit(
+  vlaggen: ReadonlyMap<string, string>,
+  // Dezelfde naad als in `leesTaakakkoorden` zelf, en om dezelfde reden: zonder
+  // haar valt alleen de *vorm* van de aanroep hieronder vast te leggen, niet
+  // haar werking. QA toonde aan dat een test op die vorm allebei de kanten op
+  // faalt — `await leesTaakakkoorden(…) && null` kwam er ongemerkt doorheen,
+  // terwijl dezelfde aanroep meerregelig geschreven de suite rood maakte.
+  leesAkkoorden: (taken: readonly string[]) => Promise<Akkoordstand | null> = leesTaakakkoorden,
+): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
   const { wortel, config, lading } = await laadAlles();
   const nu = new Date();
 
@@ -820,7 +828,7 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
   }
 
   const projecten = [...kern, eigen, ...externen];
-  const akkoorden = await leesTaakakkoorden(
+  const akkoorden = await leesAkkoorden(
     projecten.flatMap((p) => p.taken.filter((t) => !sluitDossier(t.opdracht["status"] ?? "")).map((t) => t.id)),
   );
   return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht(projecten, nu, kernId, akkoorden) };

@@ -75,6 +75,24 @@ faalrichting uit te voeren in plaats van haar af te lezen — en vangt sinds dez
 ronde ook een worp uit het opzetten van de verbinding zelf, die eerder
 `jarvis overzicht` en `jarvis regie` kon afbreken.
 
+Ronde 2 keurde opnieuw af, en wees twee dingen aan die een les dragen. De
+brontest op de aanroep van `bouwOverzicht` borgde een *vorm* en geen gedrag:
+`await leesTaakakkoorden(…) && null` kwam er ongemerkt doorheen, terwijl
+diezelfde aanroep meerregelig geschreven de suite rood maakte. Doorlaten wat
+fout is én afkeuren wat goed is. En de verdediging ervoor — "dit valt niet uit
+te voeren" — was onjuist: `tests/jarvis/extern.test.ts` draait die weg al.
+`bouwOverzichtVanuit` heeft nu dezelfde naad als `leesTaakakkoorden`, en de
+test draait de echte opdracht op de echte dossiers met één stub op de plaats
+van de database. Wie een test op brontekst schrijft, hoort eerst aan te tonen
+dat de uitvoerbare weg werkelijk is afgesloten.
+
+Het tweede: vier leesplaatsen van `zetVan` bleven onbewaakt, en ze één voor
+één afdekken dekt de volgende niet. Daarvoor staat er nu een invariant op de
+pagina — buiten `zetVan` en de filter op "niemand" leest niets `aan_zet`
+rechtstreeks — en een tweede die zegt dat `akkoord_open` en `eigen_punten`
+precies één schrijver hebben. Samen vangen zij ook het geval dat de ijking
+wél draait maar erna wordt overschreven.
+
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard
 als historie, en niets geleverd. Eén bron bepaalt dat — `sluitDossier` in
