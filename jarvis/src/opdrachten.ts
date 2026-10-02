@@ -35,6 +35,7 @@ import { ALLOWLIST_BESTANDSNAAM, ENTROPIE_MINIMUM_LENGTE, LEGE_ALLOWLIST, laadAl
 import {
   RECENT_DAGEN,
   bouwOverzicht,
+  type Akkoordstand,
   dossiersZonderBekendeStatus,
   leesItemsOnder,
   openTakenUitDossiers,
@@ -818,7 +819,48 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
-  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+  const projecten = [...kern, eigen, ...externen];
+  const akkoorden = await leesTaakakkoorden(
+    projecten.flatMap((p) => p.taken.filter((t) => !sluitDossier(t.opdracht["status"] ?? "")).map((t) => t.id)),
+  );
+  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht(projecten, nu, kernId, akkoorden) };
+}
+
+/**
+ * De laatste taakakkoorden van de eigenaar, per open taak: taak-id →
+ * `scope_hash`. Dit is de tweede helft van `akkoord_nodig` in het overzicht,
+ * en zonder haar vraagt de interface een akkoord dat er allang ligt — precies
+ * de tegenspraak die de eigenaar op 2026-10-02 meldde: de taak op "wacht op
+ * jou", de kaart om het akkoord te geven weg, en nergens iets te doen.
+ *
+ * Eén vraag per taak, met het statement dat de Edge Function al toelaat
+ * (`AUTORISATIE_TAAK_SQL`). Een `select distinct on (taak)` zou zuiniger zijn
+ * maar staat niet in de allowlist van `jarvis/edge/jarvis-db/toegestaan.json`,
+ * en die uitbreiden vraagt een uitrol van de functie — een handeling van de
+ * eigenaar. Het aantal open taken is klein; dit kost niets dat de moeite waard
+ * is.
+ *
+ * `null` bij elke storing, en dat is bewust geen lege map: zonder meting valt
+ * het overzicht terug op wat het dossier zegt. De verkeerde kant op falen zou
+ * hier zijn: een akkoord aannemen dat er niet is.
+ */
+async function leesTaakakkoorden(taken: readonly string[]): Promise<Akkoordstand | null> {
+  if (taken.length === 0) return new Map();
+  const verbinding = await verbindDb();
+  if (verbinding === null) return null;
+  try {
+    const stand = new Map<string, string>();
+    for (const taak of [...new Set(taken)]) {
+      const rij = (await verbinding.sql.unsafe(AUTORISATIE_TAAK_SQL, [taak]))[0];
+      const hash = rij?.["scope_hash"];
+      if (typeof hash === "string" && hash.length > 0) stand.set(taak, hash);
+    }
+    return stand;
+  } catch {
+    return null;
+  } finally {
+    await verbinding.sql.end({ timeout: 2 }).catch(() => {});
+  }
 }
 
 /**

@@ -33,6 +33,34 @@ _Gegenereerd op 2026-10-02._
 
 ## Waar staan we
 
+De vraag "wie is aan zet" wordt nog maar op één plaats beantwoord, en de
+database telt daarin mee. `akkoord_nodig` in `overzicht.ts` las eerder alleen
+het dossier: vraagt de voortgangslijst of de eigenaarslijst om een akkoord, dan
+stond de taak op "wacht op jou". De akkoordkaart in de interface keek daarnaast
+in `jarvis.autorisaties` en verdween zodra er een geldig akkoord op de huidige
+scope lag. Daardoor kon één taak tegelijk **WACHT OP JOU** tonen, in "Wie en
+waar" melden dat de eigenaar aan zet was, en onder "Bij jou uit deze taak" en in
+het centrale "Voor jou" **niets** laten zien. De eigenaar zag een vraag die hij
+nergens kon beantwoorden, omdat hij hem al beantwoord had (gemeld 2026-10-02,
+binnen `T-20261002-technische-uitvoering`).
+
+`leesTaken` krijgt nu de gemeten akkoordstand mee — taak-id naar de
+`scope_hash` van het laatste taakakkoord — en past dezelfde toets toe die de
+kaart al deed: een akkoord telt alleen op precies de huidige scope, dus een
+gewijzigde `opdracht.md` laat het vervallen zoals `DEC-0043` voorschrijft. De
+stand komt uit `AUTORISATIE_TAAK_SQL`, één vraag per open taak, over de weg die
+er toch al is; er komt geen credential bij en de allowlist van de Edge Function
+blijft ongemoeid. Is de database niet te lezen, dan is de stand *niet gemeten*
+(`akkoord_gemeten: false`) en valt het overzicht terug op het dossier — liever
+een vraag te veel dan een akkoord aannemen dat er niet is.
+
+De interface leest voortaan `zetVan(t)`: één ijking per render, en daarna lezen
+de kaart, de statusregel, "Wie en waar" en "Bij jou uit deze taak" uit dezelfde
+twee velden. Die laag mag alleen nog afzwakken — het venster tussen een vers
+akkoord en de volgende bouw — en nooit een vraag toevoegen die de bouw niet
+stelde. Een punt dat werkelijk bij de eigenaar ligt, houdt de taak op "wacht op
+jou", ook met een geldig akkoord.
+
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard
 als historie, en niets geleverd. Eén bron bepaalt dat — `sluitDossier` in
