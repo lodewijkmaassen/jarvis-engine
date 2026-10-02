@@ -12,7 +12,7 @@ _Gegenereerd op 2026-10-02._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 42 |
+| Testbestanden | 44 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -32,6 +32,146 @@ _Gegenereerd op 2026-10-02._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+De opdrachttekst van een taak is geen administratieve wijziging meer.
+`DEC-0044` laat een administratieve pull request door zonder taakakkoord,
+zonder scopevergelijking én zonder onafhankelijke toetsing, en de takenmap
+viel daar volledig onder — ook `tasks/<taak>/opdracht.md`, de tekst waarvan de
+hash het akkoord van de eigenaar draagt en die ook de omvang van het mandaat
+vastlegt. Een pull request die precies dat bestand herschreef, kreeg daarmee
+de review `taken administratief · autorisaties - · scope - · toetsing -`:
+goedgekeurd door de poort zelf, zonder dat één mens of één toetsing ernaar
+keek (gemeten 2026-10-02 door QA, in een consumentproject).
+
+Dat was geen weg om stiekem mandaat te winnen — zodra de tekst verandert,
+klopt de hash niet meer en vervalt het akkoord, dus zo'n samenvoeging kóst
+Jarvis zijn mandaat en de eigenaar ziet de nieuwe tekst voordat hij opnieuw
+autoriseert. Het gat zit ervóór: die nieuwe tekst werd zonder toetsing en
+zonder zijn medeweten geschreven, en hij tikt er straks op.
+
+`herschrevenScope` scheidt nu twee gevallen die niet hetzelfde zijn. Een
+*nieuw* dossier blijft administratief: het voegt een tekst toe die nog niemand
+heeft goedgekeurd en die niets mandateert zolang er geen akkoord op ligt. Een
+*bestaand* dossier herschrijven is dat niet — dan gelden het taakakkoord, de
+scopevergelijking en de toetsing gewoon, en omdat de hash per definitie niet
+meer klopt, loopt zo'n pull request over een apart akkoord van de eigenaar op
+die ene pull request (`DEC-0043` §2). Een bestand zonder bekende status telt
+als herschreven: onbekend mag nooit de soepelste uitkomst opleveren.
+
+`verzamelAttestatieFeiten` is daarvoor geëxporteerd met een injecteerbare
+GitHub-lezer. Dat is dezelfde les als bij de akkoordstand: twee velden die
+daar wegvallen maken de beoordeling stilletjes soepeler, en dat valt alleen
+vast te leggen door het samenstellen werkelijk te draaien. Vier sabotages op
+de keten — het patroon niet doorgeven, de status niet doorgeven, elke status
+"added" noemen, de dichting eruit — vallen nu alle vier om.
+
+Eén uitzondering hoort erbij, en de toetsing wees haar aan: de taakstatus
+staat in de front-matter van `opdracht.md`, dus een dossier sluiten is
+strikt genomen een wijziging van de scope-tekst. Zonder uitzondering zou
+elke afsluiting een akkoord van de eigenaar vragen, terwijl "administratief
+afsluiten" juist hoort bij wat Jarvis zelf doet. `alleenStatusVerschil`
+vergelijkt daarom de versie op de kop met die op de basis en laat precies één
+geval door: evenveel regels, alle andere regels identiek, de veranderende
+regel is aan beide kanten een `status:` binnen de front-matter, en de nieuwe
+waarde is een bekend statuswoord. Een regel erbij, een andere sleutel of een
+status die niet bestaat telt gewoon als herschrijven, en een bestand waarvan
+de basisversie niet te lezen is ook.
+
+Ronde 2 vond daar nog een lek in en een belofte die de code niet waarmaakte.
+Het lek: alleen tellen dat er twee `---` staan is niet genoeg. Een dossier met
+een lege regel en vrije tekst tussen die strepen — een front-matter die geen
+front-matter is — liet een regel `status: actief` middenin de hoofdtekst als
+front-matter gelden, en die mocht dan vrij veranderen. Een nieuw dossier
+aanmaken is administratief, dus Jarvis kon zo'n bestand zelf neerzetten en het
+later langs de uitzondering herschrijven. Het blok tussen de strepen moet nu
+ook werkelijk uit sleutels en lijstitems bestaan.
+
+De belofte: de reden "vraagt zijn akkoord op deze pull request" werd
+onvoorwaardelijk opgevoerd, ook met een geldig akkoord op precies die kop.
+Daarmee kon een herschreven opdrachttekst nóóit machinaal worden geattesteerd,
+terwijl de tekst eromheen — en `DEC-0043` §2 — die weg juist aanwijzen. Veilig
+falen is goed, maar een uitweg beloven die niet bestaat is dat niet.
+`akkoordOpDezeKop` is nu één functie die beide plaatsen gebruiken.
+
+Eén eigenschap van die uitzondering verdient het om genoemd te worden: zij is
+richtingloos. `afgerond → actief` gaat er net zo goed doorheen als andersom, en
+dat is juist — heropenen is even administratief als sluiten. Maar omdat het
+akkoord aan de hash van het hele bestand hangt, brengt het terugdraaien van een
+statusregel een hash terug die de eigenaar ooit tekende, en daarmee leeft dat
+akkoord weer. Een statuswijziging is dus geen intrekkingsmechanisme; intrekken
+loopt over de autorisatie zelf.
+
+Twee kleinere dingen uit dezelfde ronde: het patroon is hoofdletterongevoelig
+geworden (`Opdracht.md` kwam er anders doorheen, net zoals
+`HARDE_UITZONDERINGEN` dat voor `CON-*.md` al ondervond), en een ontbrekend
+scopepatroon valt nu dicht in plaats van open — het viel terug op "niets", in
+tegenspraak met de regel ernaast dat onbekend nooit de soepelste uitkomst mag
+geven.
+
+De vraag "wie is aan zet" wordt nog maar op één plaats beantwoord, en de
+database telt daarin mee. `akkoord_nodig` in `overzicht.ts` las eerder alleen
+het dossier: vraagt de voortgangslijst of de eigenaarslijst om een akkoord, dan
+stond de taak op "wacht op jou". De akkoordkaart in de interface keek daarnaast
+in `jarvis.autorisaties` en verdween zodra er een geldig akkoord op de huidige
+scope lag. Daardoor kon één taak tegelijk **WACHT OP JOU** tonen, in "Wie en
+waar" melden dat de eigenaar aan zet was, en onder "Bij jou uit deze taak" en in
+het centrale "Voor jou" **niets** laten zien. De eigenaar zag een vraag die hij
+nergens kon beantwoorden, omdat hij hem al beantwoord had (gemeld 2026-10-02,
+binnen `T-20261002-technische-uitvoering`).
+
+`leesTaken` krijgt nu de gemeten akkoordstand mee — taak-id naar de
+`scope_hash` van het laatste taakakkoord — en past dezelfde toets toe die de
+kaart al deed: een akkoord telt alleen op precies de huidige scope, dus een
+gewijzigde `opdracht.md` laat het vervallen zoals `DEC-0043` voorschrijft. De
+stand komt uit `AUTORISATIES_SQL` — één vraag voor alle taken samen, over de
+weg die er toch al is; er komt geen credential bij en de allowlist van de Edge
+Function blijft ongemoeid. Daar hoort een grens bij: dat statement geeft de
+laatste tweehonderd rijen, en valt een akkoord daarbuiten dan leest het als
+"geen akkoord" — een vraag te veel, nooit een akkoord te veel. Een eerdere
+versie vroeg per taak en zei erbij dat dat niets kostte; de toetsing mat dat
+`jarvis overzicht` daarmee van ongeveer één seconde naar acht tot veertien
+ging, omdat elke vraag een eigen HTTPS-ronde was. Is de database niet te lezen, dan is de stand *niet gemeten*
+(`akkoord_gemeten: false`) en valt het overzicht terug op het dossier — liever
+een vraag te veel dan een akkoord aannemen dat er niet is.
+
+De interface leest voortaan `zetVan(t)`: één ijking per render, en daarna lezen
+de kaart, de statusregel, "Wie en waar" en "Bij jou uit deze taak" uit dezelfde
+twee velden. Die laag mag alleen nog afzwakken — het venster tussen een vers
+akkoord en de volgende bouw — en nooit een vraag toevoegen die de bouw niet
+stelde. Een punt dat werkelijk bij de eigenaar ligt, houdt de taak op "wacht op
+jou", ook met een geldig akkoord.
+
+De bedrading wordt nu ook getoetst, en niet alleen de onderdelen. QA keurde de
+eerste ronde af omdat zeven sabotages op het productiepad de hele suite groen
+lieten: de doorgifte van de akkoordstand doorgesneden, `zetKort`/`zetTekst`
+terug op het oude veld, de ijking uit `render` gehaald — alles ongemerkt.
+`tests/jarvis/paginafuncties.ts` knipt de declaraties met haakjestelling uit
+`jarvis.html` en voert ze samen uit, zodat de pagina te toetsen is zoals zij
+draait en niet zoals zij leest; `staat` is het enige dat de test erin brengt.
+Daarop staan nu zeven scenario's die de vier plaatsen uit de melding naast
+elkaar leggen. Alle zeven sabotages vallen om. `leesTaakakkoorden` is daarvoor
+geëxporteerd met een injecteerbare verbinding — de enige manier om de
+faalrichting uit te voeren in plaats van haar af te lezen — en vangt sinds deze
+ronde ook een worp uit het opzetten van de verbinding zelf, die eerder
+`jarvis overzicht` en `jarvis regie` kon afbreken.
+
+Ronde 2 keurde opnieuw af, en wees twee dingen aan die een les dragen. De
+brontest op de aanroep van `bouwOverzicht` borgde een *vorm* en geen gedrag:
+`await leesTaakakkoorden(…) && null` kwam er ongemerkt doorheen, terwijl
+diezelfde aanroep meerregelig geschreven de suite rood maakte. Doorlaten wat
+fout is én afkeuren wat goed is. En de verdediging ervoor — "dit valt niet uit
+te voeren" — was onjuist: `tests/jarvis/extern.test.ts` draait die weg al.
+`bouwOverzichtVanuit` heeft nu dezelfde naad als `leesTaakakkoorden`, en de
+test draait de echte opdracht op de echte dossiers met één stub op de plaats
+van de database. Wie een test op brontekst schrijft, hoort eerst aan te tonen
+dat de uitvoerbare weg werkelijk is afgesloten.
+
+Het tweede: vier leesplaatsen van `zetVan` bleven onbewaakt, en ze één voor
+één afdekken dekt de volgende niet. Daarvoor staat er nu een invariant op de
+pagina — buiten `zetVan` en de filter op "niemand" leest niets `aan_zet`
+rechtstreeks — en een tweede die zegt dat `akkoord_open` en `eigen_punten`
+precies één schrijver hebben. Samen vangen zij ook het geval dat de ijking
+wél draait maar erna wordt overschreven.
 
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard
@@ -369,6 +509,25 @@ volgende ronde probeert gewoon opnieuw.
 De uitkomst is machineleesbaar (`samenvoegen` en `samengevoegd` in
 `$GITHUB_OUTPUT`), zodat "geattesteerd maar niet samengevoegd" van buitenaf
 zichtbaar is in plaats van te verdwijnen achter een exitcode 0.
+
+Nieuw sinds 2026-10-02: de keten kan voorbij de repositorygrens kijken.
+`bouw.mjs` zet met `--merk <commit>` een `<meta name="jarvis-bouwmerk">` in de
+gebouwde `index.html`, de pagina toont dat merk afgekort naast `v${versie}`, en
+`jarvis uitrol --url <adres> --merk <commit>` haalt de uitgerolde pagina op en
+vergelijkt. De aanleiding is één gemeten geval: een uitrol van de interface
+verving de bestanden niet, elke stap ervoor was groen, en het defect zat precies
+in het gat tussen bron en productie. Daar was geen controle, dus was "klaar" een
+aanname.
+
+Drie regels die bij die controle horen. Een ontbrekend merk is een fout en geen
+onbekende — de pagina is dan niet vervangen of niet met een merk gebouwd, en in
+beide gevallen is de uitrol niet aangetoond. Een pagina die niet op te halen is,
+is eveneens rood: niet gemeten is niet geslaagd. En de controle vraagt het
+gewone adres zonder cache-brekende parameter op, want een CDN dat een oude
+pagina blijft serveren is zelf een van de manieren waarop een uitrol mislukt.
+
+De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
+die dit merk verplicht stelt, is nog niet gebouwd.
 
 Nieuw sinds 2026-10-02: **een taak kan haar eigen harde uitzonderingen
 aankondigen, en het akkoord van de eigenaar dekt die dan in één keer.**

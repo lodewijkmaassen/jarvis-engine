@@ -35,6 +35,7 @@ import { ALLOWLIST_BESTANDSNAAM, ENTROPIE_MINIMUM_LENGTE, LEGE_ALLOWLIST, laadAl
 import {
   RECENT_DAGEN,
   bouwOverzicht,
+  type Akkoordstand,
   dossiersZonderBekendeStatus,
   leesItemsOnder,
   openTakenUitDossiers,
@@ -48,6 +49,7 @@ import {
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
 import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
+import { controleerUitrol } from "./uitrol";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
   ACTIEVE_ATTESTATIE,
@@ -64,6 +66,7 @@ import {
   attestatieTekst,
   beoordeelAttestatie,
   leesAttestatie,
+  alleenStatusVerschil,
   scopeHash,
   takenUitCommits,
   verifieerAttestatie,
@@ -766,7 +769,15 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
  * database, zodat de interface het toont zonder een tweede opdracht.
  */
 /** Het overzicht zoals `jarvis overzicht` het bouwt, voor hergebruik door `jarvis regie`. */
-async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
+export async function bouwOverzichtVanuit(
+  vlaggen: ReadonlyMap<string, string>,
+  // Dezelfde naad als in `leesTaakakkoorden` zelf, en om dezelfde reden: zonder
+  // haar valt alleen de *vorm* van de aanroep hieronder vast te leggen, niet
+  // haar werking. QA toonde aan dat een test op die vorm allebei de kanten op
+  // faalt — `await leesTaakakkoorden(…) && null` kwam er ongemerkt doorheen,
+  // terwijl dezelfde aanroep meerregelig geschreven de suite rood maakte.
+  leesAkkoorden: (taken: readonly string[]) => Promise<Akkoordstand | null> = leesTaakakkoorden,
+): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
   const { wortel, config, lading } = await laadAlles();
   const nu = new Date();
 
@@ -817,7 +828,75 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
-  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+  const projecten = [...kern, eigen, ...externen];
+  const akkoorden = await leesAkkoorden(
+    projecten.flatMap((p) => p.taken.filter((t) => !sluitDossier(t.opdracht["status"] ?? "")).map((t) => t.id)),
+  );
+  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht(projecten, nu, kernId, akkoorden) };
+}
+
+/**
+ * De laatste taakakkoorden van de eigenaar, per open taak: taak-id →
+ * `scope_hash`. Dit is de tweede helft van `akkoord_nodig` in het overzicht,
+ * en zonder haar vraagt de interface een akkoord dat er allang ligt — precies
+ * de tegenspraak die de eigenaar op 2026-10-02 meldde: de taak op "wacht op
+ * jou", de kaart om het akkoord te geven weg, en nergens iets te doen.
+ *
+ * **Eén vraag voor alle taken samen**, met `AUTORISATIES_SQL` — dat staat al
+ * op de allowlist van de Edge Function en geeft de laatste tweehonderd rijen
+ * op `op desc`. Daar hoort een grens bij die genoemd moet worden: valt een
+ * taakakkoord buiten die tweehonderd, dan leest het als "geen akkoord", en
+ * dat is de veilige kant — een vraag te veel, nooit een akkoord te veel. Op
+ * 2026-10-02 telt de tabel 62 rijen.
+ *
+ * Een eerdere versie stelde één vraag per open taak en zei erbij dat dat
+ * "niets kost dat de moeite waard is". Dat was onjuist en de toetsing heeft
+ * het gemeten: `jarvis overzicht` ging van ongeveer één seconde naar acht tot
+ * veertien, want elke vraag is een eigen HTTPS-ronde en ze liepen na elkaar.
+ * Een `select distinct on (taak)` zou nog zuiniger zijn maar staat niet op de
+ * allowlist, en die uitbreiden vraagt een uitrol van de functie — een
+ * handeling van de eigenaar. Die is hiervoor niet nodig.
+ *
+ * `null` bij elke storing, en dat is bewust geen lege map: zonder meting valt
+ * het overzicht terug op wat het dossier zegt. De verkeerde kant op falen zou
+ * hier zijn: een akkoord aannemen dat er niet is.
+ */
+export async function leesTaakakkoorden(
+  taken: readonly string[],
+  // De verbinding is injecteerbaar, en dat is geen test-ingang maar de enige
+  // manier om de faalrichting werkelijk uit te voeren in plaats van haar uit
+  // de brontekst af te lezen. QA toonde aan dat "lege map in plaats van null"
+  // ongemerkt door de suite kwam: de bouw beweert dan gemeten te hebben en
+  // neemt aan dat er geen akkoord is. Dat is de verkeerde kant op.
+  verbind: () => Promise<{ readonly sql: DbClient; readonly bron: string } | null> = verbindDb,
+): Promise<Akkoordstand | null> {
+  if (taken.length === 0) return new Map();
+  let verbinding;
+  try {
+    verbinding = await verbind();
+  } catch {
+    // Een worp uit het opzetten van de verbinding zelf stond buiten het
+    // vangnet hieronder en brak `jarvis overzicht` en `jarvis regie` af.
+    return null;
+  }
+  if (verbinding === null) return null;
+  try {
+    const gevraagd = new Set(taken);
+    const stand = new Map<string, string>();
+    // `order by op desc`, dus de eerste rij per taak is de laatste autorisatie.
+    for (const rij of await verbinding.sql.unsafe(AUTORISATIES_SQL)) {
+      if (rij["soort"] !== "taak") continue;
+      const taak = rij["taak"];
+      const hash = rij["scope_hash"];
+      if (typeof taak !== "string" || !gevraagd.has(taak) || stand.has(taak)) continue;
+      if (typeof hash === "string" && hash.length > 0) stand.set(taak, hash);
+    }
+    return stand;
+  } catch {
+    return null;
+  } finally {
+    await verbinding.sql.end({ timeout: 2 }).catch(() => {});
+  }
 }
 
 /**
@@ -1508,6 +1587,10 @@ function help(): number {
       "                                    (DEC-0046): hoogstens één per pull request; exit 4 = correctie nodig.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
+      "  uitrol --url <adres> --merk <commit>",
+      "                                    Haalt de uitgerolde pagina op en vergelijkt het bouwmerk",
+      "                                    met de commit die is uitgerold; 1 bij verschil, ontbreken",
+      "                                    of een pagina die niet op te halen is.",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>] [--schrijf]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
@@ -2762,10 +2845,10 @@ function sqlBron(sql: PgClient): AttestatieBron {
 }
 
 /** Alle pagina's van een GitHub-lijst; weigert boven het plafond (fail closed). */
-async function leesAllePaginas<T>(token: string, pad: string, plafond: number): Promise<readonly T[] | string> {
+async function leesAllePaginas<T>(token: string, pad: string, plafond: number, haal: GithubLezer = github): Promise<readonly T[] | string> {
   const alles: T[] = [];
   for (let pagina = 1; pagina <= plafond; pagina += 1) {
-    const a = await github(token, "GET", `${pad}${pad.includes("?") ? "&" : "?"}per_page=100&page=${pagina}`);
+    const a = await haal(token, "GET", `${pad}${pad.includes("?") ? "&" : "?"}per_page=100&page=${pagina}`);
     if (a.status !== 200) return `${pad.split("?")[0]} niet te lezen (${foutTekst(a)})`;
     const lijst = a.lading as T[];
     alles.push(...lijst);
@@ -2793,6 +2876,21 @@ async function leesConfigVanRepo(token: string, slug: string): Promise<JarvisCon
  * kennisrecords behalve de randvoorwaarden, de kennisindex en het
  * feitenblok. Afgeleid van de configuratie, niet instelbaar op zichzelf.
  */
+/** `tasks/<taak>/opdracht.md`: het bestand waarvan de hash het akkoord draagt. */
+function scopeBestandPatroon(config: JarvisConfig): RegExp {
+  const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\/$/, "");
+  return new RegExp(`^${esc(config.taken_map)}/[^/]+/opdracht\\.md$`, "i");
+}
+
+/** De inhoud van één bestand op een ref, of null wanneer het er niet staat of niet te lezen is. */
+async function leesBestandUitRepo(haal: GithubLezer, token: string, slug: string, pad: string, ref: string): Promise<string | null> {
+  const a = await haal(token, "GET", `/repos/${slug}/contents/${pad.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`);
+  if (a.status !== 200) return null;
+  const d = a.lading as { content?: string; encoding?: string };
+  if (d.encoding !== "base64" || typeof d.content !== "string") return null;
+  return Buffer.from(d.content, "base64").toString("utf8");
+}
+
 function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
   const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\/$/, "");
   return [
@@ -2801,6 +2899,9 @@ function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
     new RegExp(`^${esc(config.current_state)}$`),
   ];
 }
+
+/** Hoe deze module GitHub leest. Injecteerbaar, zodat het samenstellen van de feiten te draaien valt. */
+export type GithubLezer = (token: string, methode: string, pad: string, body?: unknown) => Promise<GitHubAntwoord>;
 
 /**
  * De soorten harde uitzondering die een taakdossier zelf aankondigt, uit de
@@ -2822,25 +2923,35 @@ export function uitzonderingenUitDossier(inhoud: string): readonly string[] {
 /**
  * Verzamelt alles wat de beoordeling nodig heeft: de PR-feiten van GitHub
  * (commits, bestanden, dossier op de kop, checks) en de rijen uit de bron.
+ *
+ * `haal` is injecteerbaar om één reden, en het is geen test-ingang: wat
+ * hier wordt samengesteld, bepaalt wat `beoordeelAttestatie` te zien krijgt,
+ * en een veld dat hier wegvalt maakt de beoordeling stilletjes soepeler. Dat
+ * valt alleen vast te leggen door het samenstellen werkelijk te draaien.
  */
-async function verzamelAttestatieFeiten(
+export async function verzamelAttestatieFeiten(
   token: string,
   slug: string,
   nummer: number,
   feiten: PullRequestFeiten,
   config: JarvisConfig,
   bron: AttestatieBron,
+  haal: GithubLezer = github,
 ): Promise<AttestatieFeiten | string> {
-  const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
+  const pr = await haal(token, "GET", `/repos/${slug}/pulls/${nummer}`);
   if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
   const prLading = pr.lading as { body?: string | null; commits?: number; changed_files?: number };
   const prTekst = String(prLading.body ?? "");
-  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string }; parents?: readonly unknown[] }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10);
+  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string }; parents?: readonly unknown[] }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10, haal);
   if (typeof commitsRuw === "string") return commitsRuw;
   const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message, ouders: Array.isArray(c.parents) ? c.parents.length : 1 }));
-  const bestandenRuw = await leesAllePaginas<{ filename: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10);
+  const bestandenRuw = await leesAllePaginas<{ filename: string; status?: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10, haal);
   if (typeof bestandenRuw === "string") return bestandenRuw;
   const bestanden = bestandenRuw.map((f) => f.filename);
+  // De status staat erbij omdat "nieuw dossier" en "bestaand dossier
+  // herschreven" verschillend mogen aflopen; zie `herschrevenScope`.
+  const bestandStatus: Record<string, string> = {};
+  for (const f of bestandenRuw) bestandStatus[f.filename] = f.status ?? "modified";
   // Het commits-eindpunt geeft hoogstens 250 commits en de lijsten kunnen
   // afwijken van wat GitHub over de PR zegt; dan is er iets ongelezen, en
   // ongelezen is ongecontroleerd (QA-bevinding 14).
@@ -2851,12 +2962,28 @@ async function verzamelAttestatieFeiten(
     return `de pull request telt ${prLading.changed_files} bestanden maar er zijn er ${bestanden.length} gelezen; zo'n pull request wordt niet geattesteerd`;
   }
 
+  // Welke geraakte scope-bestanden niets anders dan hun statusregel wijzigen.
+  // Daarvoor is de versie op de basis nodig; zonder die lezing geldt het
+  // bestand als herschreven, want onbekend mag nooit soepeler uitpakken.
+  const scopePatroon = scopeBestandPatroon(config);
+  const alleenStatusregel: string[] = [];
+  for (const bestand of bestanden) {
+    const pad = bestand.replace(/\\/g, "/");
+    if (!scopePatroon.test(pad)) continue;
+    if ((bestandStatus[bestand] ?? "modified") === "added") continue;
+    const [opKop, opBasis] = await Promise.all([
+      leesBestandUitRepo(haal, token, slug, pad, feiten.kop),
+      leesBestandUitRepo(haal, token, slug, pad, feiten.basis),
+    ]);
+    if (opKop !== null && opBasis !== null && alleenStatusVerschil(opBasis, opKop)) alleenStatusregel.push(bestand);
+  }
+
   const { taken: taakIds, redenen: taakRedenen } = takenUitCommits(commits);
   const taken: TaakFeiten[] = [];
   for (const taak of taakIds) {
     let scopeHashKop: string | null = null;
     let aangekondigdeUitzonderingen: readonly string[] | undefined;
-    const dossier = await github(
+    const dossier = await haal(
       token,
       "GET",
       `/repos/${slug}/contents/${encodeURIComponent(config.taken_map)}/${encodeURIComponent(taak)}/opdracht.md?ref=${feiten.kop}`,
@@ -2884,6 +3011,9 @@ async function verzamelAttestatieFeiten(
     gewijzigdeBestanden: bestanden,
     extraPaden: config.attestatie.extra_paden,
     administratiefPaden: administratievePatronen(config),
+    scopeBestandPatroon: scopeBestandPatroon(config),
+    bestandStatus,
+    alleenStatusregel,
     prTekst,
     autorisatiePr: await bron.pr(slug, nummer, feiten.kop),
     checks: feiten.checks,
@@ -3100,6 +3230,26 @@ async function opdrachtAttestatie(vlaggen: ReadonlyMap<string, string>): Promise
 }
 
 /**
+ * `jarvis uitrol --url <adres> --merk <commit>`
+ *
+ * De enige stap in de keten die buiten de repository kijkt. Hij hoort direct
+ * na de uitrol te draaien en hard te falen: een uitrol die niet is nagemeten
+ * is niet aangetoond, en dat verschil was op 2026-10-02 precies het defect.
+ */
+async function opdrachtUitrol(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const adres = vlaggen.get("url");
+  const merk = vlaggen.get("merk");
+  if (!adres || !merk) {
+    console.error("jarvis uitrol: geef --url <adres van de uitgerolde pagina> en --merk <commit die is uitgerold>.");
+    return 2;
+  }
+  const { code, melding } = await controleerUitrol(adres, merk);
+  if (code === 0) console.log(melding);
+  else console.error(melding);
+  return code;
+}
+
+/**
  * Eén regel naar `$GITHUB_OUTPUT`, als die er is.
  *
  * Waarom dit bestaat: elke faalweg van het samenvoegen eindigt met exitcode 0
@@ -3217,7 +3367,6 @@ async function wachtOpSamenvoegbaarheid(token: string, slug: string, nummer: num
   return laatste;
 }
 
-
 export async function voerUit(argv: readonly string[]): Promise<number> {
   const { opdracht, vlaggen, losse, dubbel } = leesArgumenten(argv);
   if (dubbel.length > 0) {
@@ -3279,6 +3428,9 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
       return opdrachtReview(losse, vlaggen);
     case "attestatie":
       code = await opdrachtAttestatie(vlaggen);
+      break;
+    case "uitrol":
+      code = await opdrachtUitrol(vlaggen);
       break;
     case "help":
     case "--help":

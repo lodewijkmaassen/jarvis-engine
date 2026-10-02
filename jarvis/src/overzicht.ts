@@ -113,11 +113,25 @@ export type TaakItem = {
   readonly scope: string | null;
   readonly scope_hash: string | null;
   /**
-   * De volgende open stap is het akkoord van de eigenaar (DEC-0043): de taak
-   * wacht op hem, ook al staat er geen punt in zijn lijst. De interface toont
-   * dit als actie zolang er geen geldig akkoord op de huidige scope ligt.
+   * Er ligt werkelijk een akkoord van de eigenaar te wachten (DEC-0043): het
+   * dossier vraagt erom én er is geen geldige autorisatie op de huidige
+   * scope. Beide helften tellen. Dit veld was eerder alleen de eerste helft,
+   * en dat was de oorzaak van een blokkerende tegenspraak in de interface: de
+   * kaart die het akkoord laat geven, kijkt wél in de database en verdween
+   * dus zodra het akkoord er lag, terwijl de taak op "wacht op jou" bleef
+   * staan en de regie "de eigenaar is aan zet" meldde. De eigenaar zag een
+   * vraag die hij nergens kon beantwoorden, omdat hij hem al beantwoord had.
+   * Eén waarheid hoort op één plek berekend te worden; dit is die plek.
    */
   readonly akkoord_nodig: boolean;
+  /**
+   * Is de akkoordstand werkelijk gemeten, of is zij onbekend? Onbekend is
+   * geen "nee": zonder database valt het overzicht terug op wat het dossier
+   * zegt, en dan kan `akkoord_nodig` een akkoord vragen dat er al ligt. Wie
+   * dit veld leest en wél bij de database kan (de interface), mag die vraag
+   * nog corrigeren; wie dat niet kan, hoort te weten dat het een aanname is.
+   */
+  readonly akkoord_gemeten: boolean;
 };
 
 /**
@@ -884,12 +898,22 @@ function vraagtAkkoord(resultaat: string | null): boolean {
   );
 }
 
+/**
+ * De gemeten akkoordstand: taak-id → de `scope_hash` van het laatste
+ * taakakkoord van de eigenaar in `jarvis.autorisaties`. Een taak die er niet
+ * in staat, heeft geen akkoord. `null` in plaats van de map betekent iets
+ * anders dan een lege map: de stand is niet gemeten (geen database), en dan
+ * is "geen akkoord" een aanname en geen vaststelling.
+ */
+export type Akkoordstand = ReadonlyMap<string, string>;
+
 export function leesTaken(
   taken: readonly TaakDossier[],
   gastheer: string,
   recent: readonly RecentItem[] = [],
   aandacht: readonly AandachtItem[] = [],
   nu: Date = new Date(),
+  akkoorden: Akkoordstand | null = null,
 ): readonly TaakItem[] {
   return taken
     .map((t): TaakItem => {
@@ -904,9 +928,18 @@ export function leesTaken(
       // eerste open stap) en de eigenaarslijst (`geef in de app akkoord op
       // deze taak`). Het punt uit de eigenaarslijst is hierboven uit de
       // aandachtlijst gehouden; deze kaart neemt het over.
+      const scope_hash = actief && t.tekst !== undefined ? scopeHash(t.tekst) : null;
+      // De tweede helft: ligt het akkoord er al? Een autorisatie telt alleen
+      // wanneer zij op precies deze scope staat — verandert `opdracht.md`,
+      // dan vervalt zij, en dat is de hele bedoeling van de scope-hash
+      // (DEC-0043). Is de stand niet gemeten, dan blijft het dossier
+      // leidend: liever een vraag te veel dan een akkoord aannemen dat er
+      // niet is.
+      const akkoordLigtEr = akkoorden !== null && scope_hash !== null && akkoorden.get(t.id) === scope_hash;
       const akkoord_nodig =
         actief &&
         t.tekst !== undefined &&
+        !akkoordLigtEr &&
         ((volgendeStap !== null && isAkkoordStap(volgendeStap)) || vraagtAkkoord(t.resultaat));
       // De eigenaar gaat voor: een openstaand punt of een akkoordvraag is een
       // echte handeling van een mens, en die verdwijnt niet doordat de stap
@@ -940,8 +973,9 @@ export function leesTaken(
         laatste_beweging: laatste,
         stil: aan_zet === "jarvis" && dagenStil >= STIL_NA_DAGEN,
         scope: actief && t.tekst !== undefined ? t.tekst.replace(/\r\n/g, "\n") : null,
-        scope_hash: actief && t.tekst !== undefined ? scopeHash(t.tekst) : null,
+        scope_hash,
         akkoord_nodig,
+        akkoord_gemeten: akkoorden !== null,
       };
     })
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -1039,7 +1073,7 @@ export function telKennis(records: readonly KnowledgeRecord[]): Readonly<Partial
   return telling;
 }
 
-export function bouwProjectOverzicht(invoer: ProjectInvoer, nu: Date): ProjectOverzicht {
+export function bouwProjectOverzicht(invoer: ProjectInvoer, nu: Date, akkoorden: Akkoordstand | null = null): ProjectOverzicht {
   return {
     id: invoer.id,
     naam: invoer.naam,
@@ -1048,7 +1082,7 @@ export function bouwProjectOverzicht(invoer: ProjectInvoer, nu: Date): ProjectOv
     stand: invoer.statusDocument ? leesStandSecties(invoer.statusDocument) : [],
     feiten: invoer.statusDocument ? leesFeiten(invoer.statusDocument) : [],
     recent: leesRecent(invoer.gitLog, nu),
-    taken: leesTaken(invoer.taken, invoer.id, leesRecent(invoer.gitLog, nu), leesAandacht(invoer), nu),
+    taken: leesTaken(invoer.taken, invoer.id, leesRecent(invoer.gitLog, nu), leesAandacht(invoer), nu, akkoorden),
     kennis: telKennis(invoer.records),
     aandacht: leesAandacht(invoer),
   };
@@ -1298,8 +1332,13 @@ export function deelIn(projecten: readonly ProjectOverzicht[], voor_jou: readonl
   };
 }
 
-export function bouwOverzicht(projecten: readonly ProjectInvoer[], nu: Date, centraal: string | null = null): Overzicht {
-  const uitgewerkt = verbindAfhankelijkheden(herverdeel(projecten.map((p) => bouwProjectOverzicht(p, nu))));
+export function bouwOverzicht(
+  projecten: readonly ProjectInvoer[],
+  nu: Date,
+  centraal: string | null = null,
+  akkoorden: Akkoordstand | null = null,
+): Overzicht {
+  const uitgewerkt = verbindAfhankelijkheden(herverdeel(projecten.map((p) => bouwProjectOverzicht(p, nu, akkoorden))));
   const voor_jou = sorteerAandacht(uitgewerkt.flatMap((p) => p.aandacht));
   return {
     versie: OVERZICHT_VERSIE,
