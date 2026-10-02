@@ -352,13 +352,31 @@ eigen mandaat niet schrijven. Het mandaat groeit alleen doordat de eigenaar
 opnieuw goedkeurt — hij beslist nog steeds alles, maar één keer per taak in
 plaats van één keer per levering.
 
-Drie grenzen blijven staan. Alleen de soorten die wérkelijk worden geraakt
-hoeven gedekt te zijn, en één ongedekte soort is genoeg om te weigeren. Een
-verklaring in de PR-tekst die geen enkel bestand raakt roept geen mandaat op.
-En het aparte akkoord per kop werkt onveranderd, voor alles wat een taak niet
-vooraf kon zien. De attestatietekst noemt voortaan de grond — `apart akkoord
-<id>` of `mandaat uit <taak>` — zodat achteraf te zien is waarop is
-geattesteerd.
+Vijf grenzen houden het mandaat smal, en de eerste is de belangrijkste omdat
+zij uit een toetsing kwam die een echt gat vond.
+
+1. **De regel `Uitzonderingen:` in de PR-tekst moet precies zijn wat de
+   bestanden opleveren.** Die regel is het enige kanaal voor een uitzondering
+   zónder bestandspad — een productieactie, een sleutelrotatie, een extern
+   account. Zonder deze eis lift zo'n verklaring mee op een gemandateerde
+   treffer: een pull request die een aangekondigde workflow wijzigt én in zijn
+   tekst een sleutelrotatie aankondigt, werd zonder enig akkoord geattesteerd.
+2. **Alleen soorten die werkelijk worden geraakt hoeven gedekt te zijn**, en
+   één ongedekte soort is genoeg om te weigeren.
+3. **Geen mandaat bij meer dan één taak in één pull request.** Dan is niet te
+   zien welk bestand bij welke taak hoort, en zou de aankondiging van de ene
+   de andere dekken.
+4. **Een soort die niet bestaat geeft geen mandaat.** Een typefout in het
+   dossier levert dus geen stille dekking op maar gewoon geen.
+5. **Het aparte akkoord per kop werkt onveranderd**, voor alles wat een taak
+   vooraf niet kon zien.
+
+`CODEOWNERS` heeft daarbij een eigen soort gekregen: hij viel onder het
+patroon van `.github/`, zodat een mandaat op workflows er ongemerkt een
+staand mandaat op wie-wat-mag-beoordelen bij gaf.
+
+De attestatietekst noemt voortaan de grond — `apart akkoord <id>` of `mandaat
+uit <taak>` — zodat achteraf te zien is waarop is geattesteerd.
 
 
 ## Volgende stap

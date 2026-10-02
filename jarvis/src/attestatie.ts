@@ -75,8 +75,11 @@ export function scopeHash(inhoud: string): string {
  * governance). Bewust een korte, harde lijst en geen oordeel per geval.
  */
 export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly waarom: string }[] = [
-  { patroon: /^\.github\//, waarom: "workflows en repository-automatisering" },
+  // CODEOWNERS staat bewust vóór `.github/`: die map matcht hem ook, en dan
+  // zou een taak die workflows aankondigt er een staand mandaat op krijgen.
+  // Wie wat mag beoordelen is een andere beslissing dan hoe CI draait.
   { patroon: /(^|\/)CODEOWNERS$/, waarom: "wie wat mag beoordelen" },
+  { patroon: /^\.github\//, waarom: "workflows en repository-automatisering" },
   { patroon: /(^|\/)migrations\//, waarom: "databasemigraties (productiedata)" },
   { patroon: /(^|\/)\.env(\.|$)/, waarom: "omgevingsbestanden" },
   { patroon: /^jarvis\.config\.yml$/, waarom: "governanceconfiguratie" },
@@ -145,18 +148,53 @@ export function soortenHardeUitzondering(
  * schrijven — hij zou de hash veranderen en het akkoord laten vervallen.
  */
 export function gemandateerdeUitzonderingen(taken: readonly TaakFeiten[]): readonly string[] {
+  // Eén taak, of geen mandaat. Bij meer taken in één pull request is niet te
+  // zien welk bestand bij welke taak hoort, en dan zou de aankondiging van de
+  // ene de andere dekken — een mandaat dat haar dossier nooit noemde. Liever
+  // terug naar het aparte akkoord dan een dekking die niemand heeft gegeven.
+  if (taken.length !== 1) return [];
+  const t = taken[0]!;
+  const geldig =
+    t.autorisatie !== null &&
+    t.autorisatie.soort === "taak" &&
+    t.autorisatie.taak === t.taak &&
+    t.scopeHashKop !== null &&
+    t.autorisatie.scope_hash === t.scopeHashKop;
+  if (!geldig) return [];
+  // Alleen soorten die werkelijk bestaan. Een typefout in het dossier levert
+  // dan geen stil nutteloos mandaat op maar gewoon geen dekking, en de
+  // weigering noemt de soort die ontbreekt.
+  const bekend = new Set<string>(HARDE_UITZONDERINGEN.map((h) => h.waarom));
   const soorten = new Set<string>();
-  for (const t of taken) {
-    const geldig =
-      t.autorisatie !== null &&
-      t.autorisatie.soort === "taak" &&
-      t.autorisatie.taak === t.taak &&
-      t.scopeHashKop !== null &&
-      t.autorisatie.scope_hash === t.scopeHashKop;
-    if (!geldig) continue;
-    for (const soort of t.aangekondigdeUitzonderingen ?? []) soorten.add(soort.trim());
+  for (const ruw of t.aangekondigdeUitzonderingen ?? []) {
+    const soort = ruw.trim();
+    if (bekend.has(soort) || soort.startsWith("projectregel: ")) soorten.add(soort);
   }
   return [...soorten];
+}
+
+/**
+ * De enige regel `Uitzonderingen:` die bij deze bestanden hoort.
+ *
+ * Waarom een vaste vorm en geen vrije tekst: de verklaring is het énige
+ * kanaal voor een uitzondering zónder bestandspad — een productieactie, een
+ * sleutelrotatie, een extern account. Zonder deze vergelijking lift zo'n
+ * verklaring mee op een gemandateerde treffer: een pull request die een
+ * aangekondigde workflow wijzigt én in zijn tekst een sleutelrotatie
+ * aankondigt, zou zonder enig akkoord worden geattesteerd. Gemeten op #78.
+ *
+ * Met deze vorm kan het mandaat alleen dekken wat ook werkelijk uit de
+ * bestanden volgt; alles wat de tekst daarbovenop beweert wijkt af en valt
+ * terug op een apart akkoord.
+ */
+export function verwachteUitzonderingenRegel(geraakt: readonly string[]): string {
+  return geraakt.length === 0 ? "geen" : [...geraakt].sort().join("; ");
+}
+
+/** Vergelijkt verklaring en verwachting zonder te struikelen over spaties of hoofdletters. */
+function zelfdeVerklaring(a: string, b: string): boolean {
+  const normaal = (t: string) => t.trim().replace(/\s+/g, " ").toLowerCase().replace(/[.;]+$/, "");
+  return normaal(a) === normaal(b);
 }
 
 /**
@@ -344,16 +382,17 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     const gemandateerd = administratief ? [] : gemandateerdeUitzonderingen(f.taken);
     const geraakt = soortenHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
     const ongedekt = geraakt.filter((s) => !gemandateerd.includes(s));
-    // De verklaring in de PR-tekst mag niet méér beweren dan de taak dekt:
-    // noemt zij een uitzondering terwijl er geen bestand er een raakt, dan is
-    // er niets om tegen af te zetten en blijft een apart akkoord nodig.
-    const verklaardZonderTreffer = verklaring !== null && verklaring !== "geen" && geraakt.length === 0;
-    const gedektDoorDeTaak = geraakt.length > 0 && ongedekt.length === 0 && !verklaardZonderTreffer;
+    // De verklaring moet precies zijn wat de bestanden opleveren. Anders zou
+    // een vrije tekst — het enige kanaal voor een uitzondering zonder
+    // bestandspad — meeliften op een gemandateerde treffer.
+    const verwacht = verwachteUitzonderingenRegel(geraakt);
+    const verklaringKlopt = verklaring !== null && zelfdeVerklaring(verklaring, verwacht);
+    const gedektDoorDeTaak = geraakt.length > 0 && ongedekt.length === 0 && verklaringKlopt;
 
     if (!apartAkkoord && !gedektDoorDeTaak) {
       const wat = [
         ...(ongedekt.length > 0 ? treffers.filter((t) => ongedekt.some((s) => t.endsWith(`(${s})`))) : treffers),
-        ...(verklaring !== null && verklaring !== "geen" ? [`verklaard: ${verklaring}`] : []),
+        ...(verklaring !== null && !verklaringKlopt ? [`verklaard: ${verklaring} (verwacht: ${verwacht})`] : []),
       ];
       redenen.push(
         `harde uitzondering (DEC-0043 §2) die de taak niet aankondigt en waarvoor geen apart akkoord van de eigenaar op deze kop bestaat: ${wat.join("; ")}`,

@@ -2787,7 +2787,7 @@ function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
  * aankondiging geldt gewoon de oude weg, een apart akkoord per kop. Falen
  * naar minder mandaat, nooit naar meer.
  */
-function uitzonderingenUitDossier(inhoud: string): readonly string[] {
+export function uitzonderingenUitDossier(inhoud: string): readonly string[] {
   const ontleed = parseFrontMatter(inhoud);
   if (!ontleed.ok) return [];
   const waarde = ontleed.data["uitzonderingen"];

@@ -28,6 +28,7 @@ import {
   type TaakFeiten,
   type Toetsing,
 } from "@/jarvis/src/attestatie";
+import { uitzonderingenUitDossier } from "@/jarvis/src/opdrachten";
 
 const KOP = "a".repeat(40);
 const SCOPE = "---\nid: T-proef\nuitzonderingen: [workflows en repository-automatisering]\n---\n\nIets.\n";
@@ -73,7 +74,7 @@ const feiten = (over: Partial<AttestatieFeiten> = {}): AttestatieFeiten => ({
   taakRedenen: [],
   toetsing,
   gewijzigdeBestanden: [".github/workflows/iets.yml"],
-  prTekst: "Uitzonderingen: .github/workflows",
+  prTekst: "Uitzonderingen: workflows en repository-automatisering",
   autorisatiePr: null,
   checks: [{ naam: "poort", status: "completed", conclusie: "success" }],
   verplichteCheck: "poort",
@@ -150,9 +151,48 @@ describe("beoordeelAttestatie met mandaat uit de taak", () => {
   });
 
   it("dekt niets af wanneer de PR-tekst een uitzondering verklaart die geen bestand raakt", () => {
-    // Anders zou een verklaring in vrije tekst mandaat kunnen oproepen voor
-    // iets wat nergens in de diff staat.
     const uit = beoordeelAttestatie(feiten({ gewijzigdeBestanden: ["src/iets.ts"], prTekst: "Uitzonderingen: van alles" }));
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+
+  it("laat een vrije-tekstverklaring NIET meeliften op een gemandateerde treffer", () => {
+    // De gevaarlijkste weg, en de reden dat de verklaring een vaste vorm
+    // heeft: een uitzondering zonder bestandspad — een productieactie, een
+    // sleutelrotatie — kan alleen via deze regel worden aangekondigd. Zonder
+    // deze test glipt zij mee met een workflowwijziging die wél gemandateerd
+    // is.
+    const uit = beoordeelAttestatie(
+      feiten({ prTekst: "Uitzonderingen: rotatie van de productie-deploykey en een handmatige DB-mutatie" }),
+    );
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+    expect(uit.join(" ")).toContain("verwacht:");
+  });
+
+  it("weigert ook een onjuiste \"Uitzonderingen: geen\" bij een echte treffer", () => {
+    const uit = beoordeelAttestatie(feiten({ prTekst: "Uitzonderingen: geen" }));
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+
+  it("neemt spaties, hoofdletters en een sluitende punt niet zwaar op", () => {
+    expect(beoordeelAttestatie(feiten({ prTekst: "Uitzonderingen:   Workflows en  repository-automatisering." }))).toEqual([]);
+  });
+
+  it("geeft geen mandaat wanneer er meer dan één taak in de pull request zit", () => {
+    // Dan is niet te zien welk bestand bij welke taak hoort, en zou de
+    // aankondiging van de ene de andere dekken.
+    const tweede = taak({ taak: "T-ander", autorisatie: { ...autorisatie, taak: "T-ander" }, aangekondigdeUitzonderingen: [] });
+    const uit = beoordeelAttestatie(feiten({ taken: [taak(), tweede] }));
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+
+  it("geeft geen mandaat voor een soort die niet bestaat — een typefout dekt niets", () => {
+    const uit = beoordeelAttestatie(feiten({ taken: [taak({ aangekondigdeUitzonderingen: ["workflos en repository-automatisering"] })] }));
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+
+  it("dekt CODEOWNERS niet met een mandaat op workflows", () => {
+    // Wie wat mag beoordelen is een andere beslissing dan hoe CI draait.
+    const uit = beoordeelAttestatie(feiten({ gewijzigdeBestanden: [".github/CODEOWNERS"], prTekst: "Uitzonderingen: wie wat mag beoordelen" }));
     expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
   });
 });
@@ -169,5 +209,40 @@ describe("de attestatietekst noemt waarop is geattesteerd", () => {
 
   it("zegt geen wanneer er niets wordt geraakt", () => {
     expect(uitzonderingenInAttestatie(feiten({ gewijzigdeBestanden: ["src/iets.ts"] }))).toBe("geen");
+  });
+});
+
+/**
+ * De enige schakel tussen het goedgekeurde dossier en het mandaat.
+ *
+ * Deze functie had geen enkele test, terwijl zij bepaalt wat de eigenaar
+ * geacht wordt te hebben goedgekeurd. Een vorm die zij verkeerd leest, is een
+ * mandaat dat niemand heeft gegeven — of een dat ten onrechte uitblijft.
+ */
+describe("uitzonderingenUitDossier", () => {
+  const dossier = (fm: string) => `---\nid: T-proef\n${fm}\n---\n\nIets.\n`;
+
+  it("leest een inline lijst", () => {
+    expect(uitzonderingenUitDossier(dossier("uitzonderingen: [a, b]"))).toEqual(["a", "b"]);
+  });
+
+  it("leest een bloklijst", () => {
+    expect(uitzonderingenUitDossier(dossier("uitzonderingen:\n  - a\n  - b"))).toEqual(["a", "b"]);
+  });
+
+  it("leest één waarde als lijst van één", () => {
+    expect(uitzonderingenUitDossier(dossier("uitzonderingen: alleen-dit"))).toEqual(["alleen-dit"]);
+  });
+
+  it("geeft niets bij een ontbrekend veld", () => {
+    expect(uitzonderingenUitDossier(dossier("klasse: L"))).toEqual([]);
+  });
+
+  it("geeft niets bij kapotte front-matter — falen naar minder mandaat", () => {
+    expect(uitzonderingenUitDossier("---\n\tfout: tab\n---\n")).toEqual([]);
+  });
+
+  it("geeft niets bij een bestand zonder front-matter", () => {
+    expect(uitzonderingenUitDossier("# Gewone tekst\n")).toEqual([]);
   });
 });
