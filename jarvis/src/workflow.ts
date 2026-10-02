@@ -70,6 +70,24 @@ export function canoniekeAttestatiePad(modus: "engine" | "consumer"): string {
   return modus === "engine" ? CANONIEKE_ATTESTATIE : CANONIEKE_ATTESTATIE_CONSUMER;
 }
 
+/**
+ * De uitrolworkflow: bouwt de interface en rolt haar uit, en draait daarna
+ * `jarvis uitrol` als harde controle op het bouwmerk.
+ *
+ * Net als de attestatie niet verplicht in elke repository — een project
+ * zonder interface rolt niets uit — maar als hij er staat, moet hij
+ * byte-identiek zijn aan de canonieke bron. Hij is de enige workflow die een
+ * uitroltoken in handen krijgt, en daarmee de zwaarste tweede ingang van de
+ * drie.
+ */
+export const ACTIEVE_UITROL = ".github/workflows/jarvis-uitrol.yml";
+export const CANONIEKE_UITROL = "jarvis/canonical/jarvis-uitrol.yml";
+export const CANONIEKE_UITROL_CONSUMER = "node_modules/jarvis-engine/jarvis/canonical/jarvis-uitrol.yml";
+
+export function canoniekeUitrolPad(modus: "engine" | "consumer"): string {
+  return modus === "engine" ? CANONIEKE_UITROL : CANONIEKE_UITROL_CONSUMER;
+}
+
 /** De governanceconfiguratie zelf. Niet instelbaar. */
 export const GOVERNANCE_CONFIG = "jarvis.config.yml";
 
@@ -92,6 +110,9 @@ export const TOEGESTANE_WORKFLOWS: readonly string[] = [
   "jarvis-lint.yml",
   // De attestatie namens de eigenaar (DEC-0043); canonieke bron verplicht.
   "jarvis-attestatie.yml",
+  // De uitrol van de interface; canonieke bron verplicht. Draagt het
+  // uitroltoken, dus de byte-vergelijking eronder is hier geen formaliteit.
+  "jarvis-uitrol.yml",
   // Bestaande workflows van voor Jarvis. Ze staan hier omdat ze er zijn, niet
   // omdat ze beoordeeld zijn: alleen `jarvis-lint.yml` heeft een canonieke
   // bron. Wat deze lijst wel doet is een NIEUWE workflow tegenhouden.
@@ -150,6 +171,12 @@ export type GovernanceInvoer = {
    * byte-identiek zijn aan de bron.
    */
   readonly attestatie?: { readonly actief: BestandsFeiten; readonly canoniek: BestandsFeiten };
+  /**
+   * De uitrolworkflow en zijn canonieke bron, met dezelfde regel als bij de
+   * attestatie: ontbreekt het actieve bestand, dan is er niets te
+   * vergelijken; staat het er, dan moet het byte-identiek zijn.
+   */
+  readonly uitrol?: { readonly actief: BestandsFeiten; readonly canoniek: BestandsFeiten };
   /** Bestandsnamen in de workflowmap, of null wanneer die niet te lezen is. */
   readonly workflowMapInhoud: readonly string[] | null;
   /** Per verplicht governance-testbestand: het aantal bytes, of null als het ontbreekt. */
@@ -270,6 +297,20 @@ export function controleerGovernance(invoer: GovernanceInvoer): readonly string[
     if (!a.actief.viaSymlink && !a.canoniek.viaSymlink) {
       const uitkomst = vergelijkWorkflow(a.actief.bytes, a.canoniek.bytes);
       if (!uitkomst.gelijk) redenen.push(`${ACTIEVE_ATTESTATIE} ${uitkomst.reden}`);
+    }
+  }
+
+  if (invoer.uitrol !== undefined && invoer.uitrol.actief.bytes !== null) {
+    const u = invoer.uitrol;
+    const bronPad = canoniekeUitrolPad(modus);
+    if (u.actief.viaSymlink) redenen.push(`${ACTIEVE_UITROL} is een symbolische link of ligt achter een link`);
+    if (u.canoniek.viaSymlink) redenen.push(`${bronPad} is een symbolische link of ligt achter een link`);
+    if (u.actief.echtPad !== null && u.canoniek.echtPad === u.actief.echtPad) {
+      redenen.push(`${ACTIEVE_UITROL} en ${bronPad} zijn hetzelfde bestand`);
+    }
+    if (!u.actief.viaSymlink && !u.canoniek.viaSymlink) {
+      const uitkomst = vergelijkWorkflow(u.actief.bytes, u.canoniek.bytes);
+      if (!uitkomst.gelijk) redenen.push(`${ACTIEVE_UITROL} ${uitkomst.reden}`);
     }
   }
 
