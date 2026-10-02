@@ -51,13 +51,26 @@ zonder uitroladres brengt dus geen token in een runner. Het adres staat in de
 configuratie en niet in een repository-instelling, want wat gecontroleerd wordt
 hoort onder review te staan en niet naast de diff.
 
+Dat de uitrol alleen vanaf `main` kan, rust op `environment: productie` en de
+deployment branch policy op die omgeving: GitHub weigert dan zelf de
+environment-secrets aan een run op een andere ref. De `if`-regel op de job is
+daarnaast een vangrail en geen grens — een `workflow_dispatch` draait de
+workflowdefinitie van de gekozen ref, dus wie op een agentbranch mag pushen
+brengt zijn eigen versie van die regel mee. Een eerdere versie van deze
+beschrijving beloofde die grens wél aan de `if`-regel alleen; een onafhankelijke
+toetsing haalde dat onderuit.
+
+Twee dingen zijn hiermee nog niet aangetoond: dat de uitroljob werkelijk groen
+draait, en dat de harde controle in CI rood valt op een uitrol die de bestanden
+niet vervangt. Beide vragen eerst de omgeving en de secrets, en zolang die er
+niet zijn faalt de uitroljob op de eerste samenvoeging naar `main`.
+
 De poort ziet die workflow als wat hij is: een derde ingang, naast de poort en
 de attestatie. Hij staat op `TOEGESTANE_WORKFLOWS`, en de byte-vergelijking met
 `jarvis/canonical/jarvis-uitrol.yml` geldt er onverkort — inclusief de
 symlink-, buiten-de-repository- en zelfde-bestandcontroles. Daarmee is een
 uitrolworkflow alleen toe te voegen door hem canoniek te maken, en dat is een
 wijziging onder CODEOWNERS.
-
 
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard

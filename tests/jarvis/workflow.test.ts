@@ -43,6 +43,24 @@ import {
 } from "@/jarvis/src/workflow";
 import { controleerWorkflow, opdrachtPoort, poortStappen, poortUitkomst, prContextVanGebeurtenis } from "@/jarvis/src/opdrachten";
 
+// De regels die direct onder `jobs: <naam>:` staan, op hun eigen niveau en
+// zonder commentaar. Geen YAML-lezer: alleen de inspringing wordt geteld, zodat
+// een eigenschap van de job niet te verwarren is met een regel in een stap of
+// met tekst in een commentaar.
+function jobBlok(tekst: string, naam: string): string[] {
+  const regels = tekst.split("\n");
+  const begin = regels.findIndex((r) => r === `  ${naam}:`);
+  if (begin === -1) return [];
+  const uit: string[] = [];
+  for (const regel of regels.slice(begin + 1)) {
+    if (regel.trim() === "" || regel.trimStart().startsWith("#")) continue;
+    const inspringing = regel.length - regel.trimStart().length;
+    if (inspringing <= 2) break;
+    if (inspringing === 4) uit.push(regel.trim());
+  }
+  return uit;
+}
+
 /** Ruwe bytes, zonder encoding: elke omzetting naar tekst is al een interpretatie. */
 const ACTIEF = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-lint.yml"));
 const CANONIEK = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-lint.yml"));
@@ -264,17 +282,22 @@ describe("de gehardde governancecontrole", () => {
       expect(uit.join(" ")).toContain("buiten de repository");
     });
 
-    // De uitroljob draagt het langlevende productietoken. Bij een
-    // `workflow_dispatch` draait GitHub de definitie van de gekozen ref,
-    // terwijl repository-secrets voor elke ref beschikbaar zijn. Zonder de
-    // ref-grens kan wie op `jarvis/**` mag pushen dat token op een branch
-    // bemachtigen en niet-getoetste code naar productie rollen; de
-    // bouwmerkcontrole ziet dat niet, want zij vergelijkt met de sha van die
-    // branch. Deze test legt de grens vast, in beide kopieen.
-    it("laat de uitroljob alleen op main draaien", () => {
+    // De uitroljob draagt het langlevende productietoken. De grens die telt is
+    // `environment:` met een deployment branch policy: GitHub weigert dan zelf
+    // de secrets aan een run op een andere ref, ook wanneer de aanvaller dit
+    // bestand heeft gewijzigd. De `if`-regel is de goedkope vangrail ervoor.
+    //
+    // Beide worden hier op de job zelf vastgelegd en niet als tekst ergens in
+    // het bestand: een eerdere versie zocht de voorwaarde met `toContain` over
+    // de hele inhoud, en bleef groen toen zij uit de `if` verdween en als
+    // commentaar terugkwam.
+    it("laat de uitroljob alleen op main draaien, achter een omgeving", () => {
       for (const pad of [".github/workflows/jarvis-uitrol.yml", "jarvis/canonical/jarvis-uitrol.yml"]) {
-        const tekst = readFileSync(path.join(process.cwd(), pad), "utf8");
-        expect(tekst).toContain("github.ref == 'refs/heads/main'");
+        const job = jobBlok(readFileSync(path.join(process.cwd(), pad), "utf8"), "uitrollen");
+        const ifRegel = job.find((r) => r.startsWith("if:"));
+        expect(ifRegel, `geen if-regel op de job uitrollen in ${pad}`).toBeDefined();
+        expect(ifRegel).toContain("github.ref == 'refs/heads/main'");
+        expect(job, `geen environment op de job uitrollen in ${pad}`).toContain("environment: productie");
       }
     });
   });

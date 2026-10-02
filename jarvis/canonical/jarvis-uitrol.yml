@@ -74,18 +74,24 @@ jobs:
   # `main`. Draait deze job niet, dan komen de secrets ook niet in een runner
   # terecht.
   #
-  # De ref-grens is geen overbodige verdubbeling van de `push`-trigger. Bij een
-  # `workflow_dispatch` draait GitHub de workflowdefinitie van de gekozen ref,
-  # terwijl repository-secrets voor elke ref beschikbaar zijn. Zonder deze regel
-  # kan wie op `jarvis/**` mag pushen een gewijzigde kopie van dit bestand op een
-  # branch starten, het langlevende uitroltoken krijgen en niet-getoetste code
-  # naar productie rollen; de bouwmerkcontrole ziet dat niet, want zij vergelijkt
-  # met de sha van die branch. `jarvis/src/workflow.ts` noemt productiecredentials
-  # buiten agentbranches zelf als harde beveiligingsgrens — dit is die grens.
+  # De grens die werkelijk telt is `environment: productie`. De credentials van
+  # de uitrol staan als environment-secret, en op die omgeving staat een
+  # deployment branch policy voor `main`: GitHub weigert dan zelf de secrets aan
+  # een run op een andere ref. Dat is nodig omdat een `workflow_dispatch` de
+  # workflowdefinitie van de gekozen ref draait — wie op `jarvis/**` mag pushen,
+  # brengt dus zijn eigen versie van dit bestand mee, en een voorwaarde die in
+  # dit bestand staat kan hij er even goed uit halen. Repository-secrets zijn op
+  # elke ref beschikbaar; environment-secrets achter een branch policy niet.
+  #
+  # De `if`-regel eronder is daarom geen beveiliging maar een goedkope
+  # vangrail: zij houdt de ongewijzigde kopie van een dispatch op een branch
+  # tegen voordat de runner start. Wie het bestand wél wijzigt, komt daar langs
+  # — en loopt dan tegen de omgeving aan.
   uitrollen:
     needs: bepalen
     if: needs.bepalen.outputs.gevraagd == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    environment: productie
     permissions:
       contents: read
     steps:
