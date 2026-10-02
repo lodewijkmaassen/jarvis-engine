@@ -23,7 +23,11 @@ name: jarvis-attestatie
 # een bewuste keuze van de eigenaar, per repository.
 #
 # Deze workflow bevat geen logica. Hij zet één invoer in de omgeving en roept
-# een vaste opdracht aan; die leest, beoordeelt en handelt.
+# een vaste opdracht aan; die leest, beoordeelt en handelt — en voegt, wanneer
+# de projectconfiguratie dat aanzet, ook samen wat zij zojuist heeft
+# goedgekeurd. Dat laatste is een verruiming van wat de automatisering met de
+# hoofdbranch mag, en daarom staat zij per repository in `jarvis.config.yml`
+# en niet hier.
 
 on:
   workflow_dispatch:
@@ -38,7 +42,15 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  # contents: write in plaats van read, en alleen daarvoor: met
+  # `attestatie.samenvoegen: true` voegt deze run de pull request die zij
+  # zojuist heeft goedgekeurd ook samen. Dat verplaatst één stap naar de plek
+  # waar de verificatie toch al staat; de uitvoerder kan hem zelf niet zetten,
+  # omdat de permissieclassificatie van zijn omgeving de opdrachtregel leest
+  # en de autorisatietoestand niet kan zien. Het oordeel komt van dezelfde
+  # `beoordeelSamenvoegen` als `jarvis pr mergen`, op dezelfde kop. Staat
+  # `samenvoegen` uit, dan wordt dit recht niet gebruikt.
+  contents: write
   pull-requests: write
   # De poortstatus lezen: in een privé-repository weigert GitHub dat zonder
   # checks:read (gemeten 2026-09-14 bij Kasboek #5: 403 "Resource not

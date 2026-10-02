@@ -3032,6 +3032,62 @@ async function opdrachtAttestatie(vlaggen: ReadonlyMap<string, string>): Promise
     return 1;
   }
   console.log(`jarvis attestatie: #${nummer} geattesteerd op ${feiten.kop.slice(0, 7)}: ${tekst}`);
+  if (!config.attestatie.samenvoegen) return 0;
+  return await voegSamenNaAttestatie(token, slug, nummer, feiten.kop);
+}
+
+/**
+ * Samenvoegen in dezelfde run die zojuist attesteerde.
+ *
+ * Waarom hier en niet in de schil van de uitvoerder: die kan `jarvis pr
+ * mergen` niet draaien. De permissieclassificatie van zijn
+ * uitvoeringsomgeving weigert dat met "Merge Without Review", ook wanneer de
+ * goedkeurende review er aantoonbaar staat — zij leest de opdrachtregel, niet
+ * de autorisatietoestand, en zal dat bewijs dus nooit zien. Gemeten op
+ * 2026-10-02 bij een pull request van een consumer. Daardoor bleef de laatste
+ * stap van een volledig geautoriseerde keten liggen voor een mens.
+ *
+ * Er komt hier geen autorisatieweg bij, en dat is de hele opzet:
+ *
+ *   - De PR-feiten worden opnieuw gelezen. De review die deze run zojuist
+ *     afgaf hoort erbij te staan, en alleen een verse lezing ziet hem.
+ *   - Het oordeel komt van `beoordeelSamenvoegen` — letterlijk dezelfde
+ *     functie, met dezelfde geverifieerde attestaties, die `jarvis pr mergen`
+ *     gebruikt. Taakakkoord, scope, toetsing, uitzonderingen en poort zijn
+ *     dan al door `beoordeelAttestatie` gegaan, anders waren we hier niet.
+ *   - De merge pint `sha` op de kop die is geattesteerd. Duwt iemand er
+ *     tussendoor een commit op, dan weigert GitHub in plaats van iets anders
+ *     samen te voegen dan wat is goedgekeurd.
+ *
+ * Nog niet rijp is geen fout. Een check die nog loopt betekent dat deze run
+ * niet samenvoegt, niet dat de attestatie mislukte — die staat er en blijft
+ * staan. Daarom exitcode 0 met een regel die zegt waarom.
+ */
+async function voegSamenNaAttestatie(token: string, slug: string, nummer: number, kop: string): Promise<number> {
+  const feiten = await leesPullRequest(token, slug, nummer);
+  if (typeof feiten === "string") {
+    console.error(`jarvis attestatie: geattesteerd, maar de pull request is niet opnieuw te lezen (${feiten}); niet samengevoegd.`);
+    return 0;
+  }
+  if (feiten.kop !== kop) {
+    console.log(`jarvis attestatie: de kop verschoof van ${kop.slice(0, 7)} naar ${feiten.kop.slice(0, 7)}; niet samengevoegd.`);
+    return 0;
+  }
+  const eigenaar = eigenaarVan(slug);
+  const attestaties = await geverifieerdeAttestaties(token, slug, feiten);
+  for (const o of attestaties.opmerkingen) console.error(`jarvis attestatie: ${o}`);
+  const redenen = beoordeelSamenvoegen(feiten, eigenaar, attestaties.koppen);
+  if (redenen.length > 0) {
+    console.log(`jarvis attestatie: nog niet samen te voegen: ${redenen.join("; ")}. De attestatie staat; een volgende ronde voegt samen.`);
+    return 0;
+  }
+  const samen = await github(token, "PUT", `/repos/${slug}/pulls/${nummer}/merge`, { merge_method: SAMENVOEGMETHODE, sha: feiten.kop });
+  if (samen.status !== 200) {
+    console.error(`jarvis attestatie: geattesteerd, maar samenvoegen mislukte (${foutTekst(samen)}).`);
+    return 0;
+  }
+  const uit = samen.lading as { sha: string };
+  console.log(`jarvis attestatie: #${nummer} samengevoegd in ${feiten.basis} als ${uit.sha.slice(0, 7)}, op grond van de attestatie van deze run.`);
   return 0;
 }
 

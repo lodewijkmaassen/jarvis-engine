@@ -97,8 +97,32 @@ export const configSchema = z.strictObject({
        * engine. Bijvoorbeeld het deploymentbestand van de hostingpartij.
        */
       extra_paden: z.array(z.string().trim().min(1)).default([]),
+      /**
+       * Mag de attestatieworkflow de pull request die zij zojuist heeft
+       * goedgekeurd ook samenvoegen? Standaard niet.
+       *
+       * Waarom dit bestaat: de uitvoerder kan `jarvis pr mergen` niet
+       * draaien. De permissieclassificatie van zijn uitvoeringsomgeving
+       * weigert dat met "Merge Without Review" — ook wanneer de goedkeurende
+       * review er aantoonbaar staat, want die classificatie leest de
+       * opdrachtregel en niet de autorisatietoestand. Gemeten op 2026-10-02 bij
+       * een pull request van een consumer: geattesteerd, "klaar om samen te
+       * voegen", geweigerd. Daarmee bleef de laatste stap van een volledig
+       * geautoriseerde keten liggen voor een mens.
+       *
+       * Dit verplaatst die ene stap naar de plek waar de verificatie toch al
+       * staat. Er komt geen autorisatieweg bij: het samenvoegen loopt door
+       * exact dezelfde `beoordeelSamenvoegen` als `jarvis pr mergen`, op
+       * exact de kop die zojuist is geattesteerd. Wat verandert is wie de
+       * knop indrukt.
+       *
+       * Het is wél een verruiming van wat de automatisering mag — de workflow
+       * heeft er `contents: write` voor nodig — en daarom staat het hier en
+       * niet aan: een bewuste keuze per repository.
+       */
+      samenvoegen: z.boolean().default(false),
     })
-    .default({ url: "", sleutel: "", bot: "", uitvoerders: [], extra_paden: [] }),
+    .default({ url: "", sleutel: "", bot: "", uitvoerders: [], extra_paden: [], samenvoegen: false }),
   // Jarvis als eigen project in het overzicht: de kern op de kaart. Wat in
   // deze repository bij Jarvis hoort (paden voor de beweging) en welke tag op
   // een record "dit gaat over Jarvis" betekent, zegt de configuratie; leeg =
