@@ -12,6 +12,10 @@ gebieden:
   - engine
   - governance
   - ci
+uitzonderingen:
+  - workflows en repository-automatisering
+  - governanceconfiguratie
+  - de code die de autorisatie beoordeelt
 ---
 
 ## Wat de opdrachtgever vroeg
@@ -199,6 +203,28 @@ eigenaar en hoort in de lijst hieronder, niet in de bouw.
 - **AC-8** Geen enkele wijziging verruimt de poort, de sanitizer of de
   autorisatiecontrole. Te toetsen op de diff: `attestatie.ts` en `pr.ts` mogen
   geen controle laten vallen.
+- **AC-9** Eén akkoord van de eigenaar op deze taak volstaat voor alle
+  technische tussenstappen die aantoonbaar binnen de goedgekeurde scope
+  vallen. Pull requests, commits, workflows, configuratiewijzigingen, merges
+  en uitrollen zijn op zichzelf geen reden voor een nieuw akkoord zolang zij
+  nodig zijn voor en vallen binnen deze taak. Alleen een wezenlijk nieuwe
+  beslissing buiten die scope komt opnieuw bij hem. De technische controles,
+  de onafhankelijke toetsing en de verificatie blijven onverkort: wat
+  eenvoudiger wordt is de autorisatie, niet de kwaliteitsbewaking.
+
+  De derde aangekondigde soort verdient een eigen woord, want zij is de
+  zwaarste. Deze taak wijzigt de code die de autorisatie zélf beoordeelt
+  (`attestatie.ts` en `pr.ts`), en sinds die bestanden een harde uitzondering
+  zijn, kan dat niet meer ongezien. Zonder deze aankondiging zou elke
+  wijziging daaraan een apart akkoord per kop vragen; mét haar dekt het
+  taakakkoord ze, maar alleen voor déze taak. Een andere taak die diezelfde
+  code wil raken, moet het opnieuw aankondigen en opnieuw worden goedgekeurd.
+
+  De `uitzonderingen` in de front-matter hierboven zijn wat dit afdwingbaar
+  maakt. Zij zeggen welke soorten harde uitzondering deze taak mag raken, en
+  zij vallen onder de scope-hash: er een soort bij schrijven laat het akkoord
+  vervallen. Het mandaat kan dus niet door Jarvis worden verruimd, alleen
+  door een nieuw akkoord van de eigenaar.
 
 ## Risico's en grenzen
 
