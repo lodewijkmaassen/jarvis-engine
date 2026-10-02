@@ -245,23 +245,31 @@ describe("leesTaakakkoorden — faalt dicht, niet open", () => {
     expect(gesloten).toBe(true);
   });
 
-  it("geeft per taak de scope_hash van haar laatste akkoord, en vraagt elke taak één keer", async () => {
-    const gevraagd: string[] = [];
-    const rijen: Record<string, unknown[]> = {
-      "T-1": [{ scope_hash: "aaa" }],
-      "T-2": [],
-      "T-3": [{ scope_hash: "" }],
-    };
+  it("haalt alle taken in één vraag en neemt per taak de laatste rij", async () => {
+    // Eén ronde voor alles samen; een eerdere versie vroeg per taak en maakte
+    // `jarvis overzicht` daarmee acht tot veertien keer trager.
+    let vragen = 0;
+    const rijen = [
+      // `order by op desc`, dus de eerste rij per taak is de laatste.
+      { soort: "taak", taak: "T-1", scope_hash: "nieuw", op: "2026-10-02T12:00:00Z" },
+      { soort: "taak", taak: "T-1", scope_hash: "oud", op: "2026-10-01T12:00:00Z" },
+      { soort: "pr", taak: "T-2", scope_hash: "van-een-pr", op: "2026-10-02T11:00:00Z" },
+      { soort: "taak", taak: "T-3", scope_hash: "", op: "2026-10-02T10:00:00Z" },
+      { soort: "taak", taak: "T-4", scope_hash: "niet-gevraagd", op: "2026-10-02T09:00:00Z" },
+    ];
     const sql = {
-      unsafe: async (_sql: string, params: readonly string[]) => {
-        gevraagd.push(params[0]!);
-        return rijen[params[0]!] ?? [];
+      unsafe: async (_sql: string, params?: readonly unknown[]) => {
+        vragen += 1;
+        expect(params, "de vraag hoort zonder parameters te gaan").toBeUndefined();
+        return rijen;
       },
       end: async () => {},
     };
     const uit = await leesTaakakkoorden(["T-1", "T-2", "T-3", "T-1"], async () => ({ sql, bron: "test" }) as never);
-    expect(uit).toEqual(new Map([["T-1", "aaa"]]));
-    expect(gevraagd).toEqual(["T-1", "T-2", "T-3"]);
+    expect(vragen, "één ronde, hoeveel taken er ook zijn").toBe(1);
+    // T-1 krijgt de nieuwste; T-2 heeft alleen een pr-rij en telt niet; T-3
+    // heeft een lege hash; T-4 is niet gevraagd.
+    expect(uit).toEqual(new Map([["T-1", "nieuw"]]));
   });
 });
 

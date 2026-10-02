@@ -841,12 +841,20 @@ export async function bouwOverzichtVanuit(
  * de tegenspraak die de eigenaar op 2026-10-02 meldde: de taak op "wacht op
  * jou", de kaart om het akkoord te geven weg, en nergens iets te doen.
  *
- * Eén vraag per taak, met het statement dat de Edge Function al toelaat
- * (`AUTORISATIE_TAAK_SQL`). Een `select distinct on (taak)` zou zuiniger zijn
- * maar staat niet in de allowlist van `jarvis/edge/jarvis-db/toegestaan.json`,
- * en die uitbreiden vraagt een uitrol van de functie — een handeling van de
- * eigenaar. Het aantal open taken is klein; dit kost niets dat de moeite waard
- * is.
+ * **Eén vraag voor alle taken samen**, met `AUTORISATIES_SQL` — dat staat al
+ * op de allowlist van de Edge Function en geeft de laatste tweehonderd rijen
+ * op `op desc`. Daar hoort een grens bij die genoemd moet worden: valt een
+ * taakakkoord buiten die tweehonderd, dan leest het als "geen akkoord", en
+ * dat is de veilige kant — een vraag te veel, nooit een akkoord te veel. Op
+ * 2026-10-02 telt de tabel 62 rijen.
+ *
+ * Een eerdere versie stelde één vraag per open taak en zei erbij dat dat
+ * "niets kost dat de moeite waard is". Dat was onjuist en de toetsing heeft
+ * het gemeten: `jarvis overzicht` ging van ongeveer één seconde naar acht tot
+ * veertien, want elke vraag is een eigen HTTPS-ronde en ze liepen na elkaar.
+ * Een `select distinct on (taak)` zou nog zuiniger zijn maar staat niet op de
+ * allowlist, en die uitbreiden vraagt een uitrol van de functie — een
+ * handeling van de eigenaar. Die is hiervoor niet nodig.
  *
  * `null` bij elke storing, en dat is bewust geen lege map: zonder meting valt
  * het overzicht terug op wat het dossier zegt. De verkeerde kant op falen zou
@@ -872,10 +880,14 @@ export async function leesTaakakkoorden(
   }
   if (verbinding === null) return null;
   try {
+    const gevraagd = new Set(taken);
     const stand = new Map<string, string>();
-    for (const taak of [...new Set(taken)]) {
-      const rij = (await verbinding.sql.unsafe(AUTORISATIE_TAAK_SQL, [taak]))[0];
-      const hash = rij?.["scope_hash"];
+    // `order by op desc`, dus de eerste rij per taak is de laatste autorisatie.
+    for (const rij of await verbinding.sql.unsafe(AUTORISATIES_SQL)) {
+      if (rij["soort"] !== "taak") continue;
+      const taak = rij["taak"];
+      const hash = rij["scope_hash"];
+      if (typeof taak !== "string" || !gevraagd.has(taak) || stand.has(taak)) continue;
       if (typeof hash === "string" && hash.length > 0) stand.set(taak, hash);
     }
     return stand;
