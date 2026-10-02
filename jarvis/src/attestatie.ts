@@ -75,9 +75,16 @@ export function scopeHash(inhoud: string): string {
  * governance). Bewust een korte, harde lijst en geen oordeel per geval.
  */
 export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly waarom: string }[] = [
-  // CODEOWNERS staat bewust vóór `.github/`: die map matcht hem ook, en dan
-  // zou een taak die workflows aankondigt er een staand mandaat op krijgen.
-  // Wie wat mag beoordelen is een andere beslissing dan hoe CI draait.
+  // De volgorde doet er niet toe: `raaktHardeUitzondering` en
+  // `soortenHardeUitzondering` verzamelen *alle* patronen die een pad raakt,
+  // niet de eerste. Dat was eerst wel zo, en het was een gat: `.github/`
+  // matcht ook `.github/.env`, `.github/migrations/`, `.github/CON-*.md` en
+  // `.github/constraints/`, dus een taak die alleen "workflows" aankondigde
+  // kreeg er een staand mandaat op secrets, productiedata en
+  // governance-records bij — drie van de vier soorten die DEC-0043 §2 bij
+  // naam noemt. Het is één keer per patroon gerepareerd door CODEOWNERS naar
+  // voren te halen; dat behandelde het symptoom. Nu telt elk patroon mee, en
+  // moet een taak elke geraakte soort afzonderlijk aankondigen.
   { patroon: /(^|\/)CODEOWNERS$/, waarom: "wie wat mag beoordelen" },
   { patroon: /^\.github\//, waarom: "workflows en repository-automatisering" },
   { patroon: /(^|\/)migrations\//, waarom: "databasemigraties (productiedata)" },
@@ -112,9 +119,9 @@ export function raaktHardeUitzondering(bestanden: readonly string[], extraPaden:
   const treffers: string[] = [];
   for (const bestand of bestanden) {
     const pad = bestand.replace(/\\/g, "/");
-    const regel = HARDE_UITZONDERINGEN.find((h) => h.patroon.test(pad));
-    if (regel) {
-      treffers.push(`${pad} (${regel.waarom})`);
+    const regels = HARDE_UITZONDERINGEN.filter((h) => h.patroon.test(pad));
+    if (regels.length > 0) {
+      for (const regel of regels) treffers.push(`${pad} (${regel.waarom})`);
       continue;
     }
     const extra = extraPaden.find((e) => pad === e || pad.startsWith(e.endsWith("/") ? e : `${e}/`));
@@ -138,9 +145,9 @@ export function soortenHardeUitzondering(
   const soorten = new Set<string>();
   for (const bestand of bestanden) {
     const pad = bestand.replace(/\\/g, "/");
-    const regel = HARDE_UITZONDERINGEN.find((h) => h.patroon.test(pad));
-    if (regel) {
-      soorten.add(regel.waarom);
+    const regels = HARDE_UITZONDERINGEN.filter((h) => h.patroon.test(pad));
+    if (regels.length > 0) {
+      for (const regel of regels) soorten.add(regel.waarom);
       continue;
     }
     const extra = extraPaden.find((e) => pad === e || pad.startsWith(e.endsWith("/") ? e : `${e}/`));

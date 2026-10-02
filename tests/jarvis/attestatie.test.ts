@@ -181,7 +181,12 @@ describe("harde uitzonderingen", () => {
       ".claude/agents/x.md",
       "src/gewoon.ts",
     ]);
-    expect(treffers).toHaveLength(10);
+    // Elf en niet tien: `knowledge/CONSTRAINTS/CON-0001.md` raakt twee
+    // patronen — de map en het record — en beide worden geteld. Dat is sinds
+    // de reparatie van het overschaduwingsgat zo: een pad levert élke soort
+    // op die het raakt, niet alleen de eerste in de lijst.
+    expect(treffers).toHaveLength(11);
+    expect(treffers.filter((t) => t.startsWith("knowledge/CONSTRAINTS/CON-0001.md"))).toHaveLength(2);
     expect(treffers.some((t) => t.startsWith("src/gewoon.ts"))).toBe(false);
   });
   it("neemt projectpaden uit de configuratie mee, als pad of als map", () => {

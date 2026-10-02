@@ -967,15 +967,45 @@ function taakHtml(n) {
    met één tik akkoord; de pagina hasht wat ze toont en legt die hash met de tekst vast in jarvis.autorisaties.
    Alleen op de eigen database: daar staat vast wie schreef. */
 function akkoordVan(t) { return staat.autorisaties.filter((a) => a.soort === "taak" && a.taak === t.id).sort((a, b) => String(b.op).localeCompare(String(a.op)))[0] ?? null; }
+/* Welke gevoelige onderdelen deze taak in haar opdracht aankondigt te mogen raken.
+   Dit leest dezelfde `uitzonderingen:`-sleutel uit dezelfde tekst die hieronder wordt
+   getoond en waarover de hash gaat, zodat scherm en poort niet uiteen kunnen lopen.
+   Zonder deze regel beloofde de kaart "een harde uitzondering vraagt apart", en dat
+   is onwaar zodra een taak er een aankondigt — de eigenaar tekende dan voor meer dan
+   het onderschrift zei. */
+function aangekondigdeUitzonderingen(scope) {
+  const kop = /^---\n([\s\S]*?)\n---/.exec(String(scope ?? "").replace(/\r\n/g, "\n"));
+  if (!kop) return [];
+  const m = /^uitzonderingen:[ \t]*(.*)$/m.exec(kop[1]);
+  if (!m) return [];
+  const inline = m[1].trim();
+  if (inline.startsWith("[")) return inline.replace(/^\[|\]$/g, "").split(",").map((x) => x.trim().replace(/^["']|["']$/g, "")).filter(Boolean);
+  if (inline) return [inline.replace(/^["']|["']$/g, "")];
+  // `.slice` begint op het regeleinde ná de sleutel; dat lege eerste element
+  // zou de lus meteen afbreken.
+  const na = kop[1].slice(m.index + m[0].length).replace(/^\n/, "").split("\n");
+  const uit = [];
+  for (const regel of na) {
+    const item = /^\s+-\s+(.+?)\s*$/.exec(regel);
+    if (!item) break;
+    uit.push(item[1].replace(/^["']|["']$/g, ""));
+  }
+  return uit;
+}
 function akkoordHtml(t) {
   if (!t.scope || sluitDossier(t.status)) return "";
   const laatste = akkoordVan(t);
   const geldig = laatste && laatste.scope_hash === t.scope_hash;
   const kanHier = staat.bron?.soort === "supabase";
+  const uitz = aangekondigdeUitzonderingen(t.scope);
+  const watJeMandateert = uitz.length
+    ? `<p style="font-size:12.5px;color:var(--midden)"><strong>Let op — deze taak mag ook dit raken, zonder je per keer te vragen:</strong> ${uitz.map((u) => esc(u)).join(" · ")}. Staat er iets bij dat je niet wilt mandateren, geef dan geen akkoord.</p>`
+    : "";
   let s = `<div class="blok"><span class="eyebrow">Jouw akkoord op deze taak</span>`;
-  if (geldig) s += `<div class="zet"><b>AKKOORD</b><span>· gegeven ${esc(datumKort(laatste.op))} ${esc(tijd(laatste.op))} · scope ${esc(String(laatste.scope_hash).slice(0, 8))}</span></div><p style="font-size:12.5px;color:var(--gedempt)">Jarvis bouwt, laat toetsen en voegt samen wat binnen deze scope valt. Een harde uitzondering vraagt apart.</p>`;
+  if (geldig) s += `<div class="zet"><b>AKKOORD</b><span>· gegeven ${esc(datumKort(laatste.op))} ${esc(tijd(laatste.op))} · scope ${esc(String(laatste.scope_hash).slice(0, 8))}</span></div><p style="font-size:12.5px;color:var(--gedempt)">Jarvis bouwt, laat toetsen en voegt samen wat binnen deze scope valt.${uitz.length ? "" : " Een harde uitzondering vraagt apart."}</p>${watJeMandateert}`;
   else if (laatste) s += `<div class="zet eigenaar"><b>SCOPE GEWIJZIGD</b><span>· je akkoord van ${esc(datumKort(laatste.op))} gold voor een eerdere tekst</span></div>`;
   else s += `<div class="zet eigenaar"><b>NOG GEEN AKKOORD</b><span>· Jarvis kan pull requests van deze taak niet samenvoegen</span></div>`;
+  if (!geldig) s += watJeMandateert;
   s += `<details${geldig ? "" : " open"}><summary style="cursor:pointer;font-size:12.5px;color:var(--zacht)">De scope (opdracht.md) die je goedkeurt</summary><div class="scope">${esc(t.scope)}</div></details>`;
   if (!geldig) s += kanHier ? `<div class="akkoord"><button class="knop" data-actie="akkoord-taak" data-id="${esc(t.id)}">Akkoord met deze taak</button><span style="font-size:12px;color:var(--gedempt)">wordt vastgelegd op jouw account, onveranderbaar</span></div>` : `<p style="font-size:12.5px;color:var(--gedempt)">Akkoord geven kan alleen in de eigen app (ingelogd); hier niet.</p>`;
   s += `</div>`;

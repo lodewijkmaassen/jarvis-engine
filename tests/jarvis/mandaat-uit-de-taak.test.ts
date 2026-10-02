@@ -319,8 +319,36 @@ describe("alle verklaringsregels tellen", () => {
  * verklaringsvergelijking strandde.
  */
 describe("soorten blijven van elkaar gescheiden", () => {
-  it("geeft CODEOWNERS een eigen soort, niet die van workflows", () => {
-    expect(soortenHardeUitzondering([".github/CODEOWNERS"])).toEqual(["wie wat mag beoordelen"]);
+  it("geeft een pad élke soort die het raakt, niet alleen de eerste", () => {
+    // `.github/CODEOWNERS` raakt twee patronen. Eerder won de eerste in de
+    // lijst, en dat was een gat: `.github/` matcht ook `.github/.env`,
+    // `.github/migrations/` en `.github/CON-*.md`, zodat een mandaat op
+    // "workflows" er stilzwijgend secrets, productiedata en
+    // governance-records bij kreeg. Nu moeten beide soorten zijn aangekondigd.
+    expect([...soortenHardeUitzondering([".github/CODEOWNERS"])].sort()).toEqual(
+      ["wie wat mag beoordelen", "workflows en repository-automatisering"].sort(),
+    );
+  });
+
+  it("laat een mandaat op workflows de smallere soorten onder .github niet dekken", () => {
+    // Dit is het gat zelf, in de vier vormen waarin het werd gemeten.
+    const gevallen: readonly [string, string][] = [
+      [".github/.env", "omgevingsbestanden"],
+      [".github/migrations/1.sql", "databasemigraties (productiedata)"],
+      [".github/CON-9999.md", "een randvoorwaarde-record, waar het ook staat"],
+      [".github/constraints/x.md", "harde randvoorwaarden"],
+    ];
+    for (const [pad, soort] of gevallen) {
+      expect(soortenHardeUitzondering([pad]), pad).toContain(soort);
+      const uit = beoordeelAttestatie(
+        feiten({
+          gewijzigdeBestanden: [pad],
+          prTekst: "Uitzonderingen: workflows en repository-automatisering",
+          taken: [taak({ aangekondigdeUitzonderingen: ["workflows en repository-automatisering"] })],
+        }),
+      );
+      expect(uit.join(" | "), `${pad} hoort niet gedekt te zijn`).toMatch(/harde uitzondering/);
+    }
   });
 
   it("houdt een gewone workflow bij workflows", () => {
@@ -405,5 +433,69 @@ describe("de beslissende code is een harde uitzondering", () => {
       }),
     );
     expect(uit).toEqual([]);
+  });
+});
+
+/**
+ * Het scherm waarop de eigenaar tekent, moet zeggen wat hij mandateert.
+ *
+ * De akkoordkaart beloofde "een harde uitzondering vraagt apart". Zodra een
+ * taak er een aankondigt, is dat onwaar: het akkoord dekt die soorten dan
+ * juist wel. De aankondiging stond wel in de getoonde tekst, maar ongemarkeerd
+ * in een front-matter van elf regels, onder een onderschrift dat haar
+ * tegensprak. Dat is geen informed consent.
+ */
+import { readFileSync as leesBestand } from "node:fs";
+import path from "node:path";
+
+describe("de akkoordkaart noemt wat zij mandateert", () => {
+  const html = leesBestand(path.join(process.cwd(), "jarvis/interface/jarvis.html"), "utf8");
+  const stuk = (naam: string) => {
+    const m = new RegExp(`\\nfunction ${naam}\\s*\\(`).exec(html);
+    if (m === null) throw new Error(`${naam} is niet gevonden`);
+    const haakje = html.indexOf("{", m.index + m[0].length);
+    let diepte = 0;
+    for (let i = haakje; i < html.length; i += 1) {
+      if (html[i] === "{") diepte += 1;
+      else if (html[i] === "}" && --diepte === 0) return html.slice(m.index + 1, i + 1);
+    }
+    throw new Error(`${naam} is niet afgesloten`);
+  };
+  // eslint-disable-next-line @typescript-eslint/no-implied-eval
+  const lees = new Function(`${stuk("aangekondigdeUitzonderingen")}\nreturn aangekondigdeUitzonderingen;`)() as (s: string) => string[];
+
+  const dossier = (blok: string) => `---\nid: T-x\nstatus: actief\n${blok}---\n\nde tekst\n`;
+
+  it("leest een bloklijst", () => {
+    expect(lees(dossier("uitzonderingen:\n  - workflows en repository-automatisering\n  - governanceconfiguratie\n"))).toEqual([
+      "workflows en repository-automatisering",
+      "governanceconfiguratie",
+    ]);
+  });
+
+  it("leest een inline-lijst en een enkele waarde", () => {
+    expect(lees(dossier("uitzonderingen: [a, b]\n"))).toEqual(["a", "b"]);
+    expect(lees(dossier('uitzonderingen: "een randvoorwaarde-record, waar het ook staat"\n'))).toEqual([
+      "een randvoorwaarde-record, waar het ook staat",
+    ]);
+  });
+
+  it("geeft niets wanneer de taak niets aankondigt", () => {
+    expect(lees(dossier(""))).toEqual([]);
+    expect(lees("geen front-matter\n")).toEqual([]);
+  });
+
+  it("leest niets uit de hoofdtekst", () => {
+    expect(lees("---\nid: T-x\n---\n\nuitzonderingen:\n  - stiekem\n")).toEqual([]);
+  });
+
+  it("belooft `vraagt apart` alleen wanneer er niets is aangekondigd", () => {
+    const kaart = stuk("akkoordHtml");
+    // De belofte staat achter een voorwaarde op het aantal aangekondigde soorten.
+    expect(kaart).toMatch(/uitz\.length \? "" : " Een harde uitzondering vraagt apart\."/);
+    // En wat wél wordt gemandateerd, staat er met zoveel woorden bij — zowel
+    // vóór het akkoord als erna.
+    expect(kaart).toMatch(/deze taak mag ook dit raken, zonder je per keer te vragen/);
+    expect([...kaart.matchAll(/watJeMandateert/g)]).toHaveLength(3);
   });
 });

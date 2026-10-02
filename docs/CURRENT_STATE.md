@@ -33,6 +33,32 @@ _Gegenereerd op 2026-10-02._
 
 ## Waar staan we
 
+Twee reparaties aan het mandaat uit de taak, allebei door de toetsing
+gevonden en allebei op de plaats waar de eigenaar beslist.
+
+**De soorten overschaduwden elkaar.** `raaktHardeUitzondering` en
+`soortenHardeUitzondering` namen de *eerste* treffer uit
+`HARDE_UITZONDERINGEN`, en `/^\.github\//` staat hoog in die lijst. Daardoor
+gold `.github/.env` als "workflows", net als `.github/migrations/`,
+`.github/CON-*.md` en `.github/constraints/`. Een taak die alleen workflows
+aankondigde kreeg er dus stilzwijgend een staand mandaat op secrets,
+productiedata en governance-records bij — drie van de vier soorten die
+`DEC-0043` §2 bij naam noemt. Dit was eerder één keer gerepareerd door
+CODEOWNERS in de lijst naar voren te halen; dat behandelde het symptoom. Nu
+verzamelen beide functies **alle** patronen die een pad raakt, en moet een
+taak elke geraakte soort afzonderlijk aankondigen. De volgorde van de lijst
+doet er niet meer toe.
+
+**Het akkoordscherm beloofde het tegenovergestelde.** Onder een geldig
+akkoord stond "een harde uitzondering vraagt apart", en dat is onwaar zodra
+een taak er een aankondigt — dan dekt het akkoord die juist. De aankondiging
+stond wel in de getoonde tekst, maar ongemarkeerd in een front-matter van elf
+regels, onder een onderschrift dat haar tegensprak. Dat is geen informed
+consent. De kaart leest nu dezelfde `uitzonderingen:`-sleutel uit dezelfde
+tekst waarover de hash gaat, noemt met zoveel woorden wat er wordt
+gemandateerd — vóór én na het akkoord — en laat de belofte "vraagt apart"
+weg zodra zij niet meer klopt.
+
 De opdrachttekst van een taak is geen administratieve wijziging meer.
 `DEC-0044` laat een administratieve pull request door zonder taakakkoord,
 zonder scopevergelijking én zonder onafhankelijke toetsing, en de takenmap
