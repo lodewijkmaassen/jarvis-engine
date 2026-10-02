@@ -289,10 +289,27 @@ export function alleenStatusVerschil(oud: string, nieuw: string): boolean {
   const regelsOud = oud.replace(/\r\n/g, "\n").split("\n");
   const regelsNieuw = nieuw.replace(/\r\n/g, "\n").split("\n");
   if (regelsOud.length !== regelsNieuw.length) return false;
-  // De front-matter loopt van de eerste `---` tot de volgende.
   if (regelsOud[0] !== "---" || regelsNieuw[0] !== "---") return false;
   const eind = regelsNieuw.indexOf("---", 1);
   if (eind < 1) return false;
+  // Het blok tussen de strepen moet er ook werkelijk als front-matter
+  // uitzien: louter sleutels en lijstitems. Alleen de twee `---` tellen was
+  // niet genoeg, en dat was een lek. Een dossier met een lege regel en vrije
+  // tekst tussen die strepen — dus met een front-matter die geen front-matter
+  // is — liet een regel `status: actief` middenin de hoofdtekst als
+  // front-matter gelden, en die mocht dan vrij veranderen. Een nieuw dossier
+  // aanmaken is administratief, dus Jarvis kon zo'n bestand zelf neerzetten
+  // en het later langs deze uitzondering herschrijven.
+  //
+  // Dat de twee versies hun streep op dezelfde regel hebben, volgt hieruit en
+  // uit de regelteller: verschilt de plaats van een `---`, dan is die regel
+  // zelf het verschil, en dan is zij aan één kant geen `status:`-regel.
+  for (const regels of [regelsOud, regelsNieuw]) {
+    for (let i = 1; i < eind; i += 1) {
+      const regel = regels[i] ?? "";
+      if (!/^[A-Za-z_][A-Za-z0-9_-]*:/.test(regel) && !/^\s+-\s+\S/.test(regel)) return false;
+    }
+  }
   let gezien = 0;
   for (let i = 0; i < regelsOud.length; i += 1) {
     if (regelsOud[i] === regelsNieuw[i]) continue;
@@ -315,6 +332,22 @@ export function isAdministratievePr(f: AttestatieFeiten): boolean {
   );
 }
 
+/**
+ * Ligt er een apart akkoord van de eigenaar op precies deze pull request en
+ * deze kop (`DEC-0043` §2)? Dit stond eerder alleen inline bij de harde
+ * uitzonderingen; het staat hier omdat een herschreven opdrachttekst dezelfde
+ * uitweg hoort te hebben en die anders niet bestaat.
+ */
+export function akkoordOpDezeKop(f: AttestatieFeiten): boolean {
+  return (
+    f.autorisatiePr !== null &&
+    f.autorisatiePr.soort === "pr" &&
+    (f.autorisatiePr.pr_repo ?? "").toLowerCase() === f.repo.toLowerCase() &&
+    f.autorisatiePr.pr_nummer === f.nummer &&
+    f.autorisatiePr.commit_sha === f.kop
+  );
+}
+
 /** Waarom er nu niet geattesteerd wordt. Leeg betekent: attesteer. */
 export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   const redenen: string[] = [];
@@ -328,7 +361,12 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
 
   const administratief = isAdministratievePr(f);
   const herschreven = herschrevenScope(f);
-  if (herschreven.length > 0) {
+  // De uitweg moet werkelijk bestaan. Deze reden stond er onvoorwaardelijk, en
+  // daarmee kon een herschreven opdrachttekst nóóit machinaal worden
+  // geattesteerd — ook niet met het aparte akkoord dat de tekst eromheen
+  // belooft. Veilig, maar niet wat er staat, en een belofte die de code niet
+  // waarmaakt is erger dan geen belofte.
+  if (herschreven.length > 0 && !akkoordOpDezeKop(f)) {
     redenen.push(
       `deze pull request herschrijft ${herschreven.join(", ")} — de tekst waarop het akkoord van de eigenaar rust; ` +
         "dat is geen administratieve wijziging en vraagt zijn akkoord op deze pull request",
@@ -372,13 +410,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     redenen.push('de PR-tekst verklaart niets over uitzonderingen; zet er een regel "Uitzonderingen: geen" of "Uitzonderingen: <welke>" in');
   }
   if (uitzondering) {
-    const ok =
-      f.autorisatiePr !== null &&
-      f.autorisatiePr.soort === "pr" &&
-      (f.autorisatiePr.pr_repo ?? "").toLowerCase() === f.repo.toLowerCase() &&
-      f.autorisatiePr.pr_nummer === f.nummer &&
-      f.autorisatiePr.commit_sha === f.kop;
-    if (!ok) {
+    if (!akkoordOpDezeKop(f)) {
       const wat = [...treffers, ...(verklaring !== null && verklaring !== "geen" ? [`verklaard: ${verklaring}`] : [])];
       redenen.push(`harde uitzondering (DEC-0043 §2) zonder apart akkoord van de eigenaar op deze kop: ${wat.join("; ")}`);
     }

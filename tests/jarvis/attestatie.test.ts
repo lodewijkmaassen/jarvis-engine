@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  akkoordOpDezeKop,
   alleenStatusVerschil,
   herschrevenScope,
   isAdministratievePr,
@@ -619,5 +620,98 @@ describe("alleenStatusVerschil — een dossier sluiten is boekhouding", () => {
 
   it("behandelt CRLF en LF als hetzelfde", () => {
     expect(alleenStatusVerschil(dossier("actief").replace(/\n/g, "\r\n"), dossier("afgerond"))).toBe(true);
+  });
+});
+
+describe("de uitweg die DEC-0043 §2 belooft, bestaat ook werkelijk", () => {
+  const bestand = "tasks/T-20260913-proef/opdracht.md";
+  const herschrijving = (over: Partial<AttestatieFeiten> = {}) =>
+    feiten({
+      gewijzigdeBestanden: [bestand],
+      bestandStatus: { [bestand]: "modified" },
+      scopeBestandPatroon: /^tasks\/[^/]+\/opdracht\.md$/i,
+      taken: [{ taak: "T-20260913-proef", autorisatie, scopeHashKop: scopeHash(`${SCOPE}\nextra\n`) }],
+      toetsing: null,
+      ...over,
+    });
+  const prAkkoord = (over: Partial<Autorisatie> = {}): Autorisatie => ({
+    ...autorisatie,
+    id: "33333333-3333-3333-3333-333333333333",
+    soort: "pr",
+    scope_hash: null,
+    pr_repo: "eigenaar/proef",
+    pr_nummer: 7,
+    commit_sha: KOP,
+    ...over,
+  });
+
+  it("weigert zonder apart akkoord", () => {
+    expect(beoordeelAttestatie(herschrijving()).join(" | ")).toMatch(/herschrijft tasks/);
+  });
+
+  it("laat de herschrijving door met een apart akkoord op precies deze kop", () => {
+    // Deze reden stond er onvoorwaardelijk, waardoor een herschreven
+    // opdrachttekst nóóit geattesteerd kon worden — ook niet met het akkoord
+    // dat de tekst eromheen belooft.
+    const f = herschrijving({ autorisatiePr: prAkkoord(), toetsing });
+    expect(akkoordOpDezeKop(f)).toBe(true);
+    expect(beoordeelAttestatie(f).join(" | ")).not.toMatch(/herschrijft tasks/);
+  });
+
+  it("telt een akkoord op een andere kop, pull request of repository niet", () => {
+    for (const [wat, over] of [
+      ["andere kop", { commit_sha: ANDERE }],
+      ["ander nummer", { pr_nummer: 8 }],
+      ["andere repository", { pr_repo: "iemand/anders" }],
+      ["geen pr-soort", { soort: "taak" as const }],
+    ] as const) {
+      const f = herschrijving({ autorisatiePr: prAkkoord(over), toetsing });
+      expect(akkoordOpDezeKop(f), wat).toBe(false);
+      expect(beoordeelAttestatie(f).join(" | "), wat).toMatch(/herschrijft tasks/);
+    }
+  });
+});
+
+describe("alleenStatusVerschil — de wachters afzonderlijk", () => {
+  // Elk van deze vier wachters overleefde de suite als enige regel die hem
+  // tegenhield; ze worden hier stuk voor stuk vastgelegd, zodat een geval dat
+  // nu door een ándere wachter wordt gevangen dat niet verhult.
+
+  it("laat een `---` verderop in de tekst de front-matter niet oprekken", () => {
+    // Het lek dat QA vond: de front-matter is niet gesloten, en een `---`
+    // verderop verschoof de grens, waardoor een statusregel in de hoofdtekst
+    // als front-matter telde.
+    const oud = "---\nid: T-x\nstatus: actief\n\nAC-1 moet X.\nstatus: actief\n---\n";
+    const nieuw = "---\nid: T-x\nstatus: actief\n\nAC-1 moet X.\nstatus: vervallen\n---\n";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("weigert een front-matter die vrije tekst of een lege regel bevat", () => {
+    const oud = "---\nid: T-x\nstatus: actief\n\nvrije tekst\n---\n";
+    const nieuw = "---\nid: T-x\nstatus: afgerond\n\nvrije tekst\n---\n";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("laat een lijstitem in de front-matter wél toe — dat hoort erbij", () => {
+    const met = (status: string) => `---\nid: T-x\nstatus: ${status}\ngebieden:\n  - jarvis\n  - ci\n---\n\ntekst\n`;
+    expect(alleenStatusVerschil(met("actief"), met("afgerond"))).toBe(true);
+  });
+
+  it("de regelaantalcontrole staat op zichzelf: aangehangen tekst blijft zichtbaar", () => {
+    const basis = "---\nid: T-x\nstatus: actief\n---\n\ntekst\n";
+    const metStaart = "---\nid: T-x\nstatus: afgerond\n---\n\ntekst\nAC-9 vervalt.\n";
+    expect(alleenStatusVerschil(basis, metStaart)).toBe(false);
+  });
+
+  it("de eis dat regel 0 `---` is, staat op zichzelf", () => {
+    const oud = "\n---\nid: T-x\nstatus: actief\n---\ntekst\n";
+    const nieuw = "\n---\nid: T-x\nstatus: afgerond\n---\ntekst\n";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("de eis dat ook de oude regel een statusregel is, staat op zichzelf", () => {
+    const oud = "---\nid: T-x\nklasse: S\n---\ntekst\n";
+    const nieuw = "---\nid: T-x\nstatus: afgerond\n---\ntekst\n";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
   });
 });

@@ -77,6 +77,22 @@ waarde is een bekend statuswoord. Een regel erbij, een andere sleutel of een
 status die niet bestaat telt gewoon als herschrijven, en een bestand waarvan
 de basisversie niet te lezen is ook.
 
+Ronde 2 vond daar nog een lek in en een belofte die de code niet waarmaakte.
+Het lek: alleen tellen dat er twee `---` staan is niet genoeg. Een dossier met
+een lege regel en vrije tekst tussen die strepen — een front-matter die geen
+front-matter is — liet een regel `status: actief` middenin de hoofdtekst als
+front-matter gelden, en die mocht dan vrij veranderen. Een nieuw dossier
+aanmaken is administratief, dus Jarvis kon zo'n bestand zelf neerzetten en het
+later langs de uitzondering herschrijven. Het blok tussen de strepen moet nu
+ook werkelijk uit sleutels en lijstitems bestaan.
+
+De belofte: de reden "vraagt zijn akkoord op deze pull request" werd
+onvoorwaardelijk opgevoerd, ook met een geldig akkoord op precies die kop.
+Daarmee kon een herschreven opdrachttekst nóóit machinaal worden geattesteerd,
+terwijl de tekst eromheen — en `DEC-0043` §2 — die weg juist aanwijzen. Veilig
+falen is goed, maar een uitweg beloven die niet bestaat is dat niet.
+`akkoordOpDezeKop` is nu één functie die beide plaatsen gebruiken.
+
 Twee kleinere dingen uit dezelfde ronde: het patroon is hoofdletterongevoelig
 geworden (`Opdracht.md` kwam er anders doorheen, net zoals
 `HARDE_UITZONDERINGEN` dat voor `CON-*.md` al ondervond), en een ontbrekend
