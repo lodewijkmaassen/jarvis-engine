@@ -48,9 +48,14 @@ binnen `T-20261002-technische-uitvoering`).
 `scope_hash` van het laatste taakakkoord — en past dezelfde toets toe die de
 kaart al deed: een akkoord telt alleen op precies de huidige scope, dus een
 gewijzigde `opdracht.md` laat het vervallen zoals `DEC-0043` voorschrijft. De
-stand komt uit `AUTORISATIE_TAAK_SQL`, één vraag per open taak, over de weg die
-er toch al is; er komt geen credential bij en de allowlist van de Edge Function
-blijft ongemoeid. Is de database niet te lezen, dan is de stand *niet gemeten*
+stand komt uit `AUTORISATIES_SQL` — één vraag voor alle taken samen, over de
+weg die er toch al is; er komt geen credential bij en de allowlist van de Edge
+Function blijft ongemoeid. Daar hoort een grens bij: dat statement geeft de
+laatste tweehonderd rijen, en valt een akkoord daarbuiten dan leest het als
+"geen akkoord" — een vraag te veel, nooit een akkoord te veel. Een eerdere
+versie vroeg per taak en zei erbij dat dat niets kostte; de toetsing mat dat
+`jarvis overzicht` daarmee van ongeveer één seconde naar acht tot veertien
+ging, omdat elke vraag een eigen HTTPS-ronde was. Is de database niet te lezen, dan is de stand *niet gemeten*
 (`akkoord_gemeten: false`) en valt het overzicht terug op het dossier — liever
 een vraag te veel dan een akkoord aannemen dat er niet is.
 
