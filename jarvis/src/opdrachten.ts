@@ -66,6 +66,7 @@ import {
   attestatieTekst,
   beoordeelAttestatie,
   leesAttestatie,
+  alleenStatusVerschil,
   scopeHash,
   takenUitCommits,
   verifieerAttestatie,
@@ -2844,10 +2845,10 @@ function sqlBron(sql: PgClient): AttestatieBron {
 }
 
 /** Alle pagina's van een GitHub-lijst; weigert boven het plafond (fail closed). */
-async function leesAllePaginas<T>(token: string, pad: string, plafond: number): Promise<readonly T[] | string> {
+async function leesAllePaginas<T>(token: string, pad: string, plafond: number, haal: GithubLezer = github): Promise<readonly T[] | string> {
   const alles: T[] = [];
   for (let pagina = 1; pagina <= plafond; pagina += 1) {
-    const a = await github(token, "GET", `${pad}${pad.includes("?") ? "&" : "?"}per_page=100&page=${pagina}`);
+    const a = await haal(token, "GET", `${pad}${pad.includes("?") ? "&" : "?"}per_page=100&page=${pagina}`);
     if (a.status !== 200) return `${pad.split("?")[0]} niet te lezen (${foutTekst(a)})`;
     const lijst = a.lading as T[];
     alles.push(...lijst);
@@ -2875,6 +2876,21 @@ async function leesConfigVanRepo(token: string, slug: string): Promise<JarvisCon
  * kennisrecords behalve de randvoorwaarden, de kennisindex en het
  * feitenblok. Afgeleid van de configuratie, niet instelbaar op zichzelf.
  */
+/** `tasks/<taak>/opdracht.md`: het bestand waarvan de hash het akkoord draagt. */
+function scopeBestandPatroon(config: JarvisConfig): RegExp {
+  const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\/$/, "");
+  return new RegExp(`^${esc(config.taken_map)}/[^/]+/opdracht\\.md$`, "i");
+}
+
+/** De inhoud van één bestand op een ref, of null wanneer het er niet staat of niet te lezen is. */
+async function leesBestandUitRepo(haal: GithubLezer, token: string, slug: string, pad: string, ref: string): Promise<string | null> {
+  const a = await haal(token, "GET", `/repos/${slug}/contents/${pad.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`);
+  if (a.status !== 200) return null;
+  const d = a.lading as { content?: string; encoding?: string };
+  if (d.encoding !== "base64" || typeof d.content !== "string") return null;
+  return Buffer.from(d.content, "base64").toString("utf8");
+}
+
 function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
   const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\/$/, "");
   return [
@@ -2884,28 +2900,41 @@ function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
   ];
 }
 
+/** Hoe deze module GitHub leest. Injecteerbaar, zodat het samenstellen van de feiten te draaien valt. */
+export type GithubLezer = (token: string, methode: string, pad: string, body?: unknown) => Promise<GitHubAntwoord>;
+
 /**
  * Verzamelt alles wat de beoordeling nodig heeft: de PR-feiten van GitHub
  * (commits, bestanden, dossier op de kop, checks) en de rijen uit de bron.
+ *
+ * `haal` is injecteerbaar om één reden, en het is geen test-ingang: wat
+ * hier wordt samengesteld, bepaalt wat `beoordeelAttestatie` te zien krijgt,
+ * en een veld dat hier wegvalt maakt de beoordeling stilletjes soepeler. Dat
+ * valt alleen vast te leggen door het samenstellen werkelijk te draaien.
  */
-async function verzamelAttestatieFeiten(
+export async function verzamelAttestatieFeiten(
   token: string,
   slug: string,
   nummer: number,
   feiten: PullRequestFeiten,
   config: JarvisConfig,
   bron: AttestatieBron,
+  haal: GithubLezer = github,
 ): Promise<AttestatieFeiten | string> {
-  const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
+  const pr = await haal(token, "GET", `/repos/${slug}/pulls/${nummer}`);
   if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
   const prLading = pr.lading as { body?: string | null; commits?: number; changed_files?: number };
   const prTekst = String(prLading.body ?? "");
-  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string }; parents?: readonly unknown[] }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10);
+  const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string }; parents?: readonly unknown[] }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10, haal);
   if (typeof commitsRuw === "string") return commitsRuw;
   const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message, ouders: Array.isArray(c.parents) ? c.parents.length : 1 }));
-  const bestandenRuw = await leesAllePaginas<{ filename: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10);
+  const bestandenRuw = await leesAllePaginas<{ filename: string; status?: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10, haal);
   if (typeof bestandenRuw === "string") return bestandenRuw;
   const bestanden = bestandenRuw.map((f) => f.filename);
+  // De status staat erbij omdat "nieuw dossier" en "bestaand dossier
+  // herschreven" verschillend mogen aflopen; zie `herschrevenScope`.
+  const bestandStatus: Record<string, string> = {};
+  for (const f of bestandenRuw) bestandStatus[f.filename] = f.status ?? "modified";
   // Het commits-eindpunt geeft hoogstens 250 commits en de lijsten kunnen
   // afwijken van wat GitHub over de PR zegt; dan is er iets ongelezen, en
   // ongelezen is ongecontroleerd (QA-bevinding 14).
@@ -2916,11 +2945,27 @@ async function verzamelAttestatieFeiten(
     return `de pull request telt ${prLading.changed_files} bestanden maar er zijn er ${bestanden.length} gelezen; zo'n pull request wordt niet geattesteerd`;
   }
 
+  // Welke geraakte scope-bestanden niets anders dan hun statusregel wijzigen.
+  // Daarvoor is de versie op de basis nodig; zonder die lezing geldt het
+  // bestand als herschreven, want onbekend mag nooit soepeler uitpakken.
+  const scopePatroon = scopeBestandPatroon(config);
+  const alleenStatusregel: string[] = [];
+  for (const bestand of bestanden) {
+    const pad = bestand.replace(/\\/g, "/");
+    if (!scopePatroon.test(pad)) continue;
+    if ((bestandStatus[bestand] ?? "modified") === "added") continue;
+    const [opKop, opBasis] = await Promise.all([
+      leesBestandUitRepo(haal, token, slug, pad, feiten.kop),
+      leesBestandUitRepo(haal, token, slug, pad, feiten.basis),
+    ]);
+    if (opKop !== null && opBasis !== null && alleenStatusVerschil(opBasis, opKop)) alleenStatusregel.push(bestand);
+  }
+
   const { taken: taakIds, redenen: taakRedenen } = takenUitCommits(commits);
   const taken: TaakFeiten[] = [];
   for (const taak of taakIds) {
     let scopeHashKop: string | null = null;
-    const dossier = await github(
+    const dossier = await haal(
       token,
       "GET",
       `/repos/${slug}/contents/${encodeURIComponent(config.taken_map)}/${encodeURIComponent(taak)}/opdracht.md?ref=${feiten.kop}`,
@@ -2946,6 +2991,9 @@ async function verzamelAttestatieFeiten(
     gewijzigdeBestanden: bestanden,
     extraPaden: config.attestatie.extra_paden,
     administratiefPaden: administratievePatronen(config),
+    scopeBestandPatroon: scopeBestandPatroon(config),
+    bestandStatus,
+    alleenStatusregel,
     prTekst,
     autorisatiePr: await bron.pr(slug, nummer, feiten.kop),
     checks: feiten.checks,

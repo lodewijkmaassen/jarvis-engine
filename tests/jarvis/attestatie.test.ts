@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  akkoordOpDezeKop,
+  alleenStatusVerschil,
+  herschrevenScope,
+  isAdministratievePr,
   attestatieInhoud,
   attestatieTekst,
   beoordeelAttestatie,
@@ -450,5 +454,289 @@ describe("laatstePerNaam met herkomst", () => {
     expect(beoordeelSamenvoegen(basis, "eigenaar")).toEqual([]);
     // Zonder goedkeuring van de eigenaar blijft het antwoord hetzelfde als eerst.
     expect(beoordeelSamenvoegen({ ...basis, reviews: [] }, "eigenaar")[0]).toMatch(/geen goedkeurende review/);
+  });
+});
+
+/**
+ * Het gat dat QA op 2026-10-02 vond, en de dichting ervan.
+ *
+ * `DEC-0044` laat een administratieve pull request door zonder taakakkoord,
+ * zonder scopevergelijking en zonder onafhankelijke toetsing. `tasks/` viel
+ * daar volledig onder — ook `tasks/<taak>/opdracht.md`, de tekst waarvan de
+ * hash het akkoord van de eigenaar draagt en die sinds de aankondiging van
+ * harde uitzonderingen ook de omvang van het mandaat vastlegt. Een pull
+ * request die precies dat bestand herschreef, kreeg in een consumentproject
+ * de review `taken administratief · autorisaties - · scope - · toetsing -`.
+ *
+ * Dat is geen weg om stiekem mandaat te winnen — de hash klopt daarna niet
+ * meer, dus het akkoord vervalt en de eigenaar ziet de nieuwe tekst voordat
+ * hij opnieuw autoriseert. Het gat zit ervóór: die nieuwe tekst werd zonder
+ * toetsing en zonder zijn medeweten geschreven.
+ */
+describe("de opdrachttekst is geen administratieve wijziging", () => {
+  const SCOPEPATROON = /^tasks\/[^/]+\/opdracht\.md$/;
+  const dossierPr = (status: string, bestanden = ["tasks/T-20260913-proef/opdracht.md"]) =>
+    feiten({
+      gewijzigdeBestanden: bestanden,
+      bestandStatus: Object.fromEntries(bestanden.map((b) => [b, status])),
+      scopeBestandPatroon: SCOPEPATROON,
+      // Zoals bij een herschreven opdracht: de kop draagt een andere tekst dan
+      // waarop het akkoord staat, en er is geen toetsing.
+      taken: [{ taak: "T-20260913-proef", autorisatie, scopeHashKop: scopeHash(`${SCOPE}\nextra\n`) }],
+      toetsing: null,
+    });
+
+  it("laat een bestaand dossier herschrijven niet als administratief gelden", () => {
+    const f = dossierPr("modified");
+    expect(isAdministratievePr(f)).toBe(false);
+    expect(herschrevenScope(f)).toEqual(["tasks/T-20260913-proef/opdracht.md"]);
+    const redenen = beoordeelAttestatie(f);
+    expect(redenen.join(" | ")).toMatch(/herschrijft tasks\/T-20260913-proef\/opdracht\.md/);
+    expect(redenen.join(" | "), "de scope hoort ook gewoon te worden vergeleken").toMatch(/de scope van T-20260913-proef is veranderd/);
+    expect(redenen.join(" | "), "en een toetsing hoort te worden geëist").toMatch(/geen toetsing met oordeel GO/);
+  });
+
+  it("laat een nieuw dossier wél administratief zijn — het mandateert nog niets", () => {
+    const f = dossierPr("added");
+    expect(herschrevenScope(f)).toEqual([]);
+    expect(isAdministratievePr(f)).toBe(true);
+    expect(beoordeelAttestatie(f)).toEqual([]);
+  });
+
+  it("telt een hernoemd dossier als herschreven", () => {
+    expect(herschrevenScope(dossierPr("renamed"))).toHaveLength(1);
+  });
+
+  it("telt een bestand zonder bekende status als herschreven — onbekend is nooit het soepelst", () => {
+    const f = feiten({
+      gewijzigdeBestanden: ["tasks/T-20260913-proef/opdracht.md"],
+      scopeBestandPatroon: SCOPEPATROON,
+      toetsing: null,
+    });
+    expect(f.bestandStatus).toBeUndefined();
+    expect(herschrevenScope(f)).toHaveLength(1);
+    expect(isAdministratievePr(f)).toBe(false);
+  });
+
+  it("raakt de rest van een administratieve pull request niet", () => {
+    const f = feiten({
+      gewijzigdeBestanden: ["tasks/T-20260913-proef/resultaat.md", "knowledge/RISKS/RSK-0001.md"],
+      bestandStatus: { "tasks/T-20260913-proef/resultaat.md": "modified", "knowledge/RISKS/RSK-0001.md": "modified" },
+      scopeBestandPatroon: SCOPEPATROON,
+      toetsing: null,
+    });
+    expect(herschrevenScope(f)).toEqual([]);
+    expect(isAdministratievePr(f)).toBe(true);
+    expect(beoordeelAttestatie(f)).toEqual([]);
+  });
+
+  it("valt dicht, niet open, wanneer er geen scopepatroon is meegegeven", () => {
+    // Deze test legde eerder het omgekeerde vast — een ontbrekend patroon gaf
+    // een lege lijst en dus de soepelste uitkomst, in tegenspraak met de regel
+    // één test hoger. Wie het patroon vergeet mee te geven hoort een
+    // strengere beoordeling te krijgen, geen ruimere.
+    const f = feiten({
+      gewijzigdeBestanden: ["tasks/T-20260913-proef/opdracht.md"],
+      bestandStatus: { "tasks/T-20260913-proef/opdracht.md": "modified" },
+      toetsing: null,
+    });
+    expect(f.scopeBestandPatroon).toBeUndefined();
+    expect(herschrevenScope(f)).toEqual(["tasks/T-20260913-proef/opdracht.md"]);
+    expect(isAdministratievePr(f)).toBe(false);
+  });
+
+  it("ziet een hoofdlettervariant van de bestandsnaam ook", () => {
+    // `tasks/<taak>/Opdracht.md` kwam er administratief doorheen. Dezelfde
+    // ongevoeligheid die HARDE_UITZONDERINGEN al voor CON-records heeft.
+    const bestanden = ["tasks/T-20260913-proef/Opdracht.md"];
+    const f = feiten({
+      gewijzigdeBestanden: bestanden,
+      bestandStatus: { [bestanden[0]!]: "modified" },
+      scopeBestandPatroon: /^tasks\/[^/]+\/opdracht\.md$/i,
+      toetsing: null,
+    });
+    expect(herschrevenScope(f)).toEqual(bestanden);
+    expect(isAdministratievePr(f)).toBe(false);
+  });
+
+  it("laat een wijziging die alleen de statusregel raakt administratief blijven", () => {
+    const bestand = "tasks/T-20260913-proef/opdracht.md";
+    const f = feiten({
+      gewijzigdeBestanden: [bestand],
+      bestandStatus: { [bestand]: "modified" },
+      scopeBestandPatroon: SCOPEPATROON,
+      alleenStatusregel: [bestand],
+      toetsing: null,
+    });
+    expect(herschrevenScope(f)).toEqual([]);
+    expect(isAdministratievePr(f)).toBe(true);
+    expect(beoordeelAttestatie(f)).toEqual([]);
+  });
+
+});
+
+describe("alleenStatusVerschil — een dossier sluiten is boekhouding", () => {
+  const dossier = (status: string, staart = "## Wat\n\nIets.\n") =>
+    `---\nid: T-20260913-proef\ntitel: Proef\nstatus: ${status}\nklasse: S\n---\n\n${staart}`;
+
+  it("herkent een statusovergang als enige verschil", () => {
+    for (const naar of ["review", "afgerond", "vervallen", "geblokkeerd"]) {
+      expect(alleenStatusVerschil(dossier("actief"), dossier(naar)), `naar ${naar}`).toBe(true);
+    }
+  });
+
+  it("telt een identiek bestand niet als statuswijziging", () => {
+    expect(alleenStatusVerschil(dossier("actief"), dossier("actief"))).toBe(false);
+  });
+
+  it("weigert zodra er ook maar één andere regel verandert", () => {
+    expect(alleenStatusVerschil(dossier("actief"), dossier("afgerond", "## Wat\n\nIets anders.\n"))).toBe(false);
+  });
+
+  it("weigert een regel erbij of eraf, ook met dezelfde status", () => {
+    expect(alleenStatusVerschil(dossier("actief"), `${dossier("afgerond")}extra\n`)).toBe(false);
+    expect(alleenStatusVerschil(`${dossier("actief")}extra\n`, dossier("afgerond"))).toBe(false);
+  });
+
+  it("weigert een statuswoord dat niet bestaat", () => {
+    expect(alleenStatusVerschil(dossier("actief"), dossier("ongeldig"))).toBe(false);
+  });
+
+  it("weigert een wijziging buiten de front-matter, ook als zij op status lijkt", () => {
+    const oud = `---\nid: T\nstatus: actief\n---\n\nstatus: actief\n`;
+    const nieuw = `---\nid: T\nstatus: actief\n---\n\nstatus: afgerond\n`;
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("weigert een andere sleutel die toevallig op dezelfde regel staat", () => {
+    const oud = `---\nid: T\nklasse: S\n---\n\ntekst\n`;
+    const nieuw = `---\nid: T\nklasse: L\n---\n\ntekst\n`;
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("weigert een bestand zonder front-matter", () => {
+    expect(alleenStatusVerschil("status: actief\n", "status: afgerond\n")).toBe(false);
+  });
+
+  it("behandelt CRLF en LF als hetzelfde", () => {
+    expect(alleenStatusVerschil(dossier("actief").replace(/\n/g, "\r\n"), dossier("afgerond"))).toBe(true);
+  });
+});
+
+describe("de uitweg die DEC-0043 §2 belooft, bestaat ook werkelijk", () => {
+  const bestand = "tasks/T-20260913-proef/opdracht.md";
+  const herschrijving = (over: Partial<AttestatieFeiten> = {}) =>
+    feiten({
+      gewijzigdeBestanden: [bestand],
+      bestandStatus: { [bestand]: "modified" },
+      scopeBestandPatroon: /^tasks\/[^/]+\/opdracht\.md$/i,
+      taken: [{ taak: "T-20260913-proef", autorisatie, scopeHashKop: scopeHash(`${SCOPE}\nextra\n`) }],
+      toetsing: null,
+      ...over,
+    });
+  const prAkkoord = (over: Partial<Autorisatie> = {}): Autorisatie => ({
+    ...autorisatie,
+    id: "33333333-3333-3333-3333-333333333333",
+    soort: "pr",
+    scope_hash: null,
+    pr_repo: "eigenaar/proef",
+    pr_nummer: 7,
+    commit_sha: KOP,
+    ...over,
+  });
+
+  it("weigert zonder apart akkoord", () => {
+    expect(beoordeelAttestatie(herschrijving()).join(" | ")).toMatch(/herschrijft tasks/);
+  });
+
+  it("laat de herschrijving door met een apart akkoord op precies deze kop", () => {
+    // Deze reden stond er onvoorwaardelijk, waardoor een herschreven
+    // opdrachttekst nóóit geattesteerd kon worden — ook niet met het akkoord
+    // dat de tekst eromheen belooft.
+    const f = herschrijving({ autorisatiePr: prAkkoord(), toetsing });
+    expect(akkoordOpDezeKop(f)).toBe(true);
+    expect(beoordeelAttestatie(f).join(" | ")).not.toMatch(/herschrijft tasks/);
+  });
+
+  it("telt een akkoord op een andere kop, pull request of repository niet", () => {
+    for (const [wat, over] of [
+      ["andere kop", { commit_sha: ANDERE }],
+      ["ander nummer", { pr_nummer: 8 }],
+      ["andere repository", { pr_repo: "iemand/anders" }],
+      ["geen pr-soort", { soort: "taak" as const }],
+    ] as const) {
+      const f = herschrijving({ autorisatiePr: prAkkoord(over), toetsing });
+      expect(akkoordOpDezeKop(f), wat).toBe(false);
+      expect(beoordeelAttestatie(f).join(" | "), wat).toMatch(/herschrijft tasks/);
+    }
+  });
+});
+
+describe("alleenStatusVerschil — de wachters afzonderlijk", () => {
+  // Elk van deze vier wachters overleefde de suite als enige regel die hem
+  // tegenhield; ze worden hier stuk voor stuk vastgelegd, zodat een geval dat
+  // nu door een ándere wachter wordt gevangen dat niet verhult.
+
+  it("laat een `---` verderop in de tekst de front-matter niet oprekken", () => {
+    // Het lek dat QA vond: de front-matter is niet gesloten, en een `---`
+    // verderop verschoof de grens, waardoor een statusregel in de hoofdtekst
+    // als front-matter telde.
+    const oud = "---\nid: T-x\nstatus: actief\n\nAC-1 moet X.\nstatus: actief\n---\n";
+    const nieuw = "---\nid: T-x\nstatus: actief\n\nAC-1 moet X.\nstatus: vervallen\n---\n";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("weigert een front-matter die vrije tekst of een lege regel bevat", () => {
+    const oud = "---\nid: T-x\nstatus: actief\n\nvrije tekst\n---\n";
+    const nieuw = "---\nid: T-x\nstatus: afgerond\n\nvrije tekst\n---\n";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("laat een lijstitem in de front-matter wél toe — dat hoort erbij", () => {
+    const met = (status: string) => `---\nid: T-x\nstatus: ${status}\ngebieden:\n  - jarvis\n  - ci\n---\n\ntekst\n`;
+    expect(alleenStatusVerschil(met("actief"), met("afgerond"))).toBe(true);
+  });
+
+  it("de regelaantalcontrole staat op zichzelf: een regel erbij ná de statusregel", () => {
+    // Beide versies hebben een geldige front-matter en het enige tekstuele
+    // verschil zit vóór de sluitstreep; alleen de regelteller houdt dit tegen.
+    // Een eerder voorbeeld hier werd al door `i >= eind` gevangen en pinde de
+    // teller dus niet — precies de faalvorm die de vorige ronde benoemde.
+    // De lus loopt over de óúde versie, dus wat achter het einde daarvan is
+    // aangehangen ziet zij niet. Zonder afsluitende regeleinde valt die staart
+    // precies buiten bereik, en alleen de regelteller houdt hem tegen.
+    const oud = "---\nid: T-x\nstatus: actief\n---\ntekst";
+    const nieuw = "---\nid: T-x\nstatus: afgerond\n---\ntekst\nAC-9 vervalt.";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("de eis dat regel 0 `---` is, staat op zichzelf", () => {
+    // Zonder die eis zou `indexOf("---", 1)` de éérste streep als sluitstreep
+    // nemen en alles ervóór als front-matter tellen. Hier staat de statusregel
+    // vóór de openingsstreep, dus met de eis eruit zou dit doorglippen.
+    const oud = "status: actief\n---\nid: T-x\n---\ntekst\n";
+    const nieuw = "status: afgerond\n---\nid: T-x\n---\ntekst\n";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("weigert elke vorm die geen sleutel of lijstitem is", () => {
+    // De drie deelregels van de vormcontrole, elk apart: een lege regel, een
+    // lijstitem zonder inspringing, en een sleutel die met een cijfer begint.
+    const met = (vreemd: string, status: string) => `---\nid: T-x\nstatus: ${status}\n${vreemd}\n---\n\ntekst\n`;
+    for (const vreemd of ["", "- los", "1nummer: x", "# commentaar", "  gevouwen"]) {
+      expect(alleenStatusVerschil(met(vreemd, "actief"), met(vreemd, "afgerond")), JSON.stringify(vreemd)).toBe(false);
+    }
+  });
+
+  it("eist precies één gewijzigde regel, niet minstens één", () => {
+    // `gezien >= 1` zou twee statusregels tegelijk laten wijzigen.
+    const met = (a: string, b: string) => `---\nid: T-x\nstatus: ${a}\nstatus: ${b}\n---\n\ntekst\n`;
+    expect(alleenStatusVerschil(met("actief", "actief"), met("afgerond", "vervallen"))).toBe(false);
+  });
+
+  it("de eis dat ook de oude regel een statusregel is, staat op zichzelf", () => {
+    const oud = "---\nid: T-x\nklasse: S\n---\ntekst\n";
+    const nieuw = "---\nid: T-x\nstatus: afgerond\n---\ntekst\n";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
   });
 });

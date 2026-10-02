@@ -197,6 +197,26 @@ export type AttestatieFeiten = {
   readonly extraPaden?: readonly string[];
   /** Patronen van administratieve paden (dossiers, kennis, feitenblok); leeg = geen administratieve route. */
   readonly administratiefPaden?: readonly RegExp[];
+  /**
+   * Patroon van het bestand waarop het akkoord van de eigenaar rust, meestal
+   * `tasks/<taak>/opdracht.md`. Ontbreekt het, dan geldt de oude regel en is
+   * elke wijziging eronder gewoon administratief.
+   */
+  readonly scopeBestandPatroon?: RegExp;
+  /**
+   * Per gewijzigd bestand de status die GitHub geeft (`added`, `modified`,
+   * `renamed`, `removed`). Een bestand dat hier ontbreekt telt als gewijzigd:
+   * onbekend mag nooit de soepelste uitkomst opleveren.
+   */
+  readonly bestandStatus?: Readonly<Record<string, string>>;
+  /**
+   * Scope-bestanden waarvan de wijziging aantoonbaar alléén de statusregel in
+   * de front-matter raakt. Die telt niet als herschrijven: een taak sluiten of
+   * op `review` zetten is boekhouding, geen nieuwe tekst. Zonder deze
+   * uitzondering zou `administratief afsluiten` — wat de rol uitdrukkelijk
+   * zelf moet kunnen — een akkoord van de eigenaar vragen.
+   */
+  readonly alleenStatusregel?: readonly string[];
   readonly prTekst: string;
   /** Een autorisatie van soort "pr" op precies deze kop, of null. */
   readonly autorisatiePr: Autorisatie | null;
@@ -204,11 +224,136 @@ export type AttestatieFeiten = {
   readonly verplichteCheck: string;
 };
 
+/**
+ * De bestanden in deze pull request die de tekst *herschrijven* waarop het
+ * akkoord van de eigenaar rust. Een nieuw dossier telt niet mee: dat voegt een
+ * tekst toe die nog niemand heeft goedgekeurd en die niets mandateert zolang
+ * de eigenaar er geen akkoord op geeft. Een bestaand dossier wijzigen is iets
+ * anders — dat verandert waar een gegeven akkoord over gaat.
+ *
+ * Waarom dit bestaat. `DEC-0044` laat een administratieve pull request door
+ * zonder taakakkoord, zonder scopevergelijking én zonder onafhankelijke
+ * toetsing, en `tasks/` viel daar volledig onder. Daarmee kon Jarvis de
+ * opdrachttekst van een lopende taak herschrijven — de acceptatiecriteria, en
+ * sinds de aankondiging van harde uitzonderingen ook de omvang van zijn eigen
+ * mandaat — met een goedkeuring van de poort zelf en zonder dat er één mens of
+ * één toetsing naar keek. Gemeten op 2026-10-02 in een consumentproject: een
+ * pull request die precies dat deed, kreeg de review `taken administratief ·
+ * autorisaties - · scope - · toetsing -`.
+ *
+ * Wat het *niet* was: een weg om stiekem mandaat te winnen. Zodra de tekst
+ * verandert, klopt de hash in het akkoord niet meer en vervalt het akkoord —
+ * dus zo'n samenvoeging kost Jarvis zijn mandaat in plaats van het te
+ * verruimen, en de eigenaar ziet de nieuwe tekst voordat hij opnieuw
+ * autoriseert. Het gat zit in wat eraan voorafgaat: de tekst waarop hij
+ * straks tikt, is zonder toetsing en zonder zijn medeweten geschreven.
+ */
+export function herschrevenScope(f: AttestatieFeiten): readonly string[] {
+  // Ontbreekt het patroon, dan valt deze controle terug op een eigen,
+  // bewust ruime vorm — niet op "niets". Dicht falen hoort hier: wie het
+  // patroon vergeet mee te geven, krijgt een strengere uitkomst en geen
+  // soepelere. Een eerdere versie gaf hier een lege lijst terug, en dat was
+  // in tegenspraak met de regel drie regels verderop.
+  const patroon = f.scopeBestandPatroon ?? /(^|\/)opdracht\.md$/i;
+  const status = f.bestandStatus ?? {};
+  const alleenStatus = new Set(f.alleenStatusregel ?? []);
+  return f.gewijzigdeBestanden.filter((b) => {
+    const pad = b.replace(/\\/g, "/");
+    if (!patroon.test(pad)) return false;
+    if (alleenStatus.has(b) || alleenStatus.has(pad)) return false;
+    return (status[b] ?? status[pad] ?? "modified") !== "added";
+  });
+}
+
+/** De statuswoorden die de front-matter van een taakdossier kent. */
+const TAAK_STATUSSEN = new Set(["nieuw", "actief", "review", "afgerond", "vervallen", "geblokkeerd"]);
+
+/**
+ * Verschilt deze versie van een taakdossier van de vorige in niets dan de
+ * regel `status:` in de front-matter?
+ *
+ * Dit bestaat omdat de taakstatus nu eenmaal ín `opdracht.md` staat, en het
+ * sluiten van een dossier daarmee een wijziging van de scope-tekst is. Dat is
+ * boekhouding en geen herschrijving: de opdracht, de afbakening en de
+ * acceptatiecriteria blijven woord voor woord gelijk. Zonder deze uitzondering
+ * zou elke afsluiting een akkoord van de eigenaar vragen, terwijl
+ * "administratief afsluiten" juist hoort bij wat Jarvis zelf doet.
+ *
+ * De uitzondering is *richtingloos*: `afgerond → actief` gaat er net zo goed
+ * doorheen als `actief → afgerond`. Dat is bewust, want een taak heropenen is
+ * even administratief als haar sluiten, maar er hangt een gevolg aan dat hier
+ * hoort te staan. Omdat het akkoord aan de hash van het hele bestand hangt,
+ * brengt het terugdraaien van een statusregel een hash terug die de eigenaar
+ * ooit heeft getekend — en daarmee leeft dat akkoord weer. **Een
+ * statuswijziging is dus geen intrekkingsmechanisme**, en wie een akkoord wil
+ * intrekken moet dat langs de autorisatie doen, niet langs de status.
+ *
+ * Streng gelezen: evenveel regels, alle andere regels identiek, de
+ * veranderende regel moet aan beide kanten een `status:` in de front-matter
+ * zijn, en de nieuwe waarde moet een bekend statuswoord zijn. Alles daarbuiten
+ * — een regel erbij, een andere sleutel, een status die niet bestaat — telt
+ * gewoon als herschrijven.
+ */
+export function alleenStatusVerschil(oud: string, nieuw: string): boolean {
+  const regelsOud = oud.replace(/\r\n/g, "\n").split("\n");
+  const regelsNieuw = nieuw.replace(/\r\n/g, "\n").split("\n");
+  if (regelsOud.length !== regelsNieuw.length) return false;
+  if (regelsOud[0] !== "---" || regelsNieuw[0] !== "---") return false;
+  const eind = regelsNieuw.indexOf("---", 1);
+  if (eind < 1) return false;
+  // Het blok tussen de strepen moet er ook werkelijk als front-matter
+  // uitzien: louter sleutels en lijstitems. Alleen de twee `---` tellen was
+  // niet genoeg, en dat was een lek. Een dossier met een lege regel en vrije
+  // tekst tussen die strepen — dus met een front-matter die geen front-matter
+  // is — liet een regel `status: actief` middenin de hoofdtekst als
+  // front-matter gelden, en die mocht dan vrij veranderen. Een nieuw dossier
+  // aanmaken is administratief, dus Jarvis kon zo'n bestand zelf neerzetten
+  // en het later langs deze uitzondering herschrijven.
+  //
+  // Dat de twee versies hun streep op dezelfde regel hebben, volgt hieruit en
+  // uit de regelteller: verschilt de plaats van een `---`, dan is die regel
+  // zelf het verschil, en dan is zij aan één kant geen `status:`-regel.
+  for (const regels of [regelsOud, regelsNieuw]) {
+    for (let i = 1; i < eind; i += 1) {
+      const regel = regels[i] ?? "";
+      if (!/^[A-Za-z_][A-Za-z0-9_-]*:/.test(regel) && !/^\s+-\s+\S/.test(regel)) return false;
+    }
+  }
+  let gezien = 0;
+  for (let i = 0; i < regelsOud.length; i += 1) {
+    if (regelsOud[i] === regelsNieuw[i]) continue;
+    if (i >= eind) return false;
+    const a = /^status:\s*(\S+)\s*$/.exec(regelsOud[i] ?? "");
+    const b = /^status:\s*(\S+)\s*$/.exec(regelsNieuw[i] ?? "");
+    if (a === null || b === null) return false;
+    if (!TAAK_STATUSSEN.has(b[1]!)) return false;
+    gezien += 1;
+  }
+  return gezien === 1;
+}
+
 /** Is deze PR administratief (DEC-0044)? Dan is er geen taakakkoord en geen toetsing nodig. */
 export function isAdministratievePr(f: AttestatieFeiten): boolean {
   return (
     isAdministratief(f.gewijzigdeBestanden, f.administratiefPaden ?? []) &&
-    raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []).length === 0
+    raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []).length === 0 &&
+    herschrevenScope(f).length === 0
+  );
+}
+
+/**
+ * Ligt er een apart akkoord van de eigenaar op precies deze pull request en
+ * deze kop (`DEC-0043` §2)? Dit stond eerder alleen inline bij de harde
+ * uitzonderingen; het staat hier omdat een herschreven opdrachttekst dezelfde
+ * uitweg hoort te hebben en die anders niet bestaat.
+ */
+export function akkoordOpDezeKop(f: AttestatieFeiten): boolean {
+  return (
+    f.autorisatiePr !== null &&
+    f.autorisatiePr.soort === "pr" &&
+    (f.autorisatiePr.pr_repo ?? "").toLowerCase() === f.repo.toLowerCase() &&
+    f.autorisatiePr.pr_nummer === f.nummer &&
+    f.autorisatiePr.commit_sha === f.kop
   );
 }
 
@@ -224,8 +369,22 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   if (f.gewijzigdeBestanden.length === 0) redenen.push("de pull request wijzigt geen bestanden; er is niets te attesteren");
 
   const administratief = isAdministratievePr(f);
+  const herschreven = herschrevenScope(f);
+  // De uitweg moet werkelijk bestaan. Deze reden stond er onvoorwaardelijk, en
+  // daarmee kon een herschreven opdrachttekst nóóit machinaal worden
+  // geattesteerd — ook niet met het aparte akkoord dat de tekst eromheen
+  // belooft. Veilig, maar niet wat er staat, en een belofte die de code niet
+  // waarmaakt is erger dan geen belofte.
+  if (herschreven.length > 0 && !akkoordOpDezeKop(f)) {
+    redenen.push(
+      `deze pull request herschrijft ${herschreven.join(", ")} — de tekst waarop het akkoord van de eigenaar rust; ` +
+        "dat is geen administratieve wijziging en vraagt zijn akkoord op deze pull request",
+    );
+  }
   if (!administratief) {
-    if (f.taken.length === 0 && f.taakRedenen.length === 0) redenen.push("geen taak bekend voor deze pull request");
+    if (f.taken.length === 0 && f.taakRedenen.length === 0) {
+      redenen.push("geen taak bekend voor deze pull request");
+    }
     for (const t of f.taken) {
       if (t.autorisatie === null) {
         redenen.push(`geen akkoord van de eigenaar op taak ${t.taak} in de database`);
@@ -260,13 +419,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     redenen.push('de PR-tekst verklaart niets over uitzonderingen; zet er een regel "Uitzonderingen: geen" of "Uitzonderingen: <welke>" in');
   }
   if (uitzondering) {
-    const ok =
-      f.autorisatiePr !== null &&
-      f.autorisatiePr.soort === "pr" &&
-      (f.autorisatiePr.pr_repo ?? "").toLowerCase() === f.repo.toLowerCase() &&
-      f.autorisatiePr.pr_nummer === f.nummer &&
-      f.autorisatiePr.commit_sha === f.kop;
-    if (!ok) {
+    if (!akkoordOpDezeKop(f)) {
       const wat = [...treffers, ...(verklaring !== null && verklaring !== "geen" ? [`verklaard: ${verklaring}`] : [])];
       redenen.push(`harde uitzondering (DEC-0043 §2) zonder apart akkoord van de eigenaar op deze kop: ${wat.join("; ")}`);
     }

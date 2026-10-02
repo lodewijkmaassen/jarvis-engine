@@ -33,6 +33,81 @@ _Gegenereerd op 2026-10-02._
 
 ## Waar staan we
 
+De opdrachttekst van een taak is geen administratieve wijziging meer.
+`DEC-0044` laat een administratieve pull request door zonder taakakkoord,
+zonder scopevergelijking én zonder onafhankelijke toetsing, en de takenmap
+viel daar volledig onder — ook `tasks/<taak>/opdracht.md`, de tekst waarvan de
+hash het akkoord van de eigenaar draagt en die ook de omvang van het mandaat
+vastlegt. Een pull request die precies dat bestand herschreef, kreeg daarmee
+de review `taken administratief · autorisaties - · scope - · toetsing -`:
+goedgekeurd door de poort zelf, zonder dat één mens of één toetsing ernaar
+keek (gemeten 2026-10-02 door QA, in een consumentproject).
+
+Dat was geen weg om stiekem mandaat te winnen — zodra de tekst verandert,
+klopt de hash niet meer en vervalt het akkoord, dus zo'n samenvoeging kóst
+Jarvis zijn mandaat en de eigenaar ziet de nieuwe tekst voordat hij opnieuw
+autoriseert. Het gat zit ervóór: die nieuwe tekst werd zonder toetsing en
+zonder zijn medeweten geschreven, en hij tikt er straks op.
+
+`herschrevenScope` scheidt nu twee gevallen die niet hetzelfde zijn. Een
+*nieuw* dossier blijft administratief: het voegt een tekst toe die nog niemand
+heeft goedgekeurd en die niets mandateert zolang er geen akkoord op ligt. Een
+*bestaand* dossier herschrijven is dat niet — dan gelden het taakakkoord, de
+scopevergelijking en de toetsing gewoon, en omdat de hash per definitie niet
+meer klopt, loopt zo'n pull request over een apart akkoord van de eigenaar op
+die ene pull request (`DEC-0043` §2). Een bestand zonder bekende status telt
+als herschreven: onbekend mag nooit de soepelste uitkomst opleveren.
+
+`verzamelAttestatieFeiten` is daarvoor geëxporteerd met een injecteerbare
+GitHub-lezer. Dat is dezelfde les als bij de akkoordstand: twee velden die
+daar wegvallen maken de beoordeling stilletjes soepeler, en dat valt alleen
+vast te leggen door het samenstellen werkelijk te draaien. Vier sabotages op
+de keten — het patroon niet doorgeven, de status niet doorgeven, elke status
+"added" noemen, de dichting eruit — vallen nu alle vier om.
+
+Eén uitzondering hoort erbij, en de toetsing wees haar aan: de taakstatus
+staat in de front-matter van `opdracht.md`, dus een dossier sluiten is
+strikt genomen een wijziging van de scope-tekst. Zonder uitzondering zou
+elke afsluiting een akkoord van de eigenaar vragen, terwijl "administratief
+afsluiten" juist hoort bij wat Jarvis zelf doet. `alleenStatusVerschil`
+vergelijkt daarom de versie op de kop met die op de basis en laat precies één
+geval door: evenveel regels, alle andere regels identiek, de veranderende
+regel is aan beide kanten een `status:` binnen de front-matter, en de nieuwe
+waarde is een bekend statuswoord. Een regel erbij, een andere sleutel of een
+status die niet bestaat telt gewoon als herschrijven, en een bestand waarvan
+de basisversie niet te lezen is ook.
+
+Ronde 2 vond daar nog een lek in en een belofte die de code niet waarmaakte.
+Het lek: alleen tellen dat er twee `---` staan is niet genoeg. Een dossier met
+een lege regel en vrije tekst tussen die strepen — een front-matter die geen
+front-matter is — liet een regel `status: actief` middenin de hoofdtekst als
+front-matter gelden, en die mocht dan vrij veranderen. Een nieuw dossier
+aanmaken is administratief, dus Jarvis kon zo'n bestand zelf neerzetten en het
+later langs de uitzondering herschrijven. Het blok tussen de strepen moet nu
+ook werkelijk uit sleutels en lijstitems bestaan.
+
+De belofte: de reden "vraagt zijn akkoord op deze pull request" werd
+onvoorwaardelijk opgevoerd, ook met een geldig akkoord op precies die kop.
+Daarmee kon een herschreven opdrachttekst nóóit machinaal worden geattesteerd,
+terwijl de tekst eromheen — en `DEC-0043` §2 — die weg juist aanwijzen. Veilig
+falen is goed, maar een uitweg beloven die niet bestaat is dat niet.
+`akkoordOpDezeKop` is nu één functie die beide plaatsen gebruiken.
+
+Eén eigenschap van die uitzondering verdient het om genoemd te worden: zij is
+richtingloos. `afgerond → actief` gaat er net zo goed doorheen als andersom, en
+dat is juist — heropenen is even administratief als sluiten. Maar omdat het
+akkoord aan de hash van het hele bestand hangt, brengt het terugdraaien van een
+statusregel een hash terug die de eigenaar ooit tekende, en daarmee leeft dat
+akkoord weer. Een statuswijziging is dus geen intrekkingsmechanisme; intrekken
+loopt over de autorisatie zelf.
+
+Twee kleinere dingen uit dezelfde ronde: het patroon is hoofdletterongevoelig
+geworden (`Opdracht.md` kwam er anders doorheen, net zoals
+`HARDE_UITZONDERINGEN` dat voor `CON-*.md` al ondervond), en een ontbrekend
+scopepatroon valt nu dicht in plaats van open — het viel terug op "niets", in
+tegenspraak met de regel ernaast dat onbekend nooit de soepelste uitkomst mag
+geven.
+
 De vraag "wie is aan zet" wordt nog maar op één plaats beantwoord, en de
 database telt daarin mee. `akkoord_nodig` in `overzicht.ts` las eerder alleen
 het dossier: vraagt de voortgangslijst of de eigenaarslijst om een akkoord, dan
