@@ -27,8 +27,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ACTIEVE_ATTESTATIE,
+  ACTIEVE_UITROL,
   ACTIEVE_WORKFLOW,
   CANONIEKE_ATTESTATIE,
+  CANONIEKE_UITROL,
   CANONIEKE_WORKFLOW,
   CANONIEKE_WORKFLOW_CONSUMER,
   GOVERNANCE_CONFIG,
@@ -223,6 +225,60 @@ describe("de gehardde governancecontrole", () => {
     });
   });
 
+  // Dezelfde vier gevallen voor de uitrolworkflow. Ze staan hier uitgeschreven
+  // en niet in een lus over de drie workflows: een tabel waar de controle haar
+  // scope uit haalt is precies wat `workflow.ts` niet wil, en een toets die
+  // dezelfde tabel gebruikt als de code bewijst alleen dat ze elkaar volgen.
+  describe("de uitrolworkflow", () => {
+    const uitrol = (actief: Partial<BestandsFeiten>, canoniek: Partial<BestandsFeiten> = {}) => ({
+      actief: feiten({ echtPad: `${WORTEL}/${ACTIEVE_UITROL}`, ...actief }),
+      canoniek: feiten({ echtPad: `${WORTEL}/${CANONIEKE_UITROL}`, ...canoniek }),
+    });
+
+    it("hoeft er niet te zijn — een project zonder interface rolt niets uit", () => {
+      expect(controleerGovernance(basis({ uitrol: uitrol({ bytes: null }, { bytes: null }) }))).toEqual([]);
+    });
+
+    it("moet, als hij er is, byte-identiek zijn aan de canonieke bron", () => {
+      expect(controleerGovernance(basis({ uitrol: uitrol({}) }))).toEqual([]);
+      const uit = controleerGovernance(basis({ uitrol: uitrol({ bytes: Buffer.from("anders") }) }));
+      expect(uit.join(" ")).toContain(`${ACTIEVE_UITROL} wijkt af`);
+    });
+
+    it("blokkeert zonder canonieke bron, achter een link, en als het hetzelfde bestand is", () => {
+      expect(controleerGovernance(basis({ uitrol: uitrol({}, { bytes: null }) })).join(" ")).toContain("canonieke bron ontbreekt");
+      expect(controleerGovernance(basis({ uitrol: uitrol({ viaSymlink: true }) })).join(" ")).toContain("symbolische link");
+      expect(
+        controleerGovernance(basis({ uitrol: uitrol({ echtPad: "/repo/x" }, { echtPad: "/repo/x" }) })).join(" "),
+      ).toContain("hetzelfde bestand");
+    });
+
+    it("staat op de lijst van toegestane workflows", () => {
+      expect(TOEGESTANE_WORKFLOWS).toContain("jarvis-uitrol.yml");
+    });
+
+    it("blokkeert een pad dat na het volgen van links buiten de repository wijst", () => {
+      const uit = controleerGovernance(
+        basis({ uitrol: uitrol({ echtPad: "/elders/jarvis-uitrol.yml" }, { echtPad: "/repo/c" }) }),
+      );
+      expect(uit.join(" ")).toContain("buiten de repository");
+    });
+
+    // De uitroljob draagt het langlevende productietoken. Bij een
+    // `workflow_dispatch` draait GitHub de definitie van de gekozen ref,
+    // terwijl repository-secrets voor elke ref beschikbaar zijn. Zonder de
+    // ref-grens kan wie op `jarvis/**` mag pushen dat token op een branch
+    // bemachtigen en niet-getoetste code naar productie rollen; de
+    // bouwmerkcontrole ziet dat niet, want zij vergelijkt met de sha van die
+    // branch. Deze test legt de grens vast, in beide kopieen.
+    it("laat de uitroljob alleen op main draaien", () => {
+      for (const pad of [".github/workflows/jarvis-uitrol.yml", "jarvis/canonical/jarvis-uitrol.yml"]) {
+        const tekst = readFileSync(path.join(process.cwd(), pad), "utf8");
+        expect(tekst).toContain("github.ref == 'refs/heads/main'");
+      }
+    });
+  });
+
   it("blokkeert wanneer de twee bestanden verschillen", () => {
     const uit = controleerGovernance(basis({ actief: feiten({ bytes: Buffer.from("anders"), echtPad: "/repo/a" }) }));
     expect(uit.length).toBeGreaterThan(0);
@@ -407,8 +463,12 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
     const attestatie = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-attestatie.yml"));
     await writeFile(path.join(map, ".github/workflows/jarvis-attestatie.yml"), attestatie);
     await writeFile(path.join(map, "jarvis/canonical/jarvis-attestatie.yml"), attestatie);
+    // En de uitrolworkflow, om dezelfde reden.
+    const uitrolBron = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-uitrol.yml"));
+    await writeFile(path.join(map, ".github/workflows/jarvis-uitrol.yml"), uitrolBron);
+    await writeFile(path.join(map, "jarvis/canonical/jarvis-uitrol.yml"), uitrolBron);
     for (const naam of TOEGESTANE_WORKFLOWS) {
-      if (naam !== "jarvis-lint.yml" && naam !== "jarvis-attestatie.yml") {
+      if (naam !== "jarvis-lint.yml" && naam !== "jarvis-attestatie.yml" && naam !== "jarvis-uitrol.yml") {
         await writeFile(path.join(map, ".github/workflows", naam), "op: {}\n");
       }
     }

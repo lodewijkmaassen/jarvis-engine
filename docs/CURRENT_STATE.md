@@ -33,6 +33,32 @@ _Gegenereerd op 2026-10-02._
 
 ## Waar staan we
 
+De uitrol van de interface heeft een canonieke workflow, en daarmee staat de
+laatste stap van een geautoriseerde levering niet langer op een laptop.
+`jarvis-uitrol.yml` bouwt op een samenvoeging naar `main` de interface met het
+bouwmerk van die commit, rolt haar uit, en haalt haar dan terug op: de harde
+controle van `jarvis uitrol` vergelijkt het bouwmerk in de uitgerolde pagina
+met de commit die is uitgerold, en faalt de workflow wanneer die twee niet
+gelijk zijn. Dat is precies het gat van 2026-10-02 — een uitrol die de
+bestanden niet verving, waarbij alle controle bij de repositorygrens stopte en
+"klaar" een aanname was.
+
+De workflow is in twee jobs geknipt, om dezelfde reden als bij de attestatie:
+de eerste leest alleen `uitrol.adres` uit `jarvis.config.yml` en zegt of er in
+deze repository iets uit te rollen valt; alleen wanneer dat zo is, draait de
+tweede job — en die is de enige die de secrets in handen krijgt. Een project
+zonder uitroladres brengt dus geen token in een runner. Het adres staat in de
+configuratie en niet in een repository-instelling, want wat gecontroleerd wordt
+hoort onder review te staan en niet naast de diff.
+
+De poort ziet die workflow als wat hij is: een derde ingang, naast de poort en
+de attestatie. Hij staat op `TOEGESTANE_WORKFLOWS`, en de byte-vergelijking met
+`jarvis/canonical/jarvis-uitrol.yml` geldt er onverkort — inclusief de
+symlink-, buiten-de-repository- en zelfde-bestandcontroles. Daarmee is een
+uitrolworkflow alleen toe te voegen door hem canoniek te maken, en dat is een
+wijziging onder CODEOWNERS.
+
+
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard
 als historie, en niets geleverd. Eén bron bepaalt dat — `sluitDossier` in
