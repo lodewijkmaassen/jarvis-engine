@@ -110,6 +110,56 @@ export function raaktHardeUitzondering(bestanden: readonly string[], extraPaden:
 }
 
 /**
+ * De soorten harde uitzondering die een lijst bestanden raakt.
+ *
+ * `raaktHardeUitzondering` geeft leesbare treffers ("pad (waarom)"); hier
+ * gaat het om de sóórt, zodat een dossier er vooraf mandaat voor kan geven.
+ * De sleutels zijn de `waarom`-teksten van `HARDE_UITZONDERINGEN`, en voor
+ * een projectpad `projectregel: <pad>`.
+ */
+export function soortenHardeUitzondering(
+  bestanden: readonly string[],
+  extraPaden: readonly string[] = [],
+): readonly string[] {
+  const soorten = new Set<string>();
+  for (const bestand of bestanden) {
+    const pad = bestand.replace(/\\/g, "/");
+    const regel = HARDE_UITZONDERINGEN.find((h) => h.patroon.test(pad));
+    if (regel) {
+      soorten.add(regel.waarom);
+      continue;
+    }
+    const extra = extraPaden.find((e) => pad === e || pad.startsWith(e.endsWith("/") ? e : `${e}/`));
+    if (extra !== undefined) soorten.add(`projectregel: ${extra}`);
+  }
+  return [...soorten];
+}
+
+/**
+ * Welke soorten een taak mag raken op grond van haar eigen goedgekeurde
+ * opdracht.
+ *
+ * Alleen taken waarvan het akkoord op deze kop geldig is tellen mee: zonder
+ * autorisatie, of met een scope die sinds het akkoord is veranderd, geeft het
+ * dossier geen mandaat. Daarmee kan een pull request zijn eigen mandaat niet
+ * schrijven — hij zou de hash veranderen en het akkoord laten vervallen.
+ */
+export function gemandateerdeUitzonderingen(taken: readonly TaakFeiten[]): readonly string[] {
+  const soorten = new Set<string>();
+  for (const t of taken) {
+    const geldig =
+      t.autorisatie !== null &&
+      t.autorisatie.soort === "taak" &&
+      t.autorisatie.taak === t.taak &&
+      t.scopeHashKop !== null &&
+      t.autorisatie.scope_hash === t.scopeHashKop;
+    if (!geldig) continue;
+    for (const soort of t.aangekondigdeUitzonderingen ?? []) soorten.add(soort.trim());
+  }
+  return [...soorten];
+}
+
+/**
  * De verklaring van de orchestrator in de PR-tekst: een regel
  * `Uitzonderingen: geen` of `Uitzonderingen: <welke>`. Ontbreekt de regel,
  * dan is er niets verklaard en wordt er niet geattesteerd.
@@ -178,6 +228,24 @@ export type TaakFeiten = {
   readonly autorisatie: Autorisatie | null;
   /** De hash van tasks/<T>/opdracht.md op de kop, of null als het bestand ontbreekt. */
   readonly scopeHashKop: string | null;
+  /**
+   * De soorten harde uitzondering die het dossier van deze taak zélf
+   * aankondigt, uit de front-matter `uitzonderingen:` van `opdracht.md`.
+   *
+   * Dit is het mandaat waar `DEC-0043` §2 om vraagt, maar vooraf en in één
+   * keer. Een taak die in haar opdracht zegt dat zij workflows en
+   * governanceconfiguratie raakt, is door de eigenaar mét die aankondiging
+   * goedgekeurd; zijn akkoord dekt dan precies die soorten, en elke pull
+   * request binnen die taak hoeft er niet opnieuw om te vragen.
+   *
+   * Waarom dat niet te misbruiken is: deze lijst staat ín `opdracht.md`, en
+   * de scope-hash is SHA-256 over dat hele bestand. Wie er een soort bij zet,
+   * verandert de hash en laat het akkoord vervallen. Het mandaat kan dus
+   * alleen groeien doordat de eigenaar opnieuw goedkeurt — en daarmee is het
+   * nog steeds hij die beslist, alleen één keer per taak in plaats van één
+   * keer per pull request.
+   */
+  readonly aangekondigdeUitzonderingen?: readonly string[];
 };
 
 export type AttestatieFeiten = {
@@ -260,15 +328,36 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     redenen.push('de PR-tekst verklaart niets over uitzonderingen; zet er een regel "Uitzonderingen: geen" of "Uitzonderingen: <welke>" in');
   }
   if (uitzondering) {
-    const ok =
+    const apartAkkoord =
       f.autorisatiePr !== null &&
       f.autorisatiePr.soort === "pr" &&
       (f.autorisatiePr.pr_repo ?? "").toLowerCase() === f.repo.toLowerCase() &&
       f.autorisatiePr.pr_nummer === f.nummer &&
       f.autorisatiePr.commit_sha === f.kop;
-    if (!ok) {
-      const wat = [...treffers, ...(verklaring !== null && verklaring !== "geen" ? [`verklaard: ${verklaring}`] : [])];
-      redenen.push(`harde uitzondering (DEC-0043 §2) zonder apart akkoord van de eigenaar op deze kop: ${wat.join("; ")}`);
+
+    // Het mandaat uit de taak zelf. Een taak die in haar goedgekeurde
+    // opdracht aankondigt dat zij deze soorten raakt, heeft het akkoord van
+    // de eigenaar mét die aankondiging gekregen; dan hoeft niet elke pull
+    // request binnen die taak er opnieuw om te vragen. Alleen de soorten die
+    // werkelijk worden geraakt moeten gedekt zijn — een aankondiging is geen
+    // vrijbrief voor iets anders.
+    const gemandateerd = administratief ? [] : gemandateerdeUitzonderingen(f.taken);
+    const geraakt = soortenHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
+    const ongedekt = geraakt.filter((s) => !gemandateerd.includes(s));
+    // De verklaring in de PR-tekst mag niet méér beweren dan de taak dekt:
+    // noemt zij een uitzondering terwijl er geen bestand er een raakt, dan is
+    // er niets om tegen af te zetten en blijft een apart akkoord nodig.
+    const verklaardZonderTreffer = verklaring !== null && verklaring !== "geen" && geraakt.length === 0;
+    const gedektDoorDeTaak = geraakt.length > 0 && ongedekt.length === 0 && !verklaardZonderTreffer;
+
+    if (!apartAkkoord && !gedektDoorDeTaak) {
+      const wat = [
+        ...(ongedekt.length > 0 ? treffers.filter((t) => ongedekt.some((s) => t.endsWith(`(${s})`))) : treffers),
+        ...(verklaring !== null && verklaring !== "geen" ? [`verklaard: ${verklaring}`] : []),
+      ];
+      redenen.push(
+        `harde uitzondering (DEC-0043 §2) die de taak niet aankondigt en waarvoor geen apart akkoord van de eigenaar op deze kop bestaat: ${wat.join("; ")}`,
+      );
     }
   }
 
@@ -304,8 +393,24 @@ export function attestatieInhoud(f: AttestatieFeiten): AttestatieInhoud {
     scope: administratief ? "-" : f.taken.map((t) => t.scopeHashKop ?? "?").join("+"),
     toetsing: administratief ? "-" : (f.toetsing?.id ?? "?"),
     kop: f.kop,
-    uitzonderingen: f.autorisatiePr === null ? "geen" : `apart akkoord ${f.autorisatiePr.id}`,
+    uitzonderingen: uitzonderingenInAttestatie(f),
   };
+}
+
+/**
+ * Waar de uitzonderingen op gedekt zijn, in één woord voor de attestatietekst.
+ *
+ * De tekst hoort te zeggen wáárop is geattesteerd: zonder dat zou een
+ * attestatie die op het mandaat van de taak steunt er hetzelfde uitzien als
+ * een zonder uitzonderingen, en dan is achteraf niet te zien welke grond is
+ * gebruikt. Een apart akkoord gaat voor in de melding, omdat dat de smalste
+ * grond is.
+ */
+export function uitzonderingenInAttestatie(f: AttestatieFeiten): string {
+  if (f.autorisatiePr !== null) return `apart akkoord ${f.autorisatiePr.id}`;
+  const geraakt = soortenHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
+  if (geraakt.length === 0) return "geen";
+  return `mandaat uit ${f.taken.map((t) => t.taak).join("+")}`;
 }
 
 /** De reviewtekst: één regel, machinaal te lezen en voor mensen leesbaar. */

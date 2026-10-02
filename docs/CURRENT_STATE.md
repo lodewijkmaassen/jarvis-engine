@@ -329,6 +329,37 @@ geannuleerde run vervangt niets, en zonder bekende herkomst vervalt er niets.
 Aan de autorisatie — goedkeuring, attestatie, scopecontrole — is niets gewijzigd.
 
 
+Nieuw sinds 2026-10-02: **een taak kan haar eigen harde uitzonderingen
+aankondigen, en het akkoord van de eigenaar dekt die dan in één keer.**
+
+`DEC-0043` §2 eiste tot nu toe een apart akkoord op élke kop die een harde
+uitzondering raakt. Binnen één taak die nu eenmaal workflows en
+governanceconfiguratie moet aanpassen, betekende dat een akkoord per pull
+request — vier keer dezelfde vraag voor vier leveringen die allemaal binnen
+dezelfde goedgekeurde opdracht vielen. Dat is het tegenovergestelde van wat
+één akkoord op een afgebakende taak hoort te betekenen.
+
+De vraag verhuist naar voren. `opdracht.md` kondigt in zijn front-matter aan
+welke soorten de taak raakt (`uitzonderingen: [...]`), en de eigenaar keurt
+dát goed. `gemandateerdeUitzonderingen` leest die aankondiging, maar alleen
+van taken waarvan het akkoord op deze kop geldig is.
+
+Wat dit dichthoudt is de scope-hash, en dat is geen bijvangst maar de reden
+dat het kan: de hash gaat over `opdracht.md` als geheel. Een soort bijschrijven
+verandert de hash en laat het akkoord vervallen, dus een pull request kan zijn
+eigen mandaat niet schrijven. Het mandaat groeit alleen doordat de eigenaar
+opnieuw goedkeurt — hij beslist nog steeds alles, maar één keer per taak in
+plaats van één keer per levering.
+
+Drie grenzen blijven staan. Alleen de soorten die wérkelijk worden geraakt
+hoeven gedekt te zijn, en één ongedekte soort is genoeg om te weigeren. Een
+verklaring in de PR-tekst die geen enkel bestand raakt roept geen mandaat op.
+En het aparte akkoord per kop werkt onveranderd, voor alles wat een taak niet
+vooraf kon zien. De attestatietekst noemt voortaan de grond — `apart akkoord
+<id>` of `mandaat uit <taak>` — zodat achteraf te zien is waarop is
+geattesteerd.
+
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.
