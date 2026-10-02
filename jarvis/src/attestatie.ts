@@ -209,6 +209,14 @@ export type AttestatieFeiten = {
    * onbekend mag nooit de soepelste uitkomst opleveren.
    */
   readonly bestandStatus?: Readonly<Record<string, string>>;
+  /**
+   * Scope-bestanden waarvan de wijziging aantoonbaar alléén de statusregel in
+   * de front-matter raakt. Die telt niet als herschrijven: een taak sluiten of
+   * op `review` zetten is boekhouding, geen nieuwe tekst. Zonder deze
+   * uitzondering zou `administratief afsluiten` — wat de rol uitdrukkelijk
+   * zelf moet kunnen — een akkoord van de eigenaar vragen.
+   */
+  readonly alleenStatusregel?: readonly string[];
   readonly prTekst: string;
   /** Een autorisatie van soort "pr" op precies deze kop, of null. */
   readonly autorisatiePr: Autorisatie | null;
@@ -241,14 +249,61 @@ export type AttestatieFeiten = {
  * straks tikt, is zonder toetsing en zonder zijn medeweten geschreven.
  */
 export function herschrevenScope(f: AttestatieFeiten): readonly string[] {
-  const patroon = f.scopeBestandPatroon;
-  if (patroon === undefined) return [];
+  // Ontbreekt het patroon, dan valt deze controle terug op een eigen,
+  // bewust ruime vorm — niet op "niets". Dicht falen hoort hier: wie het
+  // patroon vergeet mee te geven, krijgt een strengere uitkomst en geen
+  // soepelere. Een eerdere versie gaf hier een lege lijst terug, en dat was
+  // in tegenspraak met de regel drie regels verderop.
+  const patroon = f.scopeBestandPatroon ?? /(^|\/)opdracht\.md$/i;
   const status = f.bestandStatus ?? {};
+  const alleenStatus = new Set(f.alleenStatusregel ?? []);
   return f.gewijzigdeBestanden.filter((b) => {
     const pad = b.replace(/\\/g, "/");
     if (!patroon.test(pad)) return false;
+    if (alleenStatus.has(b) || alleenStatus.has(pad)) return false;
     return (status[b] ?? status[pad] ?? "modified") !== "added";
   });
+}
+
+/** De statuswoorden die de front-matter van een taakdossier kent. */
+const TAAK_STATUSSEN = new Set(["nieuw", "actief", "review", "afgerond", "vervallen", "geblokkeerd"]);
+
+/**
+ * Verschilt deze versie van een taakdossier van de vorige in niets dan de
+ * regel `status:` in de front-matter?
+ *
+ * Dit bestaat omdat de taakstatus nu eenmaal ín `opdracht.md` staat, en het
+ * sluiten van een dossier daarmee een wijziging van de scope-tekst is. Dat is
+ * boekhouding en geen herschrijving: de opdracht, de afbakening en de
+ * acceptatiecriteria blijven woord voor woord gelijk. Zonder deze uitzondering
+ * zou elke afsluiting een akkoord van de eigenaar vragen, terwijl
+ * "administratief afsluiten" juist hoort bij wat Jarvis zelf doet.
+ *
+ * Streng gelezen: evenveel regels, alle andere regels identiek, de
+ * veranderende regel moet aan beide kanten een `status:` in de front-matter
+ * zijn, en de nieuwe waarde moet een bekend statuswoord zijn. Alles daarbuiten
+ * — een regel erbij, een andere sleutel, een status die niet bestaat — telt
+ * gewoon als herschrijven.
+ */
+export function alleenStatusVerschil(oud: string, nieuw: string): boolean {
+  const regelsOud = oud.replace(/\r\n/g, "\n").split("\n");
+  const regelsNieuw = nieuw.replace(/\r\n/g, "\n").split("\n");
+  if (regelsOud.length !== regelsNieuw.length) return false;
+  // De front-matter loopt van de eerste `---` tot de volgende.
+  if (regelsOud[0] !== "---" || regelsNieuw[0] !== "---") return false;
+  const eind = regelsNieuw.indexOf("---", 1);
+  if (eind < 1) return false;
+  let gezien = 0;
+  for (let i = 0; i < regelsOud.length; i += 1) {
+    if (regelsOud[i] === regelsNieuw[i]) continue;
+    if (i >= eind) return false;
+    const a = /^status:\s*(\S+)\s*$/.exec(regelsOud[i] ?? "");
+    const b = /^status:\s*(\S+)\s*$/.exec(regelsNieuw[i] ?? "");
+    if (a === null || b === null) return false;
+    if (!TAAK_STATUSSEN.has(b[1]!)) return false;
+    gezien += 1;
+  }
+  return gezien === 1;
 }
 
 /** Is deze PR administratief (DEC-0044)? Dan is er geen taakakkoord en geen toetsing nodig. */

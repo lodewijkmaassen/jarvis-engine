@@ -65,6 +65,7 @@ import {
   attestatieTekst,
   beoordeelAttestatie,
   leesAttestatie,
+  alleenStatusVerschil,
   scopeHash,
   takenUitCommits,
   verifieerAttestatie,
@@ -2801,7 +2802,16 @@ async function leesConfigVanRepo(token: string, slug: string): Promise<JarvisCon
 /** `tasks/<taak>/opdracht.md`: het bestand waarvan de hash het akkoord draagt. */
 function scopeBestandPatroon(config: JarvisConfig): RegExp {
   const esc = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\/$/, "");
-  return new RegExp(`^${esc(config.taken_map)}/[^/]+/opdracht\\.md$`);
+  return new RegExp(`^${esc(config.taken_map)}/[^/]+/opdracht\\.md$`, "i");
+}
+
+/** De inhoud van één bestand op een ref, of null wanneer het er niet staat of niet te lezen is. */
+async function leesBestandUitRepo(haal: GithubLezer, token: string, slug: string, pad: string, ref: string): Promise<string | null> {
+  const a = await haal(token, "GET", `/repos/${slug}/contents/${pad.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`);
+  if (a.status !== 200) return null;
+  const d = a.lading as { content?: string; encoding?: string };
+  if (d.encoding !== "base64" || typeof d.content !== "string") return null;
+  return Buffer.from(d.content, "base64").toString("utf8");
 }
 
 function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
@@ -2820,7 +2830,7 @@ export type GithubLezer = (token: string, methode: string, pad: string, body?: u
  * Verzamelt alles wat de beoordeling nodig heeft: de PR-feiten van GitHub
  * (commits, bestanden, dossier op de kop, checks) en de rijen uit de bron.
  *
- * `haal` is injecteerbaar om dezelfde reden als in `leesTaakakkoorden`: wat
+ * `haal` is injecteerbaar om één reden, en het is geen test-ingang: wat
  * hier wordt samengesteld, bepaalt wat `beoordeelAttestatie` te zien krijgt,
  * en een veld dat hier wegvalt maakt de beoordeling stilletjes soepeler. Dat
  * valt alleen vast te leggen door het samenstellen werkelijk te draaien.
@@ -2858,6 +2868,22 @@ export async function verzamelAttestatieFeiten(
     return `de pull request telt ${prLading.changed_files} bestanden maar er zijn er ${bestanden.length} gelezen; zo'n pull request wordt niet geattesteerd`;
   }
 
+  // Welke geraakte scope-bestanden niets anders dan hun statusregel wijzigen.
+  // Daarvoor is de versie op de basis nodig; zonder die lezing geldt het
+  // bestand als herschreven, want onbekend mag nooit soepeler uitpakken.
+  const scopePatroon = scopeBestandPatroon(config);
+  const alleenStatusregel: string[] = [];
+  for (const bestand of bestanden) {
+    const pad = bestand.replace(/\\/g, "/");
+    if (!scopePatroon.test(pad)) continue;
+    if ((bestandStatus[bestand] ?? "modified") === "added") continue;
+    const [opKop, opBasis] = await Promise.all([
+      leesBestandUitRepo(haal, token, slug, pad, feiten.kop),
+      leesBestandUitRepo(haal, token, slug, pad, feiten.basis),
+    ]);
+    if (opKop !== null && opBasis !== null && alleenStatusVerschil(opBasis, opKop)) alleenStatusregel.push(bestand);
+  }
+
   const { taken: taakIds, redenen: taakRedenen } = takenUitCommits(commits);
   const taken: TaakFeiten[] = [];
   for (const taak of taakIds) {
@@ -2890,6 +2916,7 @@ export async function verzamelAttestatieFeiten(
     administratiefPaden: administratievePatronen(config),
     scopeBestandPatroon: scopeBestandPatroon(config),
     bestandStatus,
+    alleenStatusregel,
     prTekst,
     autorisatiePr: await bron.pr(slug, nummer, feiten.kop),
     checks: feiten.checks,

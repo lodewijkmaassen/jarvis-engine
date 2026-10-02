@@ -65,6 +65,25 @@ vast te leggen door het samenstellen werkelijk te draaien. Vier sabotages op
 de keten — het patroon niet doorgeven, de status niet doorgeven, elke status
 "added" noemen, de dichting eruit — vallen nu alle vier om.
 
+Eén uitzondering hoort erbij, en de toetsing wees haar aan: de taakstatus
+staat in de front-matter van `opdracht.md`, dus een dossier sluiten is
+strikt genomen een wijziging van de scope-tekst. Zonder uitzondering zou
+elke afsluiting een akkoord van de eigenaar vragen, terwijl "administratief
+afsluiten" juist hoort bij wat Jarvis zelf doet. `alleenStatusVerschil`
+vergelijkt daarom de versie op de kop met die op de basis en laat precies één
+geval door: evenveel regels, alle andere regels identiek, de veranderende
+regel is aan beide kanten een `status:` binnen de front-matter, en de nieuwe
+waarde is een bekend statuswoord. Een regel erbij, een andere sleutel of een
+status die niet bestaat telt gewoon als herschrijven, en een bestand waarvan
+de basisversie niet te lezen is ook.
+
+Twee kleinere dingen uit dezelfde ronde: het patroon is hoofdletterongevoelig
+geworden (`Opdracht.md` kwam er anders doorheen, net zoals
+`HARDE_UITZONDERINGEN` dat voor `CON-*.md` al ondervond), en een ontbrekend
+scopepatroon valt nu dicht in plaats van open — het viel terug op "niets", in
+tegenspraak met de regel ernaast dat onbekend nooit de soepelste uitkomst mag
+geven.
+
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard
 als historie, en niets geleverd. Eén bron bepaalt dat — `sluitDossier` in

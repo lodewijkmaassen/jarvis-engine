@@ -27,7 +27,7 @@ const config = {
   attestatie: { bot: "de-bot", uitvoerders: [], extra_paden: [], url: "", sleutel: "" },
 } as unknown as JarvisConfig;
 
-const prFeiten = { auteur: "de-bot", kop: KOP, checks: [{ naam: "poort", status: "completed", conclusie: "success" }] } as unknown as PullRequestFeiten;
+const prFeiten = { auteur: "de-bot", kop: KOP, basis: "main", checks: [{ naam: "poort", status: "completed", conclusie: "success" }] } as unknown as PullRequestFeiten;
 
 /** Het akkoord staat op de oude tekst; de kop draagt de nieuwe. */
 const bron = {
@@ -47,24 +47,29 @@ const bron = {
   opId: async () => ({ autorisaties: new Map(), toetsing: null }),
 };
 
-/** Een GitHub die precies één pull request kent, met één bestand in de gegeven staat. */
-function lezer(status: string, pad = PAD): GithubLezer {
+/**
+ * Een GitHub die precies één pull request kent.
+ *
+ * `status: null` laat het `status`-veld wég uit de `files`-lading — dat is
+ * het geval waarin de verzamelaar zelf moet terugvallen op "modified", en
+ * precies die terugval was ongetest.
+ */
+function lezer(status: string | null, pad = PAD, opBasis = SCOPE_OUD, opKop = SCOPE_NIEUW): GithubLezer {
   return async (_token, _methode, url) => {
     const ok = (lading: unknown) => ({ status: 200, lading }) as never;
+    const base64 = (t: string) => ok({ encoding: "base64", content: Buffer.from(t, "utf8").toString("base64") });
     if (/\/pulls\/7\/commits/.test(url)) {
       return ok([{ sha: KOP, commit: { message: `Kennisbeheerder: iets\n\nJarvis-Task: ${TAAK}\n` }, parents: [{}] }]);
     }
-    if (/\/pulls\/7\/files/.test(url)) return ok([{ filename: pad, status }]);
-    if (/\/contents\//.test(url)) {
-      return ok({ encoding: "base64", content: Buffer.from(SCOPE_NIEUW, "utf8").toString("base64") });
-    }
+    if (/\/pulls\/7\/files/.test(url)) return ok([status === null ? { filename: pad } : { filename: pad, status }]);
+    if (/\/contents\//.test(url)) return base64(/ref=main/.test(url) ? opBasis : opKop);
     if (/\/pulls\/7$/.test(url)) return ok({ body: "Uitzonderingen: geen", commits: 1, changed_files: 1 });
     return { status: 404, lading: {} } as never;
   };
 }
 
-async function feitenVan(status: string, pad?: string) {
-  const f = await verzamelAttestatieFeiten("t", "eigenaar/proef", 7, prFeiten, config, bron as never, lezer(status, pad));
+async function feitenVan(status: string | null, pad?: string, opBasis?: string, opKop?: string) {
+  const f = await verzamelAttestatieFeiten("t", "eigenaar/proef", 7, prFeiten, config, bron as never, lezer(status, pad, opBasis, opKop));
   if (typeof f === "string") throw new Error(f);
   return f;
 }
@@ -72,10 +77,20 @@ async function feitenVan(status: string, pad?: string) {
 describe("verzamelAttestatieFeiten draagt wat de beoordeling nodig heeft", () => {
   it("geeft het scopepatroon en de status per bestand door", async () => {
     const f = await feitenVan("modified");
-    expect(f.scopeBestandPatroon, "zonder patroon valt de dichting stil terug op de oude regel").toBeDefined();
+    expect(f.scopeBestandPatroon, "zonder patroon valt de dichting terug op haar eigen ruime vorm").toBeDefined();
     expect(f.scopeBestandPatroon!.test(PAD)).toBe(true);
     expect(f.scopeBestandPatroon!.test(`tasks/${TAAK}/resultaat.md`)).toBe(false);
     expect(f.bestandStatus, "zonder status telt elk bestand als gewijzigd").toEqual({ [PAD]: "modified" });
+  });
+
+  it("bouwt het patroon hoofdletterongevoelig", async () => {
+    // `tasks/<taak>/Opdracht.md` kwam er administratief doorheen. Dit toetst
+    // het patroon dat de verzamelaar zélf maakt, niet een dat de test geeft.
+    const hoofdletter = `tasks/${TAAK}/Opdracht.md`;
+    const f = await feitenVan("modified", hoofdletter);
+    expect(f.scopeBestandPatroon!.test(hoofdletter), "het patroon ziet de hoofdlettervariant niet").toBe(true);
+    expect(herschrevenScope(f)).toEqual([hoofdletter]);
+    expect(isAdministratievePr(f)).toBe(false);
   });
 
   it("weigert een herschreven opdracht, door de hele keten heen", async () => {
@@ -100,5 +115,39 @@ describe("verzamelAttestatieFeiten draagt wat de beoordeling nodig heeft", () =>
     expect(herschrevenScope(f)).toEqual([]);
     expect(isAdministratievePr(f)).toBe(true);
     expect(beoordeelAttestatie(f)).toEqual([]);
+  });
+});
+
+describe("de twee gevallen die de verzamelaar zelf moet afleiden", () => {
+  it("telt een bestand zonder status-veld in de lading als gewijzigd", async () => {
+    // De GitHub-lading geeft hier geen `status`. De verzamelaar vult
+    // "modified" in, en de pull request hoort geweigerd te worden. Deze
+    // terugval was ongetest; zonder haar zou een lading zonder status de
+    // soepelste uitkomst geven.
+    const f = await feitenVan(null);
+    expect(f.bestandStatus).toEqual({ [PAD]: "modified" });
+    expect(herschrevenScope(f)).toEqual([PAD]);
+    expect(isAdministratievePr(f)).toBe(false);
+  });
+
+  it("merkt zelf op dat alleen de statusregel wijzigde, en laat het door", async () => {
+    const dossier = (status: string) => `---\nid: ${TAAK}\nstatus: ${status}\n---\n\nde tekst\n`;
+    const f = await feitenVan("modified", PAD, dossier("actief"), dossier("afgerond"));
+    expect(f.alleenStatusregel).toEqual([PAD]);
+    expect(herschrevenScope(f)).toEqual([]);
+    expect(isAdministratievePr(f)).toBe(true);
+    expect(beoordeelAttestatie(f)).toEqual([]);
+  });
+
+  it("merkt het níét op zodra er meer verandert dan de statusregel", async () => {
+    const f = await feitenVan(
+      "modified",
+      PAD,
+      `---\nid: ${TAAK}\nstatus: actief\n---\n\nde tekst\n`,
+      `---\nid: ${TAAK}\nstatus: afgerond\n---\n\neen andere tekst\n`,
+    );
+    expect(f.alleenStatusregel).toEqual([]);
+    expect(herschrevenScope(f)).toEqual([PAD]);
+    expect(isAdministratievePr(f)).toBe(false);
   });
 });

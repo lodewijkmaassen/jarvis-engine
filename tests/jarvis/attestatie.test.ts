@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  alleenStatusVerschil,
   herschrevenScope,
   isAdministratievePr,
   attestatieInhoud,
@@ -528,14 +529,95 @@ describe("de opdrachttekst is geen administratieve wijziging", () => {
     expect(beoordeelAttestatie(f)).toEqual([]);
   });
 
-  it("valt terug op de oude regel wanneer er geen scopepatroon is meegegeven", () => {
+  it("valt dicht, niet open, wanneer er geen scopepatroon is meegegeven", () => {
+    // Deze test legde eerder het omgekeerde vast — een ontbrekend patroon gaf
+    // een lege lijst en dus de soepelste uitkomst, in tegenspraak met de regel
+    // één test hoger. Wie het patroon vergeet mee te geven hoort een
+    // strengere beoordeling te krijgen, geen ruimere.
     const f = feiten({
       gewijzigdeBestanden: ["tasks/T-20260913-proef/opdracht.md"],
       bestandStatus: { "tasks/T-20260913-proef/opdracht.md": "modified" },
       toetsing: null,
     });
-    expect(herschrevenScope(f)).toEqual([]);
-    expect(isAdministratievePr(f)).toBe(true);
+    expect(f.scopeBestandPatroon).toBeUndefined();
+    expect(herschrevenScope(f)).toEqual(["tasks/T-20260913-proef/opdracht.md"]);
+    expect(isAdministratievePr(f)).toBe(false);
   });
 
+  it("ziet een hoofdlettervariant van de bestandsnaam ook", () => {
+    // `tasks/<taak>/Opdracht.md` kwam er administratief doorheen. Dezelfde
+    // ongevoeligheid die HARDE_UITZONDERINGEN al voor CON-records heeft.
+    const bestanden = ["tasks/T-20260913-proef/Opdracht.md"];
+    const f = feiten({
+      gewijzigdeBestanden: bestanden,
+      bestandStatus: { [bestanden[0]!]: "modified" },
+      scopeBestandPatroon: /^tasks\/[^/]+\/opdracht\.md$/i,
+      toetsing: null,
+    });
+    expect(herschrevenScope(f)).toEqual(bestanden);
+    expect(isAdministratievePr(f)).toBe(false);
+  });
+
+  it("laat een wijziging die alleen de statusregel raakt administratief blijven", () => {
+    const bestand = "tasks/T-20260913-proef/opdracht.md";
+    const f = feiten({
+      gewijzigdeBestanden: [bestand],
+      bestandStatus: { [bestand]: "modified" },
+      scopeBestandPatroon: SCOPEPATROON,
+      alleenStatusregel: [bestand],
+      toetsing: null,
+    });
+    expect(herschrevenScope(f)).toEqual([]);
+    expect(isAdministratievePr(f)).toBe(true);
+    expect(beoordeelAttestatie(f)).toEqual([]);
+  });
+
+});
+
+describe("alleenStatusVerschil — een dossier sluiten is boekhouding", () => {
+  const dossier = (status: string, staart = "## Wat\n\nIets.\n") =>
+    `---\nid: T-20260913-proef\ntitel: Proef\nstatus: ${status}\nklasse: S\n---\n\n${staart}`;
+
+  it("herkent een statusovergang als enige verschil", () => {
+    for (const naar of ["review", "afgerond", "vervallen", "geblokkeerd"]) {
+      expect(alleenStatusVerschil(dossier("actief"), dossier(naar)), `naar ${naar}`).toBe(true);
+    }
+  });
+
+  it("telt een identiek bestand niet als statuswijziging", () => {
+    expect(alleenStatusVerschil(dossier("actief"), dossier("actief"))).toBe(false);
+  });
+
+  it("weigert zodra er ook maar één andere regel verandert", () => {
+    expect(alleenStatusVerschil(dossier("actief"), dossier("afgerond", "## Wat\n\nIets anders.\n"))).toBe(false);
+  });
+
+  it("weigert een regel erbij of eraf, ook met dezelfde status", () => {
+    expect(alleenStatusVerschil(dossier("actief"), `${dossier("afgerond")}extra\n`)).toBe(false);
+    expect(alleenStatusVerschil(`${dossier("actief")}extra\n`, dossier("afgerond"))).toBe(false);
+  });
+
+  it("weigert een statuswoord dat niet bestaat", () => {
+    expect(alleenStatusVerschil(dossier("actief"), dossier("ongeldig"))).toBe(false);
+  });
+
+  it("weigert een wijziging buiten de front-matter, ook als zij op status lijkt", () => {
+    const oud = `---\nid: T\nstatus: actief\n---\n\nstatus: actief\n`;
+    const nieuw = `---\nid: T\nstatus: actief\n---\n\nstatus: afgerond\n`;
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("weigert een andere sleutel die toevallig op dezelfde regel staat", () => {
+    const oud = `---\nid: T\nklasse: S\n---\n\ntekst\n`;
+    const nieuw = `---\nid: T\nklasse: L\n---\n\ntekst\n`;
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("weigert een bestand zonder front-matter", () => {
+    expect(alleenStatusVerschil("status: actief\n", "status: afgerond\n")).toBe(false);
+  });
+
+  it("behandelt CRLF en LF als hetzelfde", () => {
+    expect(alleenStatusVerschil(dossier("actief").replace(/\n/g, "\r\n"), dossier("afgerond"))).toBe(true);
+  });
 });
