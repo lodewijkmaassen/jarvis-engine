@@ -12,7 +12,7 @@ _Gegenereerd op 2026-10-02._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 41 |
+| Testbestanden | 42 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -369,6 +369,25 @@ volgende ronde probeert gewoon opnieuw.
 De uitkomst is machineleesbaar (`samenvoegen` en `samengevoegd` in
 `$GITHUB_OUTPUT`), zodat "geattesteerd maar niet samengevoegd" van buitenaf
 zichtbaar is in plaats van te verdwijnen achter een exitcode 0.
+
+Nieuw sinds 2026-10-02: de keten kan voorbij de repositorygrens kijken.
+`bouw.mjs` zet met `--merk <commit>` een `<meta name="jarvis-bouwmerk">` in de
+gebouwde `index.html`, de pagina toont dat merk afgekort naast `v${versie}`, en
+`jarvis uitrol --url <adres> --merk <commit>` haalt de uitgerolde pagina op en
+vergelijkt. De aanleiding is één gemeten geval: een uitrol van de interface
+verving de bestanden niet, elke stap ervoor was groen, en het defect zat precies
+in het gat tussen bron en productie. Daar was geen controle, dus was "klaar" een
+aanname.
+
+Drie regels die bij die controle horen. Een ontbrekend merk is een fout en geen
+onbekende — de pagina is dan niet vervangen of niet met een merk gebouwd, en in
+beide gevallen is de uitrol niet aangetoond. Een pagina die niet op te halen is,
+is eveneens rood: niet gemeten is niet geslaagd. En de controle vraagt het
+gewone adres zonder cache-brekende parameter op, want een CDN dat een oude
+pagina blijft serveren is zelf een van de manieren waarop een uitrol mislukt.
+
+De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
+die dit merk verplicht stelt, is nog niet gebouwd.
 
 
 ## Volgende stap

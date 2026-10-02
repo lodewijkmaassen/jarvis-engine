@@ -48,6 +48,7 @@ import {
 import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from "./rollen";
 import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
+import { controleerUitrol } from "./uitrol";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
   ACTIEVE_ATTESTATIE,
@@ -1508,6 +1509,10 @@ function help(): number {
       "                                    (DEC-0046): hoogstens één per pull request; exit 4 = correctie nodig.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
+      "  uitrol --url <adres> --merk <commit>",
+      "                                    Haalt de uitgerolde pagina op en vergelijkt het bouwmerk",
+      "                                    met de commit die is uitgerold; 1 bij verschil, ontbreken",
+      "                                    of een pagina die niet op te halen is.",
       "  overzicht [--extern <pad,pad>] [--uit <bestand>] [--schrijf]",
       "                                    Bouwt het overzicht voor de interface: stand, beweging en",
       "                                    wat bij de eigenaar ligt, per project; gaat door de sanitizer",
@@ -3080,6 +3085,26 @@ async function opdrachtAttestatie(vlaggen: ReadonlyMap<string, string>): Promise
 }
 
 /**
+ * `jarvis uitrol --url <adres> --merk <commit>`
+ *
+ * De enige stap in de keten die buiten de repository kijkt. Hij hoort direct
+ * na de uitrol te draaien en hard te falen: een uitrol die niet is nagemeten
+ * is niet aangetoond, en dat verschil was op 2026-10-02 precies het defect.
+ */
+async function opdrachtUitrol(vlaggen: ReadonlyMap<string, string>): Promise<number> {
+  const adres = vlaggen.get("url");
+  const merk = vlaggen.get("merk");
+  if (!adres || !merk) {
+    console.error("jarvis uitrol: geef --url <adres van de uitgerolde pagina> en --merk <commit die is uitgerold>.");
+    return 2;
+  }
+  const { code, melding } = await controleerUitrol(adres, merk);
+  if (code === 0) console.log(melding);
+  else console.error(melding);
+  return code;
+}
+
+/**
  * Eén regel naar `$GITHUB_OUTPUT`, als die er is.
  *
  * Waarom dit bestaat: elke faalweg van het samenvoegen eindigt met exitcode 0
@@ -3197,7 +3222,6 @@ async function wachtOpSamenvoegbaarheid(token: string, slug: string, nummer: num
   return laatste;
 }
 
-
 export async function voerUit(argv: readonly string[]): Promise<number> {
   const { opdracht, vlaggen, losse, dubbel } = leesArgumenten(argv);
   if (dubbel.length > 0) {
@@ -3259,6 +3283,9 @@ export async function voerUit(argv: readonly string[]): Promise<number> {
       return opdrachtReview(losse, vlaggen);
     case "attestatie":
       code = await opdrachtAttestatie(vlaggen);
+      break;
+    case "uitrol":
+      code = await opdrachtUitrol(vlaggen);
       break;
     case "help":
     case "--help":
