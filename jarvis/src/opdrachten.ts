@@ -844,9 +844,24 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
  * het overzicht terug op wat het dossier zegt. De verkeerde kant op falen zou
  * hier zijn: een akkoord aannemen dat er niet is.
  */
-async function leesTaakakkoorden(taken: readonly string[]): Promise<Akkoordstand | null> {
+export async function leesTaakakkoorden(
+  taken: readonly string[],
+  // De verbinding is injecteerbaar, en dat is geen test-ingang maar de enige
+  // manier om de faalrichting werkelijk uit te voeren in plaats van haar uit
+  // de brontekst af te lezen. QA toonde aan dat "lege map in plaats van null"
+  // ongemerkt door de suite kwam: de bouw beweert dan gemeten te hebben en
+  // neemt aan dat er geen akkoord is. Dat is de verkeerde kant op.
+  verbind: () => Promise<{ readonly sql: DbClient; readonly bron: string } | null> = verbindDb,
+): Promise<Akkoordstand | null> {
   if (taken.length === 0) return new Map();
-  const verbinding = await verbindDb();
+  let verbinding;
+  try {
+    verbinding = await verbind();
+  } catch {
+    // Een worp uit het opzetten van de verbinding zelf stond buiten het
+    // vangnet hieronder en brak `jarvis overzicht` en `jarvis regie` af.
+    return null;
+  }
   if (verbinding === null) return null;
   try {
     const stand = new Map<string, string>();

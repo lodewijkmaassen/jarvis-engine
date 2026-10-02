@@ -61,6 +61,20 @@ akkoord en de volgende bouw — en nooit een vraag toevoegen die de bouw niet
 stelde. Een punt dat werkelijk bij de eigenaar ligt, houdt de taak op "wacht op
 jou", ook met een geldig akkoord.
 
+De bedrading wordt nu ook getoetst, en niet alleen de onderdelen. QA keurde de
+eerste ronde af omdat zeven sabotages op het productiepad de hele suite groen
+lieten: de doorgifte van de akkoordstand doorgesneden, `zetKort`/`zetTekst`
+terug op het oude veld, de ijking uit `render` gehaald — alles ongemerkt.
+`tests/jarvis/paginafuncties.ts` knipt de declaraties met haakjestelling uit
+`jarvis.html` en voert ze samen uit, zodat de pagina te toetsen is zoals zij
+draait en niet zoals zij leest; `staat` is het enige dat de test erin brengt.
+Daarop staan nu zeven scenario's die de vier plaatsen uit de melding naast
+elkaar leggen. Alle zeven sabotages vallen om. `leesTaakakkoorden` is daarvoor
+geëxporteerd met een injecteerbare verbinding — de enige manier om de
+faalrichting uit te voeren in plaats van haar af te lezen — en vangt sinds deze
+ronde ook een worp uit het opzetten van de verbinding zelf, die eerder
+`jarvis overzicht` en `jarvis regie` kon afbreken.
+
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard
 als historie, en niets geleverd. Eén bron bepaalt dat — `sluitDossier` in
