@@ -2906,22 +2906,33 @@ async function geverifieerdeAttestaties(
   token: string,
   slug: string,
   feiten: PullRequestFeiten,
+  // De bron mag worden meegegeven. In een GitHub-runner is er geen
+  // verbindingsreeks en draagt de Edge Function geen credential, dus
+  // `verbindDb` strandt daar op een 401 — en dan zou elke attestatie
+  // "niet te verifiëren" heten terwijl het attestatiepad er in diezelfde
+  // run wél bij kan, via de leesbeelden met de publieke sleutel. Zonder
+  // deze parameter kon het samenvoegen in CI dus nooit slagen
+  // (QA-bevinding B-3 op #76).
+  bronOverride?: AttestatieBron,
 ): Promise<{ koppen: readonly string[]; opmerkingen: readonly string[] }> {
   const kandidaten = feiten.reviews.filter(
     (r) => r.staat === "APPROVED" && r.gebruiker.toLowerCase() === ATTESTATIE_GEBRUIKER && leesAttestatie(r.tekst ?? "") !== null,
   );
   if (kandidaten.length === 0) return { koppen: [], opmerkingen: [] };
-  const verbinding = await verbindDb();
-  if (verbinding === null) {
+  const verbinding = bronOverride === undefined ? await verbindDb() : null;
+  if (bronOverride === undefined && verbinding === null) {
     return { koppen: [], opmerkingen: [`${kandidaten.length} attestatie(s) gevonden maar geen databaseverbinding om ze te verifiëren`] };
   }
   const opmerkingen: string[] = [];
   const koppen: string[] = [];
   const config = await leesConfigVanRepo(token, slug);
-  if (typeof config === "string") return { koppen, opmerkingen: [config] };
-  const sql = verbinding.sql;
+  if (typeof config === "string") {
+    if (verbinding !== null) await verbinding.sql.end({ timeout: 2 });
+    return { koppen, opmerkingen: [config] };
+  }
+  const sql = verbinding?.sql ?? null;
   try {
-    const bron = sqlBron(sql);
+    const bron = bronOverride ?? sqlBron(sql!);
     for (const r of kandidaten) {
       if (r.commit !== feiten.kop) {
         opmerkingen.push(`attestatie op ${r.commit.slice(0, 7)} overgeslagen: niet de huidige kop`);
@@ -2950,7 +2961,7 @@ async function geverifieerdeAttestaties(
     const tekst = fout instanceof Error ? fout.message : String(fout);
     opmerkingen.push(`attestatie niet te verifiëren: ${tekst.replace(/postgres(ql)?:\/\/\S+/gi, "<verbindingsreeks>")}`);
   } finally {
-    await sql.end({ timeout: 2 });
+    if (sql !== null) await sql.end({ timeout: 2 });
   }
   return { koppen, opmerkingen };
 }
@@ -2993,6 +3004,8 @@ async function opdrachtAttestatie(vlaggen: ReadonlyMap<string, string>): Promise
     return 1;
   }
 
+  if (vlaggen.has("samenvoegen")) return await samenvoegenNaAttestatie(token, slug, nummer, config);
+
   const feiten = await leesPullRequest(token, slug, nummer);
   if (typeof feiten === "string") {
     console.error(`jarvis attestatie: ${feiten}`);
@@ -3019,77 +3032,148 @@ async function opdrachtAttestatie(vlaggen: ReadonlyMap<string, string>): Promise
     (r) => r.staat === "APPROVED" && r.gebruiker.toLowerCase() === ATTESTATIE_GEBRUIKER && r.commit === feiten.kop && r.tekst === tekst,
   );
   if (alBestaand) {
-    console.log(`jarvis attestatie: #${nummer} is op ${feiten.kop.slice(0, 7)} al geattesteerd; niets te doen.`);
-    return 0;
+    // Geen `return` meer. De attestatie stond er al, maar daarmee is de
+    // samenvoeging nog niet gedaan: GitHub berekent `mergeable` asynchroon,
+    // dus een eerste ronde strandt regelmatig op een kop die nog niet
+    // beoordeeld is. Wie hier teruggaf, maakte de beloofde tweede ronde
+    // onmogelijk en liet de pull request geattesteerd en ongemergd liggen,
+    // met een groene run (QA-bevinding B-2 op #76).
+    console.log(`jarvis attestatie: #${nummer} is op ${feiten.kop.slice(0, 7)} al geattesteerd.`);
+  } else {
+    const review = await github(token, "POST", `/repos/${slug}/pulls/${nummer}/reviews`, {
+      commit_id: feiten.kop,
+      event: "APPROVE",
+      body: tekst,
+    });
+    if (review.status !== 200) {
+      console.error(`jarvis attestatie: review afgeven mislukt (${foutTekst(review)})`);
+      return 1;
+    }
+    console.log(`jarvis attestatie: #${nummer} geattesteerd op ${feiten.kop.slice(0, 7)}: ${tekst}`);
   }
-  const review = await github(token, "POST", `/repos/${slug}/pulls/${nummer}/reviews`, {
-    commit_id: feiten.kop,
-    event: "APPROVE",
-    body: tekst,
-  });
-  if (review.status !== 200) {
-    console.error(`jarvis attestatie: review afgeven mislukt (${foutTekst(review)})`);
-    return 1;
-  }
-  console.log(`jarvis attestatie: #${nummer} geattesteerd op ${feiten.kop.slice(0, 7)}: ${tekst}`);
-  if (!config.attestatie.samenvoegen) return 0;
-  return await voegSamenNaAttestatie(token, slug, nummer, feiten.kop);
+  await meldAanWorkflow("geattesteerd", "true");
+  await meldAanWorkflow("samenvoegen", config.attestatie.samenvoegen ? "true" : "false");
+  return 0;
 }
 
 /**
- * Samenvoegen in dezelfde run die zojuist attesteerde.
+ * Eén regel naar `$GITHUB_OUTPUT`, als die er is.
  *
- * Waarom hier en niet in de schil van de uitvoerder: die kan `jarvis pr
- * mergen` niet draaien. De permissieclassificatie van zijn
- * uitvoeringsomgeving weigert dat met "Merge Without Review", ook wanneer de
- * goedkeurende review er aantoonbaar staat — zij leest de opdrachtregel, niet
- * de autorisatietoestand, en zal dat bewijs dus nooit zien. Gemeten op
- * 2026-10-02 bij een pull request van een consumer. Daardoor bleef de laatste
- * stap van een volledig geautoriseerde keten liggen voor een mens.
- *
- * Er komt hier geen autorisatieweg bij, en dat is de hele opzet:
- *
- *   - De PR-feiten worden opnieuw gelezen. De review die deze run zojuist
- *     afgaf hoort erbij te staan, en alleen een verse lezing ziet hem.
- *   - Het oordeel komt van `beoordeelSamenvoegen` — letterlijk dezelfde
- *     functie, met dezelfde geverifieerde attestaties, die `jarvis pr mergen`
- *     gebruikt. Taakakkoord, scope, toetsing, uitzonderingen en poort zijn
- *     dan al door `beoordeelAttestatie` gegaan, anders waren we hier niet.
- *   - De merge pint `sha` op de kop die is geattesteerd. Duwt iemand er
- *     tussendoor een commit op, dan weigert GitHub in plaats van iets anders
- *     samen te voegen dan wat is goedgekeurd.
- *
- * Nog niet rijp is geen fout. Een check die nog loopt betekent dat deze run
- * niet samenvoegt, niet dat de attestatie mislukte — die staat er en blijft
- * staan. Daarom exitcode 0 met een regel die zegt waarom.
+ * Waarom dit bestaat: elke faalweg van het samenvoegen eindigt met exitcode 0
+ * — terecht, want een check die nog loopt is geen mislukte attestatie — maar
+ * daardoor was van buitenaf niet te zien óf er is samengevoegd, en bleven
+ * twee echte defecten onzichtbaar (QA-bevinding B-4 op #76). De uitkomst
+ * hoort machineleesbaar te zijn, los van de exitcode.
  */
-async function voegSamenNaAttestatie(token: string, slug: string, nummer: number, kop: string): Promise<number> {
-  const feiten = await leesPullRequest(token, slug, nummer);
+async function meldAanWorkflow(naam: string, waarde: string): Promise<void> {
+  const pad = (process.env.GITHUB_OUTPUT ?? "").trim();
+  if (!pad) return;
+  try {
+    const { appendFile } = await import("node:fs/promises");
+    await appendFile(pad, `${naam}=${waarde}\n`, "utf8");
+  } catch {
+    // Geen uitvoerbestand is geen reden om de attestatie te laten mislukken.
+  }
+}
+
+/**
+ * `jarvis attestatie --pr N --samenvoegen`: de tweede job van de
+ * attestatieworkflow.
+ *
+ * Waarom dit een aparte stap is en niet het staartje van de eerste: het
+ * samenvoegen vraagt `contents: write`, en GitHub verleent rechten per job.
+ * Zat het in dezelfde job, dan kreeg élke repository die de canonieke
+ * workflow spiegelt schrijfrecht op haar hoofdbranch — ook de repositories
+ * die `attestatie.samenvoegen` niet aanzetten en er dus niets aan hebben
+ * (QA-bevinding B-5 op #76). Nu bestaat dat recht alleen in een job die
+ * alleen draait wanneer de eerste job zegt dat de knop aanstaat.
+ *
+ * Waarom dit überhaupt in CI gebeurt: de uitvoerder kan `jarvis pr mergen`
+ * niet draaien. De permissieclassificatie van zijn omgeving weigert dat ook
+ * wanneer de goedkeurende review er aantoonbaar staat — zij leest de
+ * opdrachtregel en kan de autorisatietoestand niet zien, dus meer bewijs
+ * leveren helpt niet. Daardoor bleef de laatste stap van een volledig
+ * geautoriseerde keten liggen voor een mens.
+ *
+ * Er komt geen autorisatieweg bij:
+ *
+ *   - de configuratie moet het toestaan, ook hier nog een keer: een job die
+ *     per ongeluk draait, voegt niets samen;
+ *   - het oordeel komt van dezelfde `beoordeelSamenvoegen` die `jarvis pr
+ *     mergen` gebruikt, met dezelfde geverifieerde attestaties. Die
+ *     verificatie herhaalt de volledige `beoordeelAttestatie` op de huidige
+ *     feiten, dus taakakkoord, actuele scope, onafhankelijke toetsing,
+ *     uitzonderingen en groene poort worden hier opnieuw gewogen en niet
+ *     aangenomen uit de vorige job;
+ *   - de bron is dezelfde leesweg die het attesteren gebruikt, want in een
+ *     runner is er geen verbindingsreeks;
+ *   - de merge pint `sha` op de kop, dus een commit ertussen laat GitHub
+ *     weigeren in plaats van iets anders samen te voegen dan is goedgekeurd.
+ *
+ * Nog niet rijp is geen fout: de attestatie staat en blijft staan. Wel wordt
+ * de uitkomst machineleesbaar gemeld, zodat "geattesteerd maar niet
+ * samengevoegd" van buitenaf zichtbaar is.
+ */
+async function samenvoegenNaAttestatie(
+  token: string,
+  slug: string,
+  nummer: number,
+  config: JarvisConfig,
+): Promise<number> {
+  if (!config.attestatie.samenvoegen) {
+    console.error("jarvis attestatie: --samenvoegen, maar attestatie.samenvoegen staat uit in jarvis.config.yml; niets gedaan.");
+    await meldAanWorkflow("samengevoegd", "false");
+    return 1;
+  }
+  const bron = config.attestatie;
+  const feiten = await wachtOpSamenvoegbaarheid(token, slug, nummer);
   if (typeof feiten === "string") {
-    console.error(`jarvis attestatie: geattesteerd, maar de pull request is niet opnieuw te lezen (${feiten}); niet samengevoegd.`);
-    return 0;
+    console.error(`jarvis attestatie: ${feiten}`);
+    await meldAanWorkflow("samengevoegd", "false");
+    return 1;
   }
-  if (feiten.kop !== kop) {
-    console.log(`jarvis attestatie: de kop verschoof van ${kop.slice(0, 7)} naar ${feiten.kop.slice(0, 7)}; niet samengevoegd.`);
-    return 0;
-  }
-  const eigenaar = eigenaarVan(slug);
-  const attestaties = await geverifieerdeAttestaties(token, slug, feiten);
+  const attestaties = await geverifieerdeAttestaties(token, slug, feiten, restBron(bron.url, bron.sleutel));
   for (const o of attestaties.opmerkingen) console.error(`jarvis attestatie: ${o}`);
-  const redenen = beoordeelSamenvoegen(feiten, eigenaar, attestaties.koppen);
+  const redenen = beoordeelSamenvoegen(feiten, eigenaarVan(slug), attestaties.koppen);
   if (redenen.length > 0) {
-    console.log(`jarvis attestatie: nog niet samen te voegen: ${redenen.join("; ")}. De attestatie staat; een volgende ronde voegt samen.`);
+    console.log(`jarvis attestatie: #${nummer} niet samengevoegd: ${redenen.join("; ")}. De attestatie staat; een volgende ronde probeert opnieuw.`);
+    await meldAanWorkflow("samengevoegd", "false");
     return 0;
   }
   const samen = await github(token, "PUT", `/repos/${slug}/pulls/${nummer}/merge`, { merge_method: SAMENVOEGMETHODE, sha: feiten.kop });
   if (samen.status !== 200) {
-    console.error(`jarvis attestatie: geattesteerd, maar samenvoegen mislukte (${foutTekst(samen)}).`);
-    return 0;
+    console.error(`jarvis attestatie: samenvoegen mislukte (${foutTekst(samen)}).`);
+    await meldAanWorkflow("samengevoegd", "false");
+    return 1;
   }
   const uit = samen.lading as { sha: string };
-  console.log(`jarvis attestatie: #${nummer} samengevoegd in ${feiten.basis} als ${uit.sha.slice(0, 7)}, op grond van de attestatie van deze run.`);
+  console.log(`jarvis attestatie: #${nummer} samengevoegd in ${feiten.basis} als ${uit.sha.slice(0, 7)}, op grond van de geverifieerde attestatie op ${feiten.kop.slice(0, 7)}.`);
+  await meldAanWorkflow("samengevoegd", "true");
   return 0;
 }
+
+/**
+ * Leest de pull request tot GitHub zijn samenvoegbaarheid heeft berekend.
+ *
+ * `mergeable` is vlak na een push of een review nog `null`: GitHub rekent dat
+ * asynchroon uit. Eén enkele lezing trof die toestand regelmatig en maakte
+ * daarmee "nog niet rijp" van een tijdelijke race, terwijl er niets mis was
+ * (QA-bevinding B-2 op #76). Kort en begrensd wachten lost dat op; blijft het
+ * `null`, dan oordeelt `beoordeelSamenvoegen` er gewoon over.
+ */
+async function wachtOpSamenvoegbaarheid(token: string, slug: string, nummer: number): Promise<PullRequestFeiten | string> {
+  const POGINGEN = 6;
+  const PAUZE_MS = 5000;
+  let laatste: PullRequestFeiten | string = "pull request niet gelezen";
+  for (let i = 0; i < POGINGEN; i += 1) {
+    laatste = await leesPullRequest(token, slug, nummer);
+    if (typeof laatste === "string") return laatste;
+    if (laatste.samenvoegbaar !== null) return laatste;
+    if (i < POGINGEN - 1) await new Promise((klaar) => setTimeout(klaar, PAUZE_MS));
+  }
+  return laatste;
+}
+
 
 export async function voerUit(argv: readonly string[]): Promise<number> {
   const { opdracht, vlaggen, losse, dubbel } = leesArgumenten(argv);

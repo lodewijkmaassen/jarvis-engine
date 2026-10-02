@@ -63,22 +63,39 @@ describe("attestatie.samenvoegen", () => {
 
 describe("de canonieke attestatieworkflow", () => {
   const yml = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-attestatie.yml"), "utf8");
+  const spiegel = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-attestatie.yml"), "utf8");
 
-  it("heeft contents: write, anders kan de samenvoeging niet slagen", () => {
-    expect(yml).toMatch(/^\s{2}contents: write$/m);
+  it("geeft op workflowniveau geen enkel recht", () => {
+    // De kern van de scheiding: wie deze workflow spiegelt zonder de functie
+    // aan te zetten, krijgt geen schrijfrecht op zijn hoofdbranch.
+    expect(yml).toMatch(/^permissions: \{\}$/m);
   });
 
-  it("draait nog altijd de code van de hoofdbranch en niet die van de pull request", () => {
-    // Zonder dit zou een pull request de beslissende code kunnen aanpassen om
-    // zichzelf goed te keuren — en met mergerecht erbij weegt dat zwaarder
-    // dan voorheen.
-    expect(yml).toMatch(/ref:\s*main/);
+  it("geeft de attesterende job geen schrijfrecht op de inhoud", () => {
+    const job = /^  attestatie:\n([\s\S]*?)(?=^  [a-z])/m.exec(yml)?.[1] ?? "";
+    expect(job).toMatch(/contents: read/);
+    expect(job).not.toMatch(/contents: write/);
+  });
+
+  it("geeft alleen de samenvoegende job contents: write, en niet meer dan nodig", () => {
+    const job = /^  samenvoegen:\n([\s\S]*)/m.exec(yml)?.[1] ?? "";
+    const blok = /permissions:\n((?:\s{6}[a-z-]+: [a-z]+\n)+)/.exec(job)?.[1] ?? "";
+    const rechten = [...blok.matchAll(/^\s+([a-z-]+): ([a-z]+)$/gm)].map((m) => `${m[1]}:${m[2]}`);
+    expect(rechten.sort()).toEqual(["checks:read", "contents:write", "pull-requests:read"]);
+  });
+
+  it("draait de samenvoegende job alleen wanneer de configuratie het aanzet", () => {
+    expect(yml).toMatch(/if: needs\.attestatie\.outputs\.samenvoegen == 'true'/);
+  });
+
+  it("draait in beide jobs de code van de hoofdbranch en niet die van de pull request", () => {
+    // Met mergerecht erbij weegt dit zwaarder dan voorheen: een pull request
+    // mag de beslissende code nooit kunnen aanpassen om zichzelf goed te keuren.
+    expect([...yml.matchAll(/ref: main/g)]).toHaveLength(2);
     expect(yml).not.toMatch(/ref:\s*\$\{\{\s*github\.event\.pull_request\.head/);
   });
 
-  it("vraagt geen rechten die het samenvoegen niet nodig heeft", () => {
-    const blok = /permissions:\n((?:\s+#[^\n]*\n|\s{2}[a-z-]+: [a-z]+\n)+)/.exec(yml)?.[1] ?? "";
-    const rechten = [...blok.matchAll(/^\s{2}([a-z-]+): ([a-z]+)$/gm)].map((m) => `${m[1]}:${m[2]}`);
-    expect(rechten.sort()).toEqual(["checks:read", "contents:write", "pull-requests:write"]);
+  it("is byte-identiek gespiegeld in deze repository", () => {
+    expect(spiegel).toBe(yml);
   });
 });

@@ -23,11 +23,17 @@ name: jarvis-attestatie
 # een bewuste keuze van de eigenaar, per repository.
 #
 # Deze workflow bevat geen logica. Hij zet één invoer in de omgeving en roept
-# een vaste opdracht aan; die leest, beoordeelt en handelt — en voegt, wanneer
-# de projectconfiguratie dat aanzet, ook samen wat zij zojuist heeft
-# goedgekeurd. Dat laatste is een verruiming van wat de automatisering met de
-# hoofdbranch mag, en daarom staat zij per repository in `jarvis.config.yml`
-# en niet hier.
+# een vaste opdracht aan; die leest, beoordeelt en handelt.
+#
+# Twee jobs, en dat is geen opsmuk. De tweede voegt samen wat de eerste heeft
+# goedgekeurd — de uitvoerder kan dat zelf niet, omdat de
+# permissieclassificatie van zijn omgeving de opdrachtregel leest en de
+# autorisatietoestand niet kan zien. Samenvoegen vraagt `contents: write`, en
+# rechten gelden per job: in één job zou elke repository die deze workflow
+# spiegelt dat recht krijgen, ook zonder de functie te gebruiken. Nu draait de
+# tweede job alleen wanneer de projectconfiguratie het aanzet, en bestaat het
+# recht alleen daar. De tweede job neemt niets aan uit de eerste: dezelfde
+# beoordeling draait er opnieuw op de huidige feiten.
 
 on:
   workflow_dispatch:
@@ -41,25 +47,27 @@ concurrency:
   group: jarvis-attestatie-${{ inputs.pr }}
   cancel-in-progress: false
 
-permissions:
-  # contents: write in plaats van read, en alleen daarvoor: met
-  # `attestatie.samenvoegen: true` voegt deze run de pull request die zij
-  # zojuist heeft goedgekeurd ook samen. Dat verplaatst één stap naar de plek
-  # waar de verificatie toch al staat; de uitvoerder kan hem zelf niet zetten,
-  # omdat de permissieclassificatie van zijn omgeving de opdrachtregel leest
-  # en de autorisatietoestand niet kan zien. Het oordeel komt van dezelfde
-  # `beoordeelSamenvoegen` als `jarvis pr mergen`, op dezelfde kop. Staat
-  # `samenvoegen` uit, dan wordt dit recht niet gebruikt.
-  contents: write
-  pull-requests: write
-  # De poortstatus lezen: in een privé-repository weigert GitHub dat zonder
-  # checks:read (gemeten 2026-09-14 bij Kasboek #5: 403 "Resource not
-  # accessible by integration"; in de publieke engine-repository werkte het wel).
-  checks: read
+# Geen rechten op workflowniveau. Elke job vraagt wat hij nodig heeft, en
+# niets meer: het samenvoegen vraagt `contents: write`, en GitHub verleent
+# rechten per job. Stond dat recht hierboven, dan kreeg élke repository die
+# deze workflow spiegelt schrijfrecht op haar hoofdbranch — ook de
+# repositories die `attestatie.samenvoegen` niet aanzetten en er dus niets aan
+# hebben. Dat is een verruiming zonder tegenwaarde, en die hoort er niet te
+# zijn.
+permissions: {}
 
 jobs:
   attestatie:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      # De poortstatus lezen: in een privé-repository weigert GitHub dat zonder
+      # checks:read (gemeten 2026-09-14 bij Kasboek #5: 403 "Resource not
+      # accessible by integration"; in de publieke engine-repository werkte het wel).
+      checks: read
+    outputs:
+      samenvoegen: ${{ steps.attesteren.outputs.samenvoegen }}
     steps:
       # Gepind op een commit-SHA (RSK-0020), net als in de poort.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -78,7 +86,39 @@ jobs:
       - run: npm ci --ignore-scripts
 
       - name: Jarvis-attestatie
+        id: attesteren
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMMER: ${{ inputs.pr }}
         run: node node_modules/jarvis-engine/bin/jarvis.mjs attestatie --pr "$PR_NUMMER"
+
+  # Alleen voor een repository die het zelf heeft aangezet. Draait deze job
+  # niet, dan bestaat het schrijfrecht ook niet.
+  samenvoegen:
+    needs: attestatie
+    if: needs.attestatie.outputs.samenvoegen == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+      checks: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # Neemt niets aan uit de vorige job: dezelfde beoordeling draait hier
+      # opnieuw op de huidige feiten, en de configuratie moet het hier ook nog
+      # toestaan.
+      - name: Samenvoegen na attestatie
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PR_NUMMER: ${{ inputs.pr }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs attestatie --pr "$PR_NUMMER" --samenvoegen

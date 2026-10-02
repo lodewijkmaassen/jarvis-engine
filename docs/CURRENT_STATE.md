@@ -12,7 +12,7 @@ _Gegenereerd op 2026-10-02._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 40 |
+| Testbestanden | 41 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -348,9 +348,26 @@ merge op de kop die is geattesteerd — duwt iemand er een commit tussen, dan
 weigert GitHub. Nog niet rijp is geen fout: de attestatie staat en blijft
 staan, en een volgende ronde voegt samen.
 
-De workflow heeft er `contents: write` voor nodig in plaats van `read`. Dat is
-een verruiming van wat de automatisering met de hoofdbranch mag, en daarom
-staat de knop per repository in de projectconfiguratie en niet in de workflow.
+Het samenvoegen is een **eigen job** met `contents: write`, die alleen draait
+wanneer de eerste job meldt dat de configuratie het aanzet. Rechten gelden per
+job: zat het in één job, dan kreeg elke repository die deze workflow spiegelt
+schrijfrecht op haar hoofdbranch, ook zonder de functie te gebruiken. Op
+workflowniveau staan nu geen rechten. De tweede job neemt niets aan uit de
+eerste: dezelfde beoordeling draait er opnieuw op de huidige feiten, en de
+configuratie moet het daar ook nog toestaan.
+
+Twee dingen die uit de toetsing kwamen en er wezenlijk bij horen. Het
+samenvoegen leest de database via dezelfde leesbeelden als het attesteren, want
+in een runner is er geen verbindingsreeks en draagt de Edge Function geen
+credential — zonder dat zou elke attestatie daar "niet te verifiëren" heten. En
+een al bestaande attestatie is geen reden om te stoppen: GitHub berekent
+`mergeable` asynchroon, dus de eerste ronde strandt regelmatig op een kop die
+nog niet beoordeeld is. De samenvoegstap wacht daar kort en begrensd op, en een
+volgende ronde probeert gewoon opnieuw.
+
+De uitkomst is machineleesbaar (`samenvoegen` en `samengevoegd` in
+`$GITHUB_OUTPUT`), zodat "geattesteerd maar niet samengevoegd" van buitenaf
+zichtbaar is in plaats van te verdwijnen achter een exitcode 0.
 
 
 ## Volgende stap
