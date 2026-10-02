@@ -107,9 +107,11 @@ het akkoord vervallen: het mandaat is alleen door de eigenaar te verruimen.
 
 De regel `Uitzonderingen:` in de PR-tekst moet dan precies de soorten noemen die
 de gewijzigde bestanden opleveren, alfabetisch en met `; ` ertussen — de
-weigering drukt de verwachte regel letterlijk af. Staat er meer dan één
-verschillende `Uitzonderingen:`-regel in de tekst, dan wordt er niet
-geattesteerd.
+weigering drukt de verwachte regel letterlijk af. Elke regel in de tekst telt — ook achter een kop, een opsomming, een citaat of
+een tabelstreep. Staat er meer dan één `Uitzonderingen:`-regel die niet
+woordelijk hetzelfde zegt, dan wordt er niet geattesteerd; een herhaling die
+alleen in witruimte of interpunctie afwijkt telt daarbij al als een tweede
+bewering.
 
 `samenvoegen: true` laat de workflow de pull request die zij zojuist heeft
 goedgekeurd ook samenvoegen, in een tweede job met `contents: write` die

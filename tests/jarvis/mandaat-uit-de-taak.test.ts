@@ -281,9 +281,20 @@ describe("alle verklaringsregels tellen", () => {
     expect(leesUitzonderingenRegel(b)).not.toBe(WORKFLOWS);
   });
 
-  it("ziet ook een regel in een citaat of een opsomming", () => {
-    const tekst = `Uitzonderingen: ${WORKFLOWS}\n\n> Uitzonderingen: rotatie van de productie-deploykey\n`;
-    expect(leesUitzonderingenRegel(tekst)).toContain("rotatie");
+  it("ziet een tweede regel in elke opmaak die markdown toelaat", () => {
+    // De eerste reparatie keek alleen achter spatie, tab, > en - of *.
+    // Daarmee bleef dezelfde meelifter gewoon werken achter een kop, een
+    // genummerde regel, een tabelstreep of het begin van een commentaar.
+    for (const voorvoegsel of ["", "> ", ">> ", "- ", "* ", "+ ", "## ", "### ", "1. ", "2) ", "| ", "<!-- ", "   ", "\t", "- [ ] "]) {
+      const tekst = `Uitzonderingen: ${WORKFLOWS}\n\n${voorvoegsel}Uitzonderingen: rotatie van de productie-deploykey\n`;
+      expect(leesUitzonderingenRegel(tekst), JSON.stringify(voorvoegsel)).toContain("rotatie");
+    }
+  });
+
+  it("ziet geen verklaring midden in een zin", () => {
+    // Proza bevat letters vóór het woord, dus dat is geen regel maar een
+    // verwijzing. Anders zou elke uitleg over het mechanisme een PR blokkeren.
+    expect(leesUitzonderingenRegel(`Zie hieronder bij Uitzonderingen: niets aan de hand.\n`)).toBeNull();
   });
 
   it("neemt een identieke herhaling niet zwaar op", () => {

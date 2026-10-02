@@ -222,9 +222,18 @@ export function leesUitzonderingenRegel(prTekst: string): "geen" | string | null
   // (QA-bevinding op #78, tweede ronde).
   //
   // Meer dan één verschillende regel is geen keuze maar een weigering: welke
-  // van de twee zou gelden? Identieke herhalingen mogen, want die beweren
-  // hetzelfde.
-  const alle = [...prTekst.replace(/\r\n/g, "\n").matchAll(/^[ \t>*-]*Uitzonderingen:[ \t]*(.+?)[ \t]*$/gim)].map((m) =>
+  // van de twee zou gelden? Herhalingen die alleen in kast verschillen mogen,
+  // want die beweren hetzelfde. Let op: de ontdubbeling vergelijkt op kleine
+  // letters en niet op de ruimere normalisatie van `zelfdeVerklaring`, dus
+  // een herhaling die alleen in witruimte of een sluitende punt afwijkt telt
+  // als een tweede bewering en weigert. Dat is streng maar fail-closed.
+  // Alles wat géén letter is mag ervóór staan: `#`, `>`, `-`, `*`, `+`, een
+  // nummer met punt of haakje, een tabelstreep, het begin van een
+  // HTML-commentaar, witruimte. Een eerdere, smallere tekenklasse liet
+  // `## Uitzonderingen: …` en `1. Uitzonderingen: …` onzichtbaar blijven, en
+  // daarmee kwam de meelifter van hierboven gewoon terug in een andere
+  // opmaak. Proza ervóór matcht niet, want dat bevat letters.
+  const alle = [...prTekst.replace(/\r\n/g, "\n").matchAll(/^[^A-Za-z\n]*Uitzonderingen:[ \t]*(.+?)[ \t]*$/gim)].map((m) =>
     (m[1] ?? "").trim(),
   );
   if (alle.length === 0) return null;
