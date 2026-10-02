@@ -74,19 +74,29 @@ jobs:
   # `main`. Draait deze job niet, dan komen de secrets ook niet in een runner
   # terecht.
   #
-  # De grens die werkelijk telt is `environment: productie`. De credentials van
-  # de uitrol staan als environment-secret, en op die omgeving staat een
-  # deployment branch policy voor `main`: GitHub weigert dan zelf de secrets aan
-  # een run op een andere ref. Dat is nodig omdat een `workflow_dispatch` de
-  # workflowdefinitie van de gekozen ref draait — wie op `jarvis/**` mag pushen,
-  # brengt dus zijn eigen versie van dit bestand mee, en een voorwaarde die in
-  # dit bestand staat kan hij er even goed uit halen. Repository-secrets zijn op
-  # elke ref beschikbaar; environment-secrets achter een branch policy niet.
+  # De grens om het uitroltoken MOET op de omgeving liggen, en niet in dit
+  # bestand. Een `workflow_dispatch` draait de workflowdefinitie van de gekozen
+  # ref: wie op `jarvis/**` mag pushen, brengt zijn eigen versie van dit bestand
+  # mee en haalt een voorwaarde die hier staat er even goed uit. Alleen GitHub
+  # zelf kan de credentials weigeren aan een run op een andere ref.
   #
-  # De `if`-regel eronder is daarom geen beveiliging maar een goedkope
-  # vangrail: zij houdt de ongewijzigde kopie van een dispatch op een branch
-  # tegen voordat de runner start. Wie het bestand wél wijzigt, komt daar langs
-  # — en loopt dan tegen de omgeving aan.
+  # LET OP — die grens bestaat alleen wanneer BEIDE waar zijn:
+  #   1. de omgeving `productie` heeft een deployment branch policy die
+  #      uitsluitend `main` toestaat, en
+  #   2. de vijf waarden hieronder staan als ENVIRONMENT-secret op die omgeving,
+  #      niet als repository-secret.
+  #
+  # Geen van beide is hier af te dwingen of te controleren, en dit bestand mag
+  # dus niet beweren dat zij gelden. De faalwijze is stil en daarom genoemd:
+  # GitHub maakt een omgeving die een workflow noemt stilzwijgend aan zodra de
+  # job voor het eerst draait — zonder protection rules. Staan de waarden dan
+  # als repository-secret, dan rolt deze workflow gewoon uit, is er GEEN
+  # branchgrens, en ziet niemand dat. Zie de eigenaarsinstructie in het dossier
+  # van `T-20261002-technische-uitvoering`.
+  #
+  # De `if`-regel eronder is geen beveiliging maar een goedkope vangrail: zij
+  # houdt de ongewijzigde kopie van een dispatch op een branch tegen voordat de
+  # runner start. Wie het bestand wél wijzigt, komt daar langs.
   uitrollen:
     needs: bepalen
     if: needs.bepalen.outputs.gevraagd == 'true' && github.ref == 'refs/heads/main'

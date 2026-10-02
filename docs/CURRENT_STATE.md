@@ -51,19 +51,46 @@ zonder uitroladres brengt dus geen token in een runner. Het adres staat in de
 configuratie en niet in een repository-instelling, want wat gecontroleerd wordt
 hoort onder review te staan en niet naast de diff.
 
-Dat de uitrol alleen vanaf `main` kan, rust op `environment: productie` en de
-deployment branch policy op die omgeving: GitHub weigert dan zelf de
-environment-secrets aan een run op een andere ref. De `if`-regel op de job is
-daarnaast een vangrail en geen grens — een `workflow_dispatch` draait de
-workflowdefinitie van de gekozen ref, dus wie op een agentbranch mag pushen
-brengt zijn eigen versie van die regel mee. Een eerdere versie van deze
-beschrijving beloofde die grens wél aan de `if`-regel alleen; een onafhankelijke
-toetsing haalde dat onderuit.
+De uitroljob draait onder `environment: productie`, en daar hoort de grens te
+liggen die bepaalt vanaf welke ref er uitgerold kan worden. **Die grens bestaat
+vandaag nog niet.** Zij bestaat pas wanneer op die omgeving een deployment branch
+policy staat die uitsluitend `main` toestaat, én de vijf waarden die de job nodig
+heeft daar als environment-secret staan in plaats van als repository-secret. Geen
+van beide is in deze repository af te dwingen of te meten, dus deze beschrijving
+stelt het niet als feit.
 
-Twee dingen zijn hiermee nog niet aangetoond: dat de uitroljob werkelijk groen
+De faalwijze is stil en daarom genoemd: GitHub maakt een omgeving die een workflow
+noemt stilzwijgend aan zodra de job voor het eerst draait, zonder protection
+rules. Staan de waarden op dat moment als repository-secret, dan rolt de workflow
+gewoon uit, is er geen branchgrens, en meldt niets dat er iets ontbreekt. De
+`if`-regel op de job helpt daar niet tegen: zij is een vangrail die de
+ongewijzigde kopie van een dispatch tegenhoudt, en een `workflow_dispatch` draait
+de definitie van de gekozen ref — wie daar mag pushen, brengt zijn eigen versie
+van die regel mee. Een eerdere versie van deze beschrijving beloofde de grens wél
+aan die regel alleen; twee onafhankelijke toetsingsronden haalden dat onderuit.
+
+Wat er daarvoor nodig is, is precies dit, en het hoort in één handeling:
+
+| Wat | Waar | Waarde |
+|---|---|---|
+| omgeving | Settings → Environments | naam `productie` |
+| branch policy | die omgeving, *Deployment branches and tags* | *Selected branches and tags*, één regel: `main` |
+| `VERCEL_TOKEN` | environment-secret van `productie` | Vercel → Account Settings → Tokens |
+| `VERCEL_ORG_ID` | environment-secret van `productie` | Vercel → project → Settings → General |
+| `VERCEL_PROJECT_ID` | environment-secret van `productie` | Vercel → project → Settings → General |
+| `JARVIS_SUPABASE_URL` | environment-secret van `productie` | `attestatie.url` in `jarvis.config.yml` |
+| `JARVIS_SUPABASE_SLEUTEL` | environment-secret van `productie` | `attestatie.sleutel` in `jarvis.config.yml` |
+
+De laatste twee zijn publieke waarden — ze staan in elke browser die de interface
+opent. Ze gaan als secret mee omdat de engine geen projectkennis in haar workflows
+draagt, niet omdat ze geheim zijn.
+
+Twee dingen zijn daarmee nog niet aangetoond: dat de uitroljob werkelijk groen
 draait, en dat de harde controle in CI rood valt op een uitrol die de bestanden
-niet vervangt. Beide vragen eerst de omgeving en de secrets, en zolang die er
-niet zijn faalt de uitroljob op de eerste samenvoeging naar `main`.
+niet vervangt. Beide vragen eerst die ene handeling. Tot dan faalt de uitroljob op
+de eerste samenvoeging naar `main` — bewust, want een uitroljob die wordt
+overgeslagen en toch groen meldt, is precies de aanname die hier moest worden
+opgeheven.
 
 De poort ziet die workflow als wat hij is: een derde ingang, naast de poort en
 de attestatie. Hij staat op `TOEGESTANE_WORKFLOWS`, en de byte-vergelijking met
