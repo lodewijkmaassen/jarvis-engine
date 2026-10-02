@@ -203,9 +203,23 @@ function zelfdeVerklaring(a: string, b: string): boolean {
  * dan is er niets verklaard en wordt er niet geattesteerd.
  */
 export function leesUitzonderingenRegel(prTekst: string): "geen" | string | null {
-  const m = /^\s*Uitzonderingen:\s*(.+?)\s*$/im.exec(prTekst.replace(/\r\n/g, "\n"));
-  if (!m) return null;
-  const waarde = (m[1] ?? "").trim();
+  // Álle regels, niet de eerste. Deze regel is sinds het mandaat uit de taak
+  // dragend voor de autorisatie, en met alleen de eerste treffer was zij te
+  // omzeilen door de juiste verklaring vooraan te zetten en de werkelijke
+  // uitzondering — een sleutelrotatie, een productieactie — verderop in de
+  // tekst. De uitkomst hing dan af van de volgorde in de PR-tekst
+  // (QA-bevinding op #78, tweede ronde).
+  //
+  // Meer dan één verschillende regel is geen keuze maar een weigering: welke
+  // van de twee zou gelden? Identieke herhalingen mogen, want die beweren
+  // hetzelfde.
+  const alle = [...prTekst.replace(/\r\n/g, "\n").matchAll(/^[ \t>*-]*Uitzonderingen:[ \t]*(.+?)[ \t]*$/gim)].map((m) =>
+    (m[1] ?? "").trim(),
+  );
+  if (alle.length === 0) return null;
+  const uniek = [...new Set(alle.map((w) => w.toLowerCase()))];
+  if (uniek.length > 1) return alle.join(" / ");
+  const waarde = alle[0]!;
   return waarde.toLowerCase() === "geen" ? "geen" : waarde;
 }
 

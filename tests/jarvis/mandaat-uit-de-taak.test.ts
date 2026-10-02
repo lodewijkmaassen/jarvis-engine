@@ -20,6 +20,7 @@ import { describe, expect, it } from "vitest";
 import {
   beoordeelAttestatie,
   gemandateerdeUitzonderingen,
+  leesUitzonderingenRegel,
   scopeHash,
   soortenHardeUitzondering,
   uitzonderingenInAttestatie,
@@ -244,5 +245,106 @@ describe("uitzonderingenUitDossier", () => {
 
   it("geeft niets bij een bestand zonder front-matter", () => {
     expect(uitzonderingenUitDossier("# Gewone tekst\n")).toEqual([]);
+  });
+});
+
+/**
+ * De verklaringsregel is sinds het mandaat dragend voor de autorisatie.
+ *
+ * Daarmee werd het de moeite waard om haar te omzeilen, en dat kon: er werd
+ * alleen naar de eerste `Uitzonderingen:`-regel gekeken. Een pull request met
+ * de juiste verklaring vooraan en de werkelijke uitzondering — een
+ * sleutelrotatie, een productieactie — verderop in de tekst, werd
+ * geattesteerd. De uitkomst hing af van de volgorde.
+ */
+describe("alle verklaringsregels tellen", () => {
+  const WORKFLOWS = "workflows en repository-automatisering";
+
+  it("leest één regel zoals voorheen", () => {
+    expect(leesUitzonderingenRegel(`Tekst.\n\nUitzonderingen: ${WORKFLOWS}\n`)).toBe(WORKFLOWS);
+    expect(leesUitzonderingenRegel("Uitzonderingen: geen\n")).toBe("geen");
+  });
+
+  it("weigert wanneer een tweede regel iets anders beweert", () => {
+    const tekst = `Uitzonderingen: ${WORKFLOWS}\n\nNog wat tekst.\n\nUitzonderingen: rotatie van de productie-deploykey\n`;
+    const gelezen = leesUitzonderingenRegel(tekst);
+    expect(gelezen).not.toBe(WORKFLOWS);
+    expect(gelezen).toContain("rotatie");
+  });
+
+  it("laat zich niet omzeilen door de volgorde", () => {
+    // Beide volgordes horen hetzelfde op te leveren; dat was precies wat
+    // eerder niet zo was.
+    const a = `Uitzonderingen: ${WORKFLOWS}\n\nUitzonderingen: rotatie van de productie-deploykey\n`;
+    const b = `Uitzonderingen: rotatie van de productie-deploykey\n\nUitzonderingen: ${WORKFLOWS}\n`;
+    expect(leesUitzonderingenRegel(a)).not.toBe(WORKFLOWS);
+    expect(leesUitzonderingenRegel(b)).not.toBe(WORKFLOWS);
+  });
+
+  it("ziet ook een regel in een citaat of een opsomming", () => {
+    const tekst = `Uitzonderingen: ${WORKFLOWS}\n\n> Uitzonderingen: rotatie van de productie-deploykey\n`;
+    expect(leesUitzonderingenRegel(tekst)).toContain("rotatie");
+  });
+
+  it("neemt een identieke herhaling niet zwaar op", () => {
+    const tekst = `Uitzonderingen: ${WORKFLOWS}\n\nSamengevat.\n\nUitzonderingen: ${WORKFLOWS}\n`;
+    expect(leesUitzonderingenRegel(tekst)).toBe(WORKFLOWS);
+  });
+
+  it("attesteert niet wanneer een tweede regel een andere uitzondering noemt", () => {
+    const uit = beoordeelAttestatie(
+      feiten({ prTekst: `Uitzonderingen: ${WORKFLOWS}\n\nUitzonderingen: rotatie van de productie-deploykey\n` }),
+    );
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+});
+
+/**
+ * De scheiding van de soorten zelf.
+ *
+ * De vorige ronde wees erop dat deze eigenschap werkte maar door geen test
+ * werd vastgelegd: de volgorde in `HARDE_UITZONDERINGEN` terugdraaien liet
+ * alle tests slagen, omdat de bestaande test eerder op de
+ * verklaringsvergelijking strandde.
+ */
+describe("soorten blijven van elkaar gescheiden", () => {
+  it("geeft CODEOWNERS een eigen soort, niet die van workflows", () => {
+    expect(soortenHardeUitzondering([".github/CODEOWNERS"])).toEqual(["wie wat mag beoordelen"]);
+  });
+
+  it("houdt een gewone workflow bij workflows", () => {
+    expect(soortenHardeUitzondering([".github/workflows/a.yml"])).toEqual(["workflows en repository-automatisering"]);
+  });
+
+  it("dekt CODEOWNERS niet met een mandaat op workflows, ook met een kloppende verklaring", () => {
+    const uit = beoordeelAttestatie(
+      feiten({ gewijzigdeBestanden: [".github/CODEOWNERS"], prTekst: "Uitzonderingen: wie wat mag beoordelen" }),
+    );
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+});
+
+/**
+ * Het filter op bestaande soorten. De vorige ronde noemde het bewijsbaar
+ * inert; deze test maakt het dragend door de aankondiging te laten botsen met
+ * wat er werkelijk wordt geraakt.
+ */
+describe("een onbekende soort geeft geen mandaat", () => {
+  it("dekt niets wanneer het dossier een soort noemt die niet bestaat", () => {
+    const uit = beoordeelAttestatie(
+      feiten({
+        taken: [taak({ aangekondigdeUitzonderingen: ["workflos en repository-automatisering"] })],
+      }),
+    );
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+
+  it("laat een geldige aankondiging naast een onbekende gewoon werken", () => {
+    const uit = beoordeelAttestatie(
+      feiten({
+        taken: [taak({ aangekondigdeUitzonderingen: ["onzin", "workflows en repository-automatisering"] })],
+      }),
+    );
+    expect(uit).toEqual([]);
   });
 });
