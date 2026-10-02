@@ -279,6 +279,15 @@ const TAAK_STATUSSEN = new Set(["nieuw", "actief", "review", "afgerond", "verval
  * zou elke afsluiting een akkoord van de eigenaar vragen, terwijl
  * "administratief afsluiten" juist hoort bij wat Jarvis zelf doet.
  *
+ * De uitzondering is *richtingloos*: `afgerond → actief` gaat er net zo goed
+ * doorheen als `actief → afgerond`. Dat is bewust, want een taak heropenen is
+ * even administratief als haar sluiten, maar er hangt een gevolg aan dat hier
+ * hoort te staan. Omdat het akkoord aan de hash van het hele bestand hangt,
+ * brengt het terugdraaien van een statusregel een hash terug die de eigenaar
+ * ooit heeft getekend — en daarmee leeft dat akkoord weer. **Een
+ * statuswijziging is dus geen intrekkingsmechanisme**, en wie een akkoord wil
+ * intrekken moet dat langs de autorisatie doen, niet langs de status.
+ *
  * Streng gelezen: evenveel regels, alle andere regels identiek, de
  * veranderende regel moet aan beide kanten een `status:` in de front-matter
  * zijn, en de nieuwe waarde moet een bekend statuswoord zijn. Alles daarbuiten
@@ -373,7 +382,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     );
   }
   if (!administratief) {
-    if (f.taken.length === 0 && f.taakRedenen.length === 0 && herschreven.length === 0) {
+    if (f.taken.length === 0 && f.taakRedenen.length === 0) {
       redenen.push("geen taak bekend voor deze pull request");
     }
     for (const t of f.taken) {

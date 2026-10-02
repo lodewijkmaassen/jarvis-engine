@@ -697,16 +697,41 @@ describe("alleenStatusVerschil — de wachters afzonderlijk", () => {
     expect(alleenStatusVerschil(met("actief"), met("afgerond"))).toBe(true);
   });
 
-  it("de regelaantalcontrole staat op zichzelf: aangehangen tekst blijft zichtbaar", () => {
-    const basis = "---\nid: T-x\nstatus: actief\n---\n\ntekst\n";
-    const metStaart = "---\nid: T-x\nstatus: afgerond\n---\n\ntekst\nAC-9 vervalt.\n";
-    expect(alleenStatusVerschil(basis, metStaart)).toBe(false);
+  it("de regelaantalcontrole staat op zichzelf: een regel erbij ná de statusregel", () => {
+    // Beide versies hebben een geldige front-matter en het enige tekstuele
+    // verschil zit vóór de sluitstreep; alleen de regelteller houdt dit tegen.
+    // Een eerder voorbeeld hier werd al door `i >= eind` gevangen en pinde de
+    // teller dus niet — precies de faalvorm die de vorige ronde benoemde.
+    // De lus loopt over de óúde versie, dus wat achter het einde daarvan is
+    // aangehangen ziet zij niet. Zonder afsluitende regeleinde valt die staart
+    // precies buiten bereik, en alleen de regelteller houdt hem tegen.
+    const oud = "---\nid: T-x\nstatus: actief\n---\ntekst";
+    const nieuw = "---\nid: T-x\nstatus: afgerond\n---\ntekst\nAC-9 vervalt.";
+    expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
   });
 
   it("de eis dat regel 0 `---` is, staat op zichzelf", () => {
-    const oud = "\n---\nid: T-x\nstatus: actief\n---\ntekst\n";
-    const nieuw = "\n---\nid: T-x\nstatus: afgerond\n---\ntekst\n";
+    // Zonder die eis zou `indexOf("---", 1)` de éérste streep als sluitstreep
+    // nemen en alles ervóór als front-matter tellen. Hier staat de statusregel
+    // vóór de openingsstreep, dus met de eis eruit zou dit doorglippen.
+    const oud = "status: actief\n---\nid: T-x\n---\ntekst\n";
+    const nieuw = "status: afgerond\n---\nid: T-x\n---\ntekst\n";
     expect(alleenStatusVerschil(oud, nieuw)).toBe(false);
+  });
+
+  it("weigert elke vorm die geen sleutel of lijstitem is", () => {
+    // De drie deelregels van de vormcontrole, elk apart: een lege regel, een
+    // lijstitem zonder inspringing, en een sleutel die met een cijfer begint.
+    const met = (vreemd: string, status: string) => `---\nid: T-x\nstatus: ${status}\n${vreemd}\n---\n\ntekst\n`;
+    for (const vreemd of ["", "- los", "1nummer: x", "# commentaar", "  gevouwen"]) {
+      expect(alleenStatusVerschil(met(vreemd, "actief"), met(vreemd, "afgerond")), JSON.stringify(vreemd)).toBe(false);
+    }
+  });
+
+  it("eist precies één gewijzigde regel, niet minstens één", () => {
+    // `gezien >= 1` zou twee statusregels tegelijk laten wijzigen.
+    const met = (a: string, b: string) => `---\nid: T-x\nstatus: ${a}\nstatus: ${b}\n---\n\ntekst\n`;
+    expect(alleenStatusVerschil(met("actief", "actief"), met("afgerond", "vervallen"))).toBe(false);
   });
 
   it("de eis dat ook de oude regel een statusregel is, staat op zichzelf", () => {

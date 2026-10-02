@@ -93,6 +93,14 @@ terwijl de tekst eromheen — en `DEC-0043` §2 — die weg juist aanwijzen. Vei
 falen is goed, maar een uitweg beloven die niet bestaat is dat niet.
 `akkoordOpDezeKop` is nu één functie die beide plaatsen gebruiken.
 
+Eén eigenschap van die uitzondering verdient het om genoemd te worden: zij is
+richtingloos. `afgerond → actief` gaat er net zo goed doorheen als andersom, en
+dat is juist — heropenen is even administratief als sluiten. Maar omdat het
+akkoord aan de hash van het hele bestand hangt, brengt het terugdraaien van een
+statusregel een hash terug die de eigenaar ooit tekende, en daarmee leeft dat
+akkoord weer. Een statuswijziging is dus geen intrekkingsmechanisme; intrekken
+loopt over de autorisatie zelf.
+
 Twee kleinere dingen uit dezelfde ronde: het patroon is hoofdletterongevoelig
 geworden (`Opdracht.md` kwam er anders doorheen, net zoals
 `HARDE_UITZONDERINGEN` dat voor `CON-*.md` al ondervond), en een ontbrekend
