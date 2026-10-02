@@ -152,6 +152,32 @@ export function restPadToetsingKop(repo: string, nummer: number, kop: string): s
   );
 }
 
+/**
+ * Opzoeking op id, voor het narekenen van een bestaande attestatie: die noemt
+ * de autorisaties en de toetsing bij hun id, en wie haar verifieert moet
+ * precies díe rijen terugzien.
+ *
+ * Deze twee ontbraken, en dat was niet zichtbaar: de REST-bron gaf voor een
+ * opzoeking op id een lege uitkomst terug in plaats van een fout, zodat elke
+ * attestatie in een omgeving zonder databaserol werd afgewezen met "bestaat
+ * niet in de database" — terwijl de rij er gewoon was. Een GitHub-runner is
+ * precies zo'n omgeving (QA-bevinding op #76, twee ronden onzichtbaar
+ * gebleven).
+ *
+ * `in.(…)` wil de waarden als lijst; een id dat een komma of haakje bevat zou
+ * de filter breken, dus de aanroeper geeft alleen gevalideerde uuid's door.
+ */
+export function restPadAutorisatiesOpId(ids: readonly string[]): string {
+  const lijst = ids.map((i) => encodeURIComponent(i)).join(",");
+  return `autorisaties_open?id=in.(${lijst})&limit=${Math.max(ids.length, 1)}`;
+}
+export function restPadToetsingOpId(id: string): string {
+  return `toetsingen_open?id=eq.${encodeURIComponent(id)}&limit=1`;
+}
+
+/** Een uuid zoals de database ze uitgeeft; alles anders gaat niet in een filter. */
+export const UUID_VORM = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
 // De onafhankelijke review door een tweede model (DEC-0046). De engine geeft
 // de aanroep als JSON; jarvis.vraag_review zet er in de database de
 // API-sleutel uit de Vault bij en verstuurt hem (pg_net, asynchroon). Het

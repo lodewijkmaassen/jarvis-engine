@@ -90,8 +90,8 @@ eigenaar de enige autorisatie.
 `samenvoegen: true` laat de workflow de pull request die zij zojuist heeft
 goedgekeurd ook samenvoegen, in een tweede job met `contents: write` die
 alleen dan draait. Het oordeel komt van dezelfde beoordeling als
-`jarvis pr mergen` en wordt in die tweede job opnieuw gedraaid; er komt geen
-autorisatieweg bij. Zet het alleen aan waar dat schrijfrecht gewenst is.
+`jarvis pr mergen` en wordt in die tweede job opnieuw gedraaid, met dezelfde
+leesbeelden en de publieke sleutel; er komt geen autorisatieweg bij. Zet het alleen aan waar dat schrijfrecht gewenst is.
 
 ## De eigen database vanuit de cloud
 

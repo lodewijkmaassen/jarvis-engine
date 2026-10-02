@@ -102,6 +102,8 @@ jobs:
       contents: write
       pull-requests: read
       checks: read
+    outputs:
+      samengevoegd: ${{ steps.samenvoegen.outputs.samengevoegd }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -118,6 +120,7 @@ jobs:
       # opnieuw op de huidige feiten, en de configuratie moet het hier ook nog
       # toestaan.
       - name: Samenvoegen na attestatie
+        id: samenvoegen
         env:
           GITHUB_TOKEN: ${{ github.token }}
           PR_NUMMER: ${{ inputs.pr }}

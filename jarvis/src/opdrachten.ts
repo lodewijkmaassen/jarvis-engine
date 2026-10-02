@@ -93,13 +93,16 @@ import {
   NIEUWE_ANTWOORDEN_SQL,
   NIEUWE_BERICHTEN_SQL,
   restPadAutorisatiePr,
+  restPadAutorisatiesOpId,
   restPadAutorisatieTaak,
   restPadToetsingKop,
+  restPadToetsingOpId,
   RUN_OORZAKEN,
   runKlaarRegel,
   runStandBestand,
   runStartRegel,
   TOETSING_ID_SQL,
+  UUID_VORM,
   TOETSING_KOP_SQL,
   TOETSING_SQL,
   verbindingsBron,
@@ -2721,7 +2724,27 @@ function restBron(url: string, sleutel: string): AttestatieBron {
     taak: async (taak) => alsAutorisatie((await leesViaRest(url, sleutel, restPadAutorisatieTaak(taak)))[0]),
     pr: async (repo, nummer, kop) => alsAutorisatie((await leesViaRest(url, sleutel, restPadAutorisatiePr(repo, nummer, kop)))[0]),
     toetsing: async (repo, nummer, kop) => alsToetsing((await leesViaRest(url, sleutel, restPadToetsingKop(repo, nummer, kop)))[0]),
-    opId: async () => ({ autorisaties: new Map(), toetsing: null }),
+    // Opzoeking op id. Dit was een stub die een lege uitkomst teruggaf, en
+    // dat was erger dan een ontbrekende functie: wie een bestaande attestatie
+    // narekende kreeg "autorisatie bestaat niet in de database" terwijl de
+    // rij er was, en elke attestatie werd in een omgeving zonder databaserol
+    // afgewezen. Een GitHub-runner is zo'n omgeving, dus het samenvoegen in
+    // CI kon er nooit doorheen komen.
+    opId: async (ids, toetsingId) => {
+      const geldig = ids.filter((i) => UUID_VORM.test(i));
+      const autorisaties = new Map<string, Autorisatie>();
+      if (geldig.length > 0) {
+        for (const rij of await leesViaRest(url, sleutel, restPadAutorisatiesOpId(geldig))) {
+          const a = alsAutorisatie(rij);
+          if (a !== null) autorisaties.set(a.id, a);
+        }
+      }
+      const toetsing =
+        toetsingId && UUID_VORM.test(toetsingId)
+          ? alsToetsing((await leesViaRest(url, sleutel, restPadToetsingOpId(toetsingId)))[0])
+          : null;
+      return { autorisaties, toetsing };
+    },
   };
 }
 
@@ -2932,7 +2955,7 @@ async function geverifieerdeAttestaties(
   }
   const sql = verbinding?.sql ?? null;
   try {
-    const bron = bronOverride ?? sqlBron(sql!);
+    const bron = bronOverride ?? sqlBron(sql as PgClient);
     for (const r of kandidaten) {
       if (r.commit !== feiten.kop) {
         opmerkingen.push(`attestatie op ${r.commit.slice(0, 7)} overgeslagen: niet de huidige kop`);

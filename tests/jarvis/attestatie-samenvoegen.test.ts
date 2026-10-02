@@ -16,6 +16,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseConfigTekst } from "@/jarvis/src/config";
+import { restPadAutorisatiesOpId, restPadToetsingOpId, UUID_VORM } from "@/jarvis/src/db";
 
 const BASIS = [
   "project: proef",
@@ -97,5 +98,51 @@ describe("de canonieke attestatieworkflow", () => {
 
   it("is byte-identiek gespiegeld in deze repository", () => {
     expect(spiegel).toBe(yml);
+  });
+});
+
+/**
+ * De opzoeking op id via REST.
+ *
+ * Deze ontbrak, en de stub die er stond was erger dan niets: zij gaf een lege
+ * uitkomst terug in plaats van een fout, zodat `verifieerAttestatie` elke
+ * bestaande attestatie afwees met "bestaat niet in de database" terwijl de
+ * rij er gewoon was. In een GitHub-runner — die geen databaserol heeft — kon
+ * het samenvoegen daardoor nooit slagen, en de suite zag het niet omdat geen
+ * enkele test deze weg raakte. Twee QA-ronden hadden hem nodig om boven water
+ * te komen; hij hoort hier vast te liggen.
+ */
+describe("de REST-paden voor opzoeking op id", () => {
+  const A = "11111111-2222-3333-4444-555555555555";
+  const B = "66666666-7777-8888-9999-aaaaaaaaaaaa";
+
+  it("zoekt meerdere autorisaties in één verzoek op", () => {
+    const pad = restPadAutorisatiesOpId([A, B]);
+    expect(pad).toContain("autorisaties_open?id=in.(");
+    expect(pad).toContain(A);
+    expect(pad).toContain(B);
+  });
+
+  it("vraagt niet minder rijen dan er id's zijn", () => {
+    // Met het standaard limiet van 1 zou de tweede autorisatie van een pull
+    // request die twee taken dient stilzwijgend ontbreken, en de attestatie
+    // zou worden afgewezen op een rij die er wel is.
+    expect(restPadAutorisatiesOpId([A, B])).toContain("limit=2");
+    expect(restPadAutorisatiesOpId([A])).toContain("limit=1");
+  });
+
+  it("vraagt met een lege lijst geen onbegrensde zoekopdracht", () => {
+    expect(restPadAutorisatiesOpId([])).toContain("limit=1");
+  });
+
+  it("zoekt de toetsing op haar eigen id, niet op de kop", () => {
+    expect(restPadToetsingOpId(A)).toBe(`toetsingen_open?id=eq.${A}&limit=1`);
+  });
+
+  it("herkent alleen een echt uuid, zodat niets anders in een filter belandt", () => {
+    expect(UUID_VORM.test(A)).toBe(true);
+    for (const slecht of ["", "geen-uuid", `${A},${B}`, `${A})`, "*", "11111111-2222-3333-4444-5555555555"]) {
+      expect(UUID_VORM.test(slecht), slecht).toBe(false);
+    }
   });
 });
