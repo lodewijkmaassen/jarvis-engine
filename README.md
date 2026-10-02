@@ -87,6 +87,32 @@ repository *Allow GitHub Actions to create and approve pull requests* heeft
 aangezet. Zonder configuratie of zonder workflow blijft de review van de
 eigenaar de enige autorisatie.
 
+### Eén akkoord per taak
+
+Een taakdossier kan in zijn front-matter aankondigen welke soorten harde
+uitzondering de taak mag raken:
+
+    uitzonderingen:
+      - workflows en repository-automatisering
+      - governanceconfiguratie
+
+De eigenaar keurt die aankondiging mee goed, en dan hoeft niet elke pull
+request binnen die taak opnieuw om een apart akkoord te vragen. De waarden zijn
+de soortnamen die de engine kent (de `waarom`-teksten van
+`HARDE_UITZONDERINGEN` in `attestatie.ts`), of `projectregel: <pad>` voor een
+pad uit `attestatie.extra_paden`. Een naam die de engine niet kent dekt niets.
+
+De scope-hash dekt `opdracht.md` als geheel, dus een soort erbij schrijven laat
+het akkoord vervallen: het mandaat is alleen door de eigenaar te verruimen.
+
+De regel `Uitzonderingen:` in de PR-tekst moet dan precies de soorten noemen die
+de gewijzigde bestanden opleveren, alfabetisch en met `; ` ertussen — de
+weigering drukt de verwachte regel letterlijk af. Elke regel in de tekst telt — ook achter een kop, een opsomming, een citaat of
+een tabelstreep. Staat er meer dan één `Uitzonderingen:`-regel die niet
+woordelijk hetzelfde zegt, dan wordt er niet geattesteerd; een herhaling die
+alleen in witruimte of interpunctie afwijkt telt daarbij al als een tweede
+bewering.
+
 `samenvoegen: true` laat de workflow de pull request die zij zojuist heeft
 goedgekeurd ook samenvoegen, in een tweede job met `contents: write` die
 alleen dan draait. Het oordeel komt van dezelfde beoordeling als

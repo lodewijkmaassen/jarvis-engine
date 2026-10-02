@@ -2904,6 +2904,23 @@ function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
 export type GithubLezer = (token: string, methode: string, pad: string, body?: unknown) => Promise<GitHubAntwoord>;
 
 /**
+ * De soorten harde uitzondering die een taakdossier zelf aankondigt, uit de
+ * front-matter `uitzonderingen:`.
+ *
+ * Een onleesbare front-matter geeft een lege lijst en geen fout: zonder
+ * aankondiging geldt gewoon de oude weg, een apart akkoord per kop. Falen
+ * naar minder mandaat, nooit naar meer.
+ */
+export function uitzonderingenUitDossier(inhoud: string): readonly string[] {
+  const ontleed = parseFrontMatter(inhoud);
+  if (!ontleed.ok) return [];
+  const waarde = ontleed.data["uitzonderingen"];
+  if (typeof waarde === "string") return waarde.trim() === "" ? [] : [waarde.trim()];
+  if (!Array.isArray(waarde)) return [];
+  return waarde.filter((v): v is string => typeof v === "string").map((v) => v.trim()).filter((v) => v !== "");
+}
+
+/**
  * Verzamelt alles wat de beoordeling nodig heeft: de PR-feiten van GitHub
  * (commits, bestanden, dossier op de kop, checks) en de rijen uit de bron.
  *
@@ -2965,6 +2982,7 @@ export async function verzamelAttestatieFeiten(
   const taken: TaakFeiten[] = [];
   for (const taak of taakIds) {
     let scopeHashKop: string | null = null;
+    let aangekondigdeUitzonderingen: readonly string[] | undefined;
     const dossier = await haal(
       token,
       "GET",
@@ -2973,10 +2991,12 @@ export async function verzamelAttestatieFeiten(
     if (dossier.status === 200) {
       const d = dossier.lading as { content?: string; encoding?: string };
       if (d.encoding === "base64" && typeof d.content === "string") {
-        scopeHashKop = scopeHash(Buffer.from(d.content, "base64").toString("utf8"));
+        const inhoud = Buffer.from(d.content, "base64").toString("utf8");
+        scopeHashKop = scopeHash(inhoud);
+        aangekondigdeUitzonderingen = uitzonderingenUitDossier(inhoud);
       }
     }
-    taken.push({ taak, autorisatie: await bron.taak(taak), scopeHashKop });
+    taken.push({ taak, autorisatie: await bron.taak(taak), scopeHashKop, aangekondigdeUitzonderingen });
   }
   return {
     nummer,

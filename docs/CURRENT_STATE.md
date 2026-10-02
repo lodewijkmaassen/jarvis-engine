@@ -12,7 +12,7 @@ _Gegenereerd op 2026-10-02._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 44 |
+| Testbestanden | 45 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -32,6 +32,32 @@ _Gegenereerd op 2026-10-02._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Twee reparaties aan het mandaat uit de taak, allebei door de toetsing
+gevonden en allebei op de plaats waar de eigenaar beslist.
+
+**De soorten overschaduwden elkaar.** `raaktHardeUitzondering` en
+`soortenHardeUitzondering` namen de *eerste* treffer uit
+`HARDE_UITZONDERINGEN`, en `/^\.github\//` staat hoog in die lijst. Daardoor
+gold `.github/.env` als "workflows", net als `.github/migrations/`,
+`.github/CON-*.md` en `.github/constraints/`. Een taak die alleen workflows
+aankondigde kreeg er dus stilzwijgend een staand mandaat op secrets,
+productiedata en governance-records bij — drie van de vier soorten die
+`DEC-0043` §2 bij naam noemt. Dit was eerder één keer gerepareerd door
+CODEOWNERS in de lijst naar voren te halen; dat behandelde het symptoom. Nu
+verzamelen beide functies **alle** patronen die een pad raakt, en moet een
+taak elke geraakte soort afzonderlijk aankondigen. De volgorde van de lijst
+doet er niet meer toe.
+
+**Het akkoordscherm beloofde het tegenovergestelde.** Onder een geldig
+akkoord stond "een harde uitzondering vraagt apart", en dat is onwaar zodra
+een taak er een aankondigt — dan dekt het akkoord die juist. De aankondiging
+stond wel in de getoonde tekst, maar ongemarkeerd in een front-matter van elf
+regels, onder een onderschrift dat haar tegensprak. Dat is geen informed
+consent. De kaart leest nu dezelfde `uitzonderingen:`-sleutel uit dezelfde
+tekst waarover de hash gaat, noemt met zoveel woorden wat er wordt
+gemandateerd — vóór én na het akkoord — en laat de belofte "vraagt apart"
+weg zodra zij niet meer klopt.
 
 De opdrachttekst van een taak is geen administratieve wijziging meer.
 `DEC-0044` laat een administratieve pull request door zonder taakakkoord,
@@ -528,6 +554,70 @@ pagina blijft serveren is zelf een van de manieren waarop een uitrol mislukt.
 
 De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
 die dit merk verplicht stelt, is nog niet gebouwd.
+
+Nieuw sinds 2026-10-02: **een taak kan haar eigen harde uitzonderingen
+aankondigen, en het akkoord van de eigenaar dekt die dan in één keer.**
+
+`DEC-0043` §2 eiste tot nu toe een apart akkoord op élke kop die een harde
+uitzondering raakt. Binnen één taak die nu eenmaal workflows en
+governanceconfiguratie moet aanpassen, betekende dat een akkoord per pull
+request — vier keer dezelfde vraag voor vier leveringen die allemaal binnen
+dezelfde goedgekeurde opdracht vielen. Dat is het tegenovergestelde van wat
+één akkoord op een afgebakende taak hoort te betekenen.
+
+De vraag verhuist naar voren. `opdracht.md` kondigt in zijn front-matter aan
+welke soorten de taak raakt (`uitzonderingen: [...]`), en de eigenaar keurt
+dát goed. `gemandateerdeUitzonderingen` leest die aankondiging, maar alleen
+van taken waarvan het akkoord op deze kop geldig is.
+
+Wat dit dichthoudt is de scope-hash, en dat is geen bijvangst maar de reden
+dat het kan: de hash gaat over `opdracht.md` als geheel. Een soort bijschrijven
+verandert de hash en laat het akkoord vervallen, dus een pull request kan zijn
+eigen mandaat niet schrijven. Het mandaat groeit alleen doordat de eigenaar
+opnieuw goedkeurt — hij beslist nog steeds alles, maar één keer per taak in
+plaats van één keer per levering.
+
+Vijf grenzen houden het mandaat smal, en de eerste is de belangrijkste omdat
+zij uit een toetsing kwam die een echt gat vond.
+
+1. **De regel `Uitzonderingen:` in de PR-tekst moet precies zijn wat de
+   bestanden opleveren.** Die regel is het enige kanaal voor een uitzondering
+   zónder bestandspad — een productieactie, een sleutelrotatie, een extern
+   account. Zonder deze eis lift zo'n verklaring mee op een gemandateerde
+   treffer: een pull request die een aangekondigde workflow wijzigt én in zijn
+   tekst een sleutelrotatie aankondigt, werd zonder enig akkoord geattesteerd.
+2. **Alleen soorten die werkelijk worden geraakt hoeven gedekt te zijn**, en
+   één ongedekte soort is genoeg om te weigeren.
+3. **Geen mandaat bij meer dan één taak in één pull request.** Dan is niet te
+   zien welk bestand bij welke taak hoort, en zou de aankondiging van de ene
+   de andere dekken.
+4. **Een soort die niet bestaat geeft geen mandaat.** Een typefout in het
+   dossier levert dus geen stille dekking op maar gewoon geen.
+5. **Het aparte akkoord per kop werkt onveranderd**, voor alles wat een taak
+   vooraf niet kon zien.
+
+`CODEOWNERS` heeft daarbij een eigen soort gekregen: hij viel onder het
+patroon van `.github/`, zodat een mandaat op workflows er ongemerkt een
+staand mandaat op wie-wat-mag-beoordelen bij gaf.
+
+**En de beslissende code is nu zelf een harde uitzondering.** Dat sluit wat
+het zelfstandig samenvoegen openzette: een pull request die alleen
+`attestatie.ts` of `pr.ts` wijzigt raakte geen enkele harde uitzondering, werd
+dus door de poort zelf geattesteerd en samengevoegd, en elke volgende levering
+werd daarna door de gewijzigde code beoordeeld. Niet in één stap — de
+beslissende code draait van de hoofdbranch, dus een pull request keurt zichzelf
+niet goed — maar wel in twee. Gemeten in deze repository: `jarvis/src/` stond
+niet in `extra_paden`, en de beveiliging van de hoofdbranch dwingt review door
+de code-eigenaar niet af.
+
+Standaard is die soort niet onder een taakmandaat te brengen: een taak moet
+haar uitdrukkelijk aankondigen, en dan heeft de eigenaar het gezien in het
+dossier dat hij goedkeurt. Zonder aankondiging vraagt zo'n wijziging een apart
+akkoord op de kop — veilig als uitgangspunt, zonder dat hij iets hoeft te
+beslissen.
+
+De attestatietekst noemt voortaan de grond — `apart akkoord <id>` of `mandaat
+uit <taak>` — zodat achteraf te zien is waarop is geattesteerd.
 
 
 ## Volgende stap

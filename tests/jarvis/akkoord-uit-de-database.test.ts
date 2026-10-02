@@ -393,7 +393,7 @@ describe("de pagina: één ijking, en alle vier de plaatsen lezen haar", () => {
     const f = uitPagina(
       ["esc", "md", "inlineMd", "MAANDEN", "datumKort", "tijd", "relatief", "RECENT_DAGEN", "WACHT_WOORD",
        "TOESTAND_TEKST", "ROLNAAM", "SOORT", "URG", "isOpen", "heeftEigenPunten", "zetVan", "zetTekst",
-       "regieVan", "sluitDossier", "akkoordVan", "akkoordNodig", "akkoordHtml", "lijstRegel", "taakHtml",
+       "regieVan", "sluitDossier", "akkoordVan", "akkoordNodig", "aangekondigdeUitzonderingen", "akkoordHtml", "lijstRegel", "taakHtml",
        "ijkZetten", "verzamelActies", "zetKort", "nulstand"],
       staat,
     );
