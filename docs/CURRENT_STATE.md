@@ -415,6 +415,22 @@ zij uit een toetsing kwam die een echt gat vond.
 patroon van `.github/`, zodat een mandaat op workflows er ongemerkt een
 staand mandaat op wie-wat-mag-beoordelen bij gaf.
 
+**En de beslissende code is nu zelf een harde uitzondering.** Dat sluit wat
+het zelfstandig samenvoegen openzette: een pull request die alleen
+`attestatie.ts` of `pr.ts` wijzigt raakte geen enkele harde uitzondering, werd
+dus door de poort zelf geattesteerd en samengevoegd, en elke volgende levering
+werd daarna door de gewijzigde code beoordeeld. Niet in één stap — de
+beslissende code draait van de hoofdbranch, dus een pull request keurt zichzelf
+niet goed — maar wel in twee. Gemeten in deze repository: `jarvis/src/` stond
+niet in `extra_paden`, en de beveiliging van de hoofdbranch dwingt review door
+de code-eigenaar niet af.
+
+Standaard is die soort niet onder een taakmandaat te brengen: een taak moet
+haar uitdrukkelijk aankondigen, en dan heeft de eigenaar het gezien in het
+dossier dat hij goedkeurt. Zonder aankondiging vraagt zo'n wijziging een apart
+akkoord op de kop — veilig als uitgangspunt, zonder dat hij iets hoeft te
+beslissen.
+
 De attestatietekst noemt voortaan de grond — `apart akkoord <id>` of `mandaat
 uit <taak>` — zodat achteraf te zien is waarop is geattesteerd.
 

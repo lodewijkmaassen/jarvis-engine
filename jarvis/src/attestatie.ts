@@ -88,6 +88,17 @@ export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly
   { patroon: /(^|\/)CON-[^/]*\.md$/i, waarom: "een randvoorwaarde-record, waar het ook staat" },
   { patroon: /^jarvis\/roles\//, waarom: "rolcontracten (mandaat)" },
   { patroon: /^jarvis\/canonical\//, waarom: "de canonieke poort- en attestatieworkflow" },
+  // De code die de autorisatie zélf beoordeelt. Zonder deze regel verdwijnt het
+  // laatste moment waarop een mens die diff ziet, zodra de workflow ook mag
+  // samenvoegen: een pull request die alleen deze bestanden wijzigt raakte geen
+  // enkele harde uitzondering, werd dus door de poort zelf geattesteerd en
+  // samengevoegd, en elke volgende levering werd daarna door de gewijzigde code
+  // beoordeeld. Niet in één stap — de beslissende code draait van de
+  // hoofdbranch, dus een pull request keurt zichzelf niet goed — maar wel in
+  // twee. Gemeten op 2026-10-02 in deze repository: `jarvis/src/` staat niet in
+  // `extra_paden`, en de beveiliging van de hoofdbranch dwingt review door de
+  // code-eigenaar niet af.
+  { patroon: /^jarvis\/src\/(attestatie|pr)\.ts$/, waarom: "de code die de autorisatie beoordeelt" },
   { patroon: /^\.claude\//, waarom: "agentconfiguratie" },
 ];
 

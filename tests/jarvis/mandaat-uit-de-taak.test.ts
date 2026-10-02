@@ -348,3 +348,51 @@ describe("een onbekende soort geeft geen mandaat", () => {
     expect(uit).toEqual([]);
   });
 });
+
+/**
+ * De code die de autorisatie beoordeelt, is zelf een harde uitzondering.
+ *
+ * Dit is de grens die sluit wat het zelfstandig samenvoegen openzette. Zonder
+ * haar raakte een pull request die alleen `attestatie.ts` of `pr.ts` wijzigt
+ * geen enkele harde uitzondering: hij werd door de poort zelf geattesteerd en
+ * samengevoegd, en elke volgende levering werd daarna door de gewijzigde code
+ * beoordeeld. Niet in één stap — de beslissende code draait van de
+ * hoofdbranch — maar wel in twee.
+ *
+ * Standaard is zij niet onder een taakmandaat te brengen: een taak moet die
+ * soort uitdrukkelijk aankondigen, en dan heeft de eigenaar het gezien in het
+ * dossier dat hij goedkeurt.
+ */
+describe("de beslissende code is een harde uitzondering", () => {
+  it("merkt een wijziging in attestatie.ts en in pr.ts", () => {
+    expect(soortenHardeUitzondering(["jarvis/src/attestatie.ts"])).toEqual(["de code die de autorisatie beoordeelt"]);
+    expect(soortenHardeUitzondering(["jarvis/src/pr.ts"])).toEqual(["de code die de autorisatie beoordeelt"]);
+  });
+
+  it("laat gewone enginecode ongemoeid", () => {
+    for (const pad of ["jarvis/src/regie.ts", "jarvis/src/uitrol.ts", "tests/jarvis/pr.test.ts"]) {
+      expect(soortenHardeUitzondering([pad]), pad).toEqual([]);
+    }
+  });
+
+  it("weigert zo'n wijziging wanneer de taak de soort niet aankondigt", () => {
+    const uit = beoordeelAttestatie(
+      feiten({
+        gewijzigdeBestanden: ["jarvis/src/attestatie.ts"],
+        prTekst: "Uitzonderingen: de code die de autorisatie beoordeelt",
+      }),
+    );
+    expect(uit).toContainEqual(expect.stringMatching(/harde uitzondering/));
+  });
+
+  it("laat haar toe wanneer de taak haar wél aankondigt", () => {
+    const uit = beoordeelAttestatie(
+      feiten({
+        taken: [taak({ aangekondigdeUitzonderingen: ["de code die de autorisatie beoordeelt"] })],
+        gewijzigdeBestanden: ["jarvis/src/attestatie.ts"],
+        prTekst: "Uitzonderingen: de code die de autorisatie beoordeelt",
+      }),
+    );
+    expect(uit).toEqual([]);
+  });
+});
