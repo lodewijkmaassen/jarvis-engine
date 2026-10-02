@@ -305,6 +305,14 @@ export function controleerGovernance(invoer: GovernanceInvoer): readonly string[
     const bronPad = canoniekeUitrolPad(modus);
     if (u.actief.viaSymlink) redenen.push(`${ACTIEVE_UITROL} is een symbolische link of ligt achter een link`);
     if (u.canoniek.viaSymlink) redenen.push(`${bronPad} is een symbolische link of ligt achter een link`);
+    for (const [naam, feiten] of [
+      [ACTIEVE_UITROL, u.actief],
+      [bronPad, u.canoniek],
+    ] as const) {
+      if (feiten.echtPad !== null && !binnenRepo(wortelEchtPad, feiten.echtPad)) {
+        redenen.push(`${naam} wijst na het volgen van links buiten de repository`);
+      }
+    }
     if (u.actief.echtPad !== null && u.canoniek.echtPad === u.actief.echtPad) {
       redenen.push(`${ACTIEVE_UITROL} en ${bronPad} zijn hetzelfde bestand`);
     }

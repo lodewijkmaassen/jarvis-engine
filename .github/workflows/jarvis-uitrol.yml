@@ -70,11 +70,21 @@ jobs:
         id: bepalen
         run: node node_modules/jarvis-engine/bin/jarvis.mjs uitrol --gevraagd
 
-  # Alleen voor een repository die een uitroladres heeft ingesteld. Draait deze
-  # job niet, dan komen de secrets ook niet in een runner terecht.
+  # Alleen voor een repository die een uitroladres heeft ingesteld, en alleen op
+  # `main`. Draait deze job niet, dan komen de secrets ook niet in een runner
+  # terecht.
+  #
+  # De ref-grens is geen overbodige verdubbeling van de `push`-trigger. Bij een
+  # `workflow_dispatch` draait GitHub de workflowdefinitie van de gekozen ref,
+  # terwijl repository-secrets voor elke ref beschikbaar zijn. Zonder deze regel
+  # kan wie op `jarvis/**` mag pushen een gewijzigde kopie van dit bestand op een
+  # branch starten, het langlevende uitroltoken krijgen en niet-getoetste code
+  # naar productie rollen; de bouwmerkcontrole ziet dat niet, want zij vergelijkt
+  # met de sha van die branch. `jarvis/src/workflow.ts` noemt productiecredentials
+  # buiten agentbranches zelf als harde beveiligingsgrens — dit is die grens.
   uitrollen:
     needs: bepalen
-    if: needs.bepalen.outputs.gevraagd == 'true'
+    if: needs.bepalen.outputs.gevraagd == 'true' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read

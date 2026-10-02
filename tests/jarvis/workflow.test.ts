@@ -256,6 +256,27 @@ describe("de gehardde governancecontrole", () => {
     it("staat op de lijst van toegestane workflows", () => {
       expect(TOEGESTANE_WORKFLOWS).toContain("jarvis-uitrol.yml");
     });
+
+    it("blokkeert een pad dat na het volgen van links buiten de repository wijst", () => {
+      const uit = controleerGovernance(
+        basis({ uitrol: uitrol({ echtPad: "/elders/jarvis-uitrol.yml" }, { echtPad: "/repo/c" }) }),
+      );
+      expect(uit.join(" ")).toContain("buiten de repository");
+    });
+
+    // De uitroljob draagt het langlevende productietoken. Bij een
+    // `workflow_dispatch` draait GitHub de definitie van de gekozen ref,
+    // terwijl repository-secrets voor elke ref beschikbaar zijn. Zonder de
+    // ref-grens kan wie op `jarvis/**` mag pushen dat token op een branch
+    // bemachtigen en niet-getoetste code naar productie rollen; de
+    // bouwmerkcontrole ziet dat niet, want zij vergelijkt met de sha van die
+    // branch. Deze test legt de grens vast, in beide kopieen.
+    it("laat de uitroljob alleen op main draaien", () => {
+      for (const pad of [".github/workflows/jarvis-uitrol.yml", "jarvis/canonical/jarvis-uitrol.yml"]) {
+        const tekst = readFileSync(path.join(process.cwd(), pad), "utf8");
+        expect(tekst).toContain("github.ref == 'refs/heads/main'");
+      }
+    });
   });
 
   it("blokkeert wanneer de twee bestanden verschillen", () => {
