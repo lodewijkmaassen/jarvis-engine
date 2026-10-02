@@ -91,8 +91,15 @@ jobs:
   # GitHub maakt een omgeving die een workflow noemt stilzwijgend aan zodra de
   # job voor het eerst draait — zonder protection rules. Staan de waarden dan
   # als repository-secret, dan rolt deze workflow gewoon uit, is er GEEN
-  # branchgrens, en ziet niemand dat. Zie de eigenaarsinstructie in het dossier
-  # van `T-20261002-technische-uitvoering`.
+  # branchgrens, en ziet niemand dat.
+  #
+  # De volledige instructie staat in `docs/CURRENT_STATE.md`, in de tabel onder
+  # de alinea's over deze workflow: de omgeving `productie`, de branch policy op
+  # `main`, en de vijf waarden hieronder met hun vindplaats. Volg die tabel en
+  # niet `tasks/T-20261002-technische-uitvoering/opdracht.md`: stap 2 daarvan is
+  # ouder, zegt "repository-secret", en is daarmee precies de vergissing die
+  # hierboven beschreven staat. Die tekst is niet bijgewerkt omdat haar hash het
+  # taakakkoord draagt; `docs/CURRENT_STATE.md` gaat voor.
   #
   # De `if`-regel eronder is geen beveiliging maar een goedkope vangrail: zij
   # houdt de ongewijzigde kopie van een dispatch op een branch tegen voordat de
