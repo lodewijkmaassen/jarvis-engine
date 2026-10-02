@@ -33,6 +33,38 @@ _Gegenereerd op 2026-10-02._
 
 ## Waar staan we
 
+De opdrachttekst van een taak is geen administratieve wijziging meer.
+`DEC-0044` laat een administratieve pull request door zonder taakakkoord,
+zonder scopevergelijking én zonder onafhankelijke toetsing, en de takenmap
+viel daar volledig onder — ook `tasks/<taak>/opdracht.md`, de tekst waarvan de
+hash het akkoord van de eigenaar draagt en die ook de omvang van het mandaat
+vastlegt. Een pull request die precies dat bestand herschreef, kreeg daarmee
+de review `taken administratief · autorisaties - · scope - · toetsing -`:
+goedgekeurd door de poort zelf, zonder dat één mens of één toetsing ernaar
+keek (gemeten 2026-10-02 door QA, in een consumentproject).
+
+Dat was geen weg om stiekem mandaat te winnen — zodra de tekst verandert,
+klopt de hash niet meer en vervalt het akkoord, dus zo'n samenvoeging kóst
+Jarvis zijn mandaat en de eigenaar ziet de nieuwe tekst voordat hij opnieuw
+autoriseert. Het gat zit ervóór: die nieuwe tekst werd zonder toetsing en
+zonder zijn medeweten geschreven, en hij tikt er straks op.
+
+`herschrevenScope` scheidt nu twee gevallen die niet hetzelfde zijn. Een
+*nieuw* dossier blijft administratief: het voegt een tekst toe die nog niemand
+heeft goedgekeurd en die niets mandateert zolang er geen akkoord op ligt. Een
+*bestaand* dossier herschrijven is dat niet — dan gelden het taakakkoord, de
+scopevergelijking en de toetsing gewoon, en omdat de hash per definitie niet
+meer klopt, loopt zo'n pull request over een apart akkoord van de eigenaar op
+die ene pull request (`DEC-0043` §2). Een bestand zonder bekende status telt
+als herschreven: onbekend mag nooit de soepelste uitkomst opleveren.
+
+`verzamelAttestatieFeiten` is daarvoor geëxporteerd met een injecteerbare
+GitHub-lezer. Dat is dezelfde les als bij de akkoordstand: twee velden die
+daar wegvallen maken de beoordeling stilletjes soepeler, en dat valt alleen
+vast te leggen door het samenstellen werkelijk te draaien. Vier sabotages op
+de keten — het patroon niet doorgeven, de status niet doorgeven, elke status
+"added" noemen, de dichting eruit — vallen nu alle vier om.
+
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard
 als historie, en niets geleverd. Eén bron bepaalt dat — `sluitDossier` in

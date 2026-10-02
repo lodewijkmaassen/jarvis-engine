@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  herschrevenScope,
+  isAdministratievePr,
   attestatieInhoud,
   attestatieTekst,
   beoordeelAttestatie,
@@ -451,4 +453,89 @@ describe("laatstePerNaam met herkomst", () => {
     // Zonder goedkeuring van de eigenaar blijft het antwoord hetzelfde als eerst.
     expect(beoordeelSamenvoegen({ ...basis, reviews: [] }, "eigenaar")[0]).toMatch(/geen goedkeurende review/);
   });
+});
+
+/**
+ * Het gat dat QA op 2026-10-02 vond, en de dichting ervan.
+ *
+ * `DEC-0044` laat een administratieve pull request door zonder taakakkoord,
+ * zonder scopevergelijking en zonder onafhankelijke toetsing. `tasks/` viel
+ * daar volledig onder — ook `tasks/<taak>/opdracht.md`, de tekst waarvan de
+ * hash het akkoord van de eigenaar draagt en die sinds de aankondiging van
+ * harde uitzonderingen ook de omvang van het mandaat vastlegt. Een pull
+ * request die precies dat bestand herschreef, kreeg in een consumentproject
+ * de review `taken administratief · autorisaties - · scope - · toetsing -`.
+ *
+ * Dat is geen weg om stiekem mandaat te winnen — de hash klopt daarna niet
+ * meer, dus het akkoord vervalt en de eigenaar ziet de nieuwe tekst voordat
+ * hij opnieuw autoriseert. Het gat zit ervóór: die nieuwe tekst werd zonder
+ * toetsing en zonder zijn medeweten geschreven.
+ */
+describe("de opdrachttekst is geen administratieve wijziging", () => {
+  const SCOPEPATROON = /^tasks\/[^/]+\/opdracht\.md$/;
+  const dossierPr = (status: string, bestanden = ["tasks/T-20260913-proef/opdracht.md"]) =>
+    feiten({
+      gewijzigdeBestanden: bestanden,
+      bestandStatus: Object.fromEntries(bestanden.map((b) => [b, status])),
+      scopeBestandPatroon: SCOPEPATROON,
+      // Zoals bij een herschreven opdracht: de kop draagt een andere tekst dan
+      // waarop het akkoord staat, en er is geen toetsing.
+      taken: [{ taak: "T-20260913-proef", autorisatie, scopeHashKop: scopeHash(`${SCOPE}\nextra\n`) }],
+      toetsing: null,
+    });
+
+  it("laat een bestaand dossier herschrijven niet als administratief gelden", () => {
+    const f = dossierPr("modified");
+    expect(isAdministratievePr(f)).toBe(false);
+    expect(herschrevenScope(f)).toEqual(["tasks/T-20260913-proef/opdracht.md"]);
+    const redenen = beoordeelAttestatie(f);
+    expect(redenen.join(" | ")).toMatch(/herschrijft tasks\/T-20260913-proef\/opdracht\.md/);
+    expect(redenen.join(" | "), "de scope hoort ook gewoon te worden vergeleken").toMatch(/de scope van T-20260913-proef is veranderd/);
+    expect(redenen.join(" | "), "en een toetsing hoort te worden geëist").toMatch(/geen toetsing met oordeel GO/);
+  });
+
+  it("laat een nieuw dossier wél administratief zijn — het mandateert nog niets", () => {
+    const f = dossierPr("added");
+    expect(herschrevenScope(f)).toEqual([]);
+    expect(isAdministratievePr(f)).toBe(true);
+    expect(beoordeelAttestatie(f)).toEqual([]);
+  });
+
+  it("telt een hernoemd dossier als herschreven", () => {
+    expect(herschrevenScope(dossierPr("renamed"))).toHaveLength(1);
+  });
+
+  it("telt een bestand zonder bekende status als herschreven — onbekend is nooit het soepelst", () => {
+    const f = feiten({
+      gewijzigdeBestanden: ["tasks/T-20260913-proef/opdracht.md"],
+      scopeBestandPatroon: SCOPEPATROON,
+      toetsing: null,
+    });
+    expect(f.bestandStatus).toBeUndefined();
+    expect(herschrevenScope(f)).toHaveLength(1);
+    expect(isAdministratievePr(f)).toBe(false);
+  });
+
+  it("raakt de rest van een administratieve pull request niet", () => {
+    const f = feiten({
+      gewijzigdeBestanden: ["tasks/T-20260913-proef/resultaat.md", "knowledge/RISKS/RSK-0001.md"],
+      bestandStatus: { "tasks/T-20260913-proef/resultaat.md": "modified", "knowledge/RISKS/RSK-0001.md": "modified" },
+      scopeBestandPatroon: SCOPEPATROON,
+      toetsing: null,
+    });
+    expect(herschrevenScope(f)).toEqual([]);
+    expect(isAdministratievePr(f)).toBe(true);
+    expect(beoordeelAttestatie(f)).toEqual([]);
+  });
+
+  it("valt terug op de oude regel wanneer er geen scopepatroon is meegegeven", () => {
+    const f = feiten({
+      gewijzigdeBestanden: ["tasks/T-20260913-proef/opdracht.md"],
+      bestandStatus: { "tasks/T-20260913-proef/opdracht.md": "modified" },
+      toetsing: null,
+    });
+    expect(herschrevenScope(f)).toEqual([]);
+    expect(isAdministratievePr(f)).toBe(true);
+  });
+
 });

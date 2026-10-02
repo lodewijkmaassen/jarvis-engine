@@ -197,6 +197,18 @@ export type AttestatieFeiten = {
   readonly extraPaden?: readonly string[];
   /** Patronen van administratieve paden (dossiers, kennis, feitenblok); leeg = geen administratieve route. */
   readonly administratiefPaden?: readonly RegExp[];
+  /**
+   * Patroon van het bestand waarop het akkoord van de eigenaar rust, meestal
+   * `tasks/<taak>/opdracht.md`. Ontbreekt het, dan geldt de oude regel en is
+   * elke wijziging eronder gewoon administratief.
+   */
+  readonly scopeBestandPatroon?: RegExp;
+  /**
+   * Per gewijzigd bestand de status die GitHub geeft (`added`, `modified`,
+   * `renamed`, `removed`). Een bestand dat hier ontbreekt telt als gewijzigd:
+   * onbekend mag nooit de soepelste uitkomst opleveren.
+   */
+  readonly bestandStatus?: Readonly<Record<string, string>>;
   readonly prTekst: string;
   /** Een autorisatie van soort "pr" op precies deze kop, of null. */
   readonly autorisatiePr: Autorisatie | null;
@@ -204,11 +216,47 @@ export type AttestatieFeiten = {
   readonly verplichteCheck: string;
 };
 
+/**
+ * De bestanden in deze pull request die de tekst *herschrijven* waarop het
+ * akkoord van de eigenaar rust. Een nieuw dossier telt niet mee: dat voegt een
+ * tekst toe die nog niemand heeft goedgekeurd en die niets mandateert zolang
+ * de eigenaar er geen akkoord op geeft. Een bestaand dossier wijzigen is iets
+ * anders — dat verandert waar een gegeven akkoord over gaat.
+ *
+ * Waarom dit bestaat. `DEC-0044` laat een administratieve pull request door
+ * zonder taakakkoord, zonder scopevergelijking én zonder onafhankelijke
+ * toetsing, en `tasks/` viel daar volledig onder. Daarmee kon Jarvis de
+ * opdrachttekst van een lopende taak herschrijven — de acceptatiecriteria, en
+ * sinds de aankondiging van harde uitzonderingen ook de omvang van zijn eigen
+ * mandaat — met een goedkeuring van de poort zelf en zonder dat er één mens of
+ * één toetsing naar keek. Gemeten op 2026-10-02 in een consumentproject: een
+ * pull request die precies dat deed, kreeg de review `taken administratief ·
+ * autorisaties - · scope - · toetsing -`.
+ *
+ * Wat het *niet* was: een weg om stiekem mandaat te winnen. Zodra de tekst
+ * verandert, klopt de hash in het akkoord niet meer en vervalt het akkoord —
+ * dus zo'n samenvoeging kost Jarvis zijn mandaat in plaats van het te
+ * verruimen, en de eigenaar ziet de nieuwe tekst voordat hij opnieuw
+ * autoriseert. Het gat zit in wat eraan voorafgaat: de tekst waarop hij
+ * straks tikt, is zonder toetsing en zonder zijn medeweten geschreven.
+ */
+export function herschrevenScope(f: AttestatieFeiten): readonly string[] {
+  const patroon = f.scopeBestandPatroon;
+  if (patroon === undefined) return [];
+  const status = f.bestandStatus ?? {};
+  return f.gewijzigdeBestanden.filter((b) => {
+    const pad = b.replace(/\\/g, "/");
+    if (!patroon.test(pad)) return false;
+    return (status[b] ?? status[pad] ?? "modified") !== "added";
+  });
+}
+
 /** Is deze PR administratief (DEC-0044)? Dan is er geen taakakkoord en geen toetsing nodig. */
 export function isAdministratievePr(f: AttestatieFeiten): boolean {
   return (
     isAdministratief(f.gewijzigdeBestanden, f.administratiefPaden ?? []) &&
-    raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []).length === 0
+    raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []).length === 0 &&
+    herschrevenScope(f).length === 0
   );
 }
 
@@ -224,8 +272,17 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   if (f.gewijzigdeBestanden.length === 0) redenen.push("de pull request wijzigt geen bestanden; er is niets te attesteren");
 
   const administratief = isAdministratievePr(f);
+  const herschreven = herschrevenScope(f);
+  if (herschreven.length > 0) {
+    redenen.push(
+      `deze pull request herschrijft ${herschreven.join(", ")} — de tekst waarop het akkoord van de eigenaar rust; ` +
+        "dat is geen administratieve wijziging en vraagt zijn akkoord op deze pull request",
+    );
+  }
   if (!administratief) {
-    if (f.taken.length === 0 && f.taakRedenen.length === 0) redenen.push("geen taak bekend voor deze pull request");
+    if (f.taken.length === 0 && f.taakRedenen.length === 0 && herschreven.length === 0) {
+      redenen.push("geen taak bekend voor deze pull request");
+    }
     for (const t of f.taken) {
       if (t.autorisatie === null) {
         redenen.push(`geen akkoord van de eigenaar op taak ${t.taak} in de database`);
