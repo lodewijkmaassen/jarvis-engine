@@ -64,6 +64,7 @@ import {
   attestatieTekst,
   beoordeelAttestatie,
   leesAttestatie,
+  scopeBronnen,
   scopeHash,
   takenUitCommits,
   verifieerAttestatie,
@@ -2780,6 +2781,71 @@ function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
 }
 
 /**
+ * De scope-hash van een taak: SHA-256 over `tasks/<T>/opdracht.md`.
+ *
+ * Eerst in de repository van de pull request zelf, op de kop. Dat is de
+ * normale weg en er verandert daar niets: staat het dossier daar, dan telt
+ * die versie, inclusief een wijziging die de pull request er zelf in maakt —
+ * precies de reden dat de hash bestaat.
+ *
+ * Staat het dossier er niet, dan was er tot nu toe geen scope en viel het
+ * akkoord van de eigenaar dood. Dat trof elke taak die code in meer dan één
+ * repository raakt, want het dossier staat per ontwerp op één plek: de engine
+ * mag geen projectkennis dragen, dus een engine-PR kan het dossier van de taak
+ * die hem opdroeg niet op de eigen kop hebben. Gemeten op 2026-10-02 bij
+ * engine-PR #74: "opdracht.md ontbreekt op de kop; zonder scope geen akkoord",
+ * met een geldig taakakkoord van die ochtend.
+ *
+ * De terugval leest het dossier daarom uit de repository waarin het leeft,
+ * op een vaste ref. Drie dingen maken dat veilig, en ze horen alle drie
+ * genoemd te worden:
+ *
+ *   1. Die ref is niet de pull request. Een pull request in deze repository
+ *      kan niets schrijven op de hoofdbranch van de andere, dus hij kan zijn
+ *      eigen scope niet bijstellen om zichzelf goed te keuren.
+ *   2. De vergelijking zelf verandert niet. De gevonden hash moet nog altijd
+ *      gelijk zijn aan die in het akkoord; wijzigt het dossier daar, dan
+ *      vervalt het akkoord precies zoals bedoeld.
+ *   3. Het is een terugval en geen voorkeur. Staat het dossier wél op de kop,
+ *      dan wordt de andere repository niet eens bevraagd.
+ *
+ * Zonder `attestatie.scope_repo` gebeurt er niets nieuws: dan is het gedrag
+ * regel voor regel wat het was.
+ */
+async function leesScopeHash(
+  token: string,
+  slug: string,
+  kop: string,
+  taak: string,
+  config: JarvisConfig,
+): Promise<{ hash: string | null; bron: string }> {
+  const bronnen = scopeBronnen({
+    takenMap: config.taken_map,
+    taak,
+    prRepo: slug,
+    kop,
+    scopeRepo: config.attestatie.scope_repo,
+    scopeRef: config.attestatie.scope_ref,
+  });
+  for (const b of bronnen) {
+    const hash = await leesDossierHash(token, b.pad);
+    if (hash !== null) return { hash, bron: b.bron };
+  }
+  // Niets gevonden: noem alle plekken waar is gezocht. Een melding die alleen
+  // "ontbreekt op de kop" zegt, stuurde eerder naar de verkeerde oorzaak.
+  return { hash: null, bron: bronnen.map((b) => b.bron).join(", ") };
+}
+
+/** Eén leespoging; null bij alles wat geen leesbaar bestand oplevert. */
+async function leesDossierHash(token: string, pad: string): Promise<string | null> {
+  const antwoord = await github(token, "GET", pad);
+  if (antwoord.status !== 200) return null;
+  const d = antwoord.lading as { content?: string; encoding?: string };
+  if (d.encoding !== "base64" || typeof d.content !== "string") return null;
+  return scopeHash(Buffer.from(d.content, "base64").toString("utf8"));
+}
+
+/**
  * Verzamelt alles wat de beoordeling nodig heeft: de PR-feiten van GitHub
  * (commits, bestanden, dossier op de kop, checks) en de rijen uit de bron.
  */
@@ -2814,19 +2880,8 @@ async function verzamelAttestatieFeiten(
   const { taken: taakIds, redenen: taakRedenen } = takenUitCommits(commits);
   const taken: TaakFeiten[] = [];
   for (const taak of taakIds) {
-    let scopeHashKop: string | null = null;
-    const dossier = await github(
-      token,
-      "GET",
-      `/repos/${slug}/contents/${encodeURIComponent(config.taken_map)}/${encodeURIComponent(taak)}/opdracht.md?ref=${feiten.kop}`,
-    );
-    if (dossier.status === 200) {
-      const d = dossier.lading as { content?: string; encoding?: string };
-      if (d.encoding === "base64" && typeof d.content === "string") {
-        scopeHashKop = scopeHash(Buffer.from(d.content, "base64").toString("utf8"));
-      }
-    }
-    taken.push({ taak, autorisatie: await bron.taak(taak), scopeHashKop });
+    const scope = await leesScopeHash(token, slug, feiten.kop, taak, config);
+    taken.push({ taak, autorisatie: await bron.taak(taak), scopeHashKop: scope.hash, scopeBron: scope.bron });
   }
   return {
     nummer,

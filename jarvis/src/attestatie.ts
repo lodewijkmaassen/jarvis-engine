@@ -171,13 +171,66 @@ export function isAdministratief(bestanden: readonly string[], patronen: readonl
   return bestanden.every((b) => patronen.some((p) => p.test(b.replace(/\\/g, "/"))));
 }
 
+/** Eén plek waar het taakdossier gezocht wordt, in volgorde van voorrang. */
+export type Scopebron = {
+  /** Het API-pad, al gecodeerd. */
+  readonly pad: string;
+  /** Hoe die plek heet in een melding: `kop` of `<eigenaar/naam>@<ref>`. */
+  readonly bron: string;
+};
+
+/**
+ * Waar `tasks/<T>/opdracht.md` gezocht wordt, in volgorde.
+ *
+ * Deze functie is de hele veiligheidsbeslissing van de terugvalweg, en staat
+ * daarom apart en zonder I/O: wie wil nagaan of een pull request zijn eigen
+ * scope kan bijstellen, hoeft alleen deze lijst te lezen.
+ *
+ *   1. Altijd eerst de repository van de pull request zelf, op de kop. Daar
+ *      verandert niets: een pull request die het dossier meeneemt, wordt op
+ *      die versie beoordeeld.
+ *   2. Alleen als dat niets oplevert én `scope_repo` is ingevuld: de
+ *      repository waarin het dossier leeft, op `scope_ref`. Nooit op de kop,
+ *      nooit op een ref uit de pull request, en nooit in dezelfde repository
+ *      als de pull request — die drie zouden de hash onder controle van de
+ *      aanvrager brengen, en dan bewijst hij niets meer.
+ *
+ * Zonder `scope_repo` is de lijst één plek lang en gedraagt alles zich als
+ * voorheen.
+ */
+export function scopeBronnen(opties: {
+  readonly takenMap: string;
+  readonly taak: string;
+  readonly prRepo: string;
+  readonly kop: string;
+  readonly scopeRepo: string;
+  readonly scopeRef: string;
+}): readonly Scopebron[] {
+  const pad = `${encodeURIComponent(opties.takenMap)}/${encodeURIComponent(opties.taak)}/opdracht.md`;
+  const bronnen: Scopebron[] = [{ pad: `/repos/${opties.prRepo}/contents/${pad}?ref=${opties.kop}`, bron: "kop" }];
+  const repo = opties.scopeRepo.trim();
+  if (repo === "" || repo.toLowerCase() === opties.prRepo.toLowerCase()) return bronnen;
+  const ref = opties.scopeRef.trim() || "main";
+  bronnen.push({ pad: `/repos/${repo}/contents/${pad}?ref=${encodeURIComponent(ref)}`, bron: `${repo}@${ref}` });
+  return bronnen;
+}
+
 /** Per taak van de PR: het akkoord en de scope op de kop. */
 export type TaakFeiten = {
   readonly taak: string;
   /** De laatste autorisatie van soort "taak" voor deze taak, of null. */
   readonly autorisatie: Autorisatie | null;
-  /** De hash van tasks/<T>/opdracht.md op de kop, of null als het bestand ontbreekt. */
+  /** De hash van tasks/<T>/opdracht.md die voor deze kop geldt, of null als het dossier nergens te vinden was. */
   readonly scopeHashKop: string | null;
+  /**
+   * Waar die hash vandaan komt: `kop` (de pull request zelf) of
+   * `<eigenaar/naam>@<ref>` (de repository waarin het dossier leeft).
+   *
+   * Puur voor verantwoording — het oordeel hieronder gebruikt het niet. Een
+   * attestatie die haar scope elders vandaan haalt, hoort dat te kunnen
+   * zeggen zonder dat iemand de configuratie erbij moet pakken.
+   */
+  readonly scopeBron?: string;
 };
 
 export type AttestatieFeiten = {
@@ -232,7 +285,9 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
       } else if (t.autorisatie.soort !== "taak" || t.autorisatie.taak !== t.taak) {
         redenen.push(`de gevonden autorisatie ${t.autorisatie.id} is geen taakakkoord voor ${t.taak}`);
       } else if (t.scopeHashKop === null) {
-        redenen.push(`tasks/${t.taak}/opdracht.md ontbreekt op de kop; zonder scope geen akkoord`);
+        redenen.push(
+          `tasks/${t.taak}/opdracht.md is niet gevonden${t.scopeBron ? ` (gezocht: ${t.scopeBron})` : ""}; zonder scope geen akkoord`,
+        );
       } else if (t.autorisatie.scope_hash !== t.scopeHashKop) {
         redenen.push(
           `de scope van ${t.taak} is veranderd sinds het akkoord van ${t.autorisatie.op} ` +

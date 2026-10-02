@@ -73,5 +73,14 @@ attestatie:
   uitvoerders:
     - claude[bot]
   extra_paden: []
+  # Waar de taakdossiers leven. Deze repository is gereedschap zonder
+  # projectkennis — de portabiliteitstest en de sanitizer bewaken dat — dus
+  # een taak die hier code laat wijzigen heeft zijn dossier elders. Zonder
+  # deze verwijzing vindt de attestatie de scope niet en valt een geldig
+  # taakakkoord dood (gemeten 2026-10-02 op #74). De hash wordt gelezen op de
+  # hoofdbranch van die repository: een pull request hier kan daar niets
+  # schrijven, dus hij kan zijn eigen scope niet bijstellen.
+  scope_repo: lodewijkmaassen/tovas-flow
+  scope_ref: main
 
 rollen_map: jarvis/roles

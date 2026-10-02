@@ -329,6 +329,30 @@ geannuleerde run vervangt niets, en zonder bekende herkomst vervalt er niets.
 Aan de autorisatie — goedkeuring, attestatie, scopecontrole — is niets gewijzigd.
 
 
+Nieuw sinds 2026-10-02: de attestatie vindt de scope van een taak ook wanneer
+het dossier in een andere repository staat. `attestatie.scope_repo` en
+`scope_ref` in `jarvis.config.yml` wijzen die repository aan; `scopeBronnen`
+in `attestatie.ts` bepaalt de volgorde en is de hele veiligheidsbeslissing,
+daarom pure code zonder I/O.
+
+De aanleiding is een structureel gat, niet een ongeluk. Een taak kan code in
+meer dan één repository raken, maar een taakdossier staat per ontwerp op één
+plek — en deze repository mag er geen dragen. Een pull request hier kon het
+dossier van de taak die hem opdroeg dus nooit op de eigen kop hebben, en de
+attestatie weigerde met "opdracht.md ontbreekt op de kop; zonder scope geen
+akkoord" terwijl het akkoord van de eigenaar gewoon bestond. Daarmee was elke
+engine-wijziging binnen een goedgekeurde taak alleen met de hand af te maken.
+
+Drie dingen houden de terugval dicht. De eigen kop gaat altijd voor, dus voor
+een pull request die het dossier zélf meeneemt verandert er niets. De terugval
+leest op de hoofdbranch van de andere repository en nooit op een ref uit de
+pull request, dus de aanvrager kan zijn eigen scope niet kiezen. En wijst
+`scope_repo` naar de repository van de pull request zelf, dan vervalt de
+terugval — anders zou juist dáár een soepeler tweede pad ontstaan. De
+vergelijking met de hash uit het akkoord is onveranderd: wijzigt het dossier,
+dan vervalt het akkoord zoals bedoeld.
+
+
 ## Volgende stap
 
 De eerste consumer overstappen op de afhankelijkheid.

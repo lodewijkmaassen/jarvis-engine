@@ -7,6 +7,7 @@ import {
   leesAttestatie,
   leesUitzonderingenRegel,
   raaktHardeUitzondering,
+  scopeBronnen,
   scopeHash,
   takenUitCommits,
   verifieerAttestatie,
@@ -208,8 +209,22 @@ describe("beoordeelAttestatie", () => {
     const uit = beoordeelAttestatie(metTaak({ scopeHashKop: scopeHash(`${SCOPE}\nMeer.\n`) }));
     expect(uit).toContainEqual(expect.stringMatching(/scope .* is veranderd/));
   });
-  it("weigert zonder dossier op de kop", () => {
-    expect(beoordeelAttestatie(metTaak({ scopeHashKop: null }))).toContainEqual(expect.stringMatching(/opdracht\.md ontbreekt/));
+  it("weigert wanneer het dossier nergens is gevonden", () => {
+    expect(beoordeelAttestatie(metTaak({ scopeHashKop: null }))).toContainEqual(
+      expect.stringMatching(/opdracht\.md is niet gevonden/),
+    );
+  });
+  it("noemt in die weigering waar is gezocht, zodat een ontbrekende scope te plaatsen is", () => {
+    const uit = beoordeelAttestatie(metTaak({ scopeHashKop: null, scopeBron: "eigenaar/kennis@main" }));
+    expect(uit).toContainEqual(expect.stringMatching(/gezocht: eigenaar\/kennis@main/));
+  });
+  it("oordeelt niet anders wanneer de scope uit een andere repository komt", () => {
+    // De herkomst is verantwoording, geen grond. Dezelfde hash hoort hetzelfde
+    // oordeel te geven, waar hij ook vandaan komt — anders zou de terugvalweg
+    // een tweede, soepeler pad zijn in plaats van dezelfde controle.
+    const kop = beoordeelAttestatie(metTaak({ scopeBron: "kop" }));
+    const elders = beoordeelAttestatie(metTaak({ scopeBron: "eigenaar/kennis@main" }));
+    expect(elders).toEqual(kop);
   });
   it("weigert zonder GO op precies de kop", () => {
     expect(beoordeelAttestatie(feiten({ toetsing: null }))).toContainEqual(expect.stringMatching(/geen toetsing/));
@@ -450,5 +465,81 @@ describe("laatstePerNaam met herkomst", () => {
     expect(beoordeelSamenvoegen(basis, "eigenaar")).toEqual([]);
     // Zonder goedkeuring van de eigenaar blijft het antwoord hetzelfde als eerst.
     expect(beoordeelSamenvoegen({ ...basis, reviews: [] }, "eigenaar")[0]).toMatch(/geen goedkeurende review/);
+  });
+});
+
+
+/**
+ * De terugvalweg voor de scope, en waarom hij geen gat is.
+ *
+ * Een taak kan code in meer dan één repository raken, maar het dossier staat
+ * op één plek. De engine mag per ontwerp geen projectkennis dragen, dus een
+ * engine-PR kan het dossier van de taak die hem opdroeg niet op de eigen kop
+ * hebben — gemeten op 2026-10-02 bij engine-PR #74, met een geldig
+ * taakakkoord van diezelfde ochtend. Zonder terugval valt zo'n akkoord dood.
+ *
+ * De terugval mag de hash nooit onder controle van de aanvrager brengen. Dat
+ * is wat hieronder wordt vastgelegd.
+ */
+describe("scopeBronnen", () => {
+  const basis = {
+    takenMap: "tasks",
+    taak: "T-20261002-proef",
+    prRepo: "eigenaar/engine",
+    kop: KOP,
+    scopeRepo: "",
+    scopeRef: "main",
+  };
+
+  it("kijkt zonder scope_repo alleen op de kop van de pull request zelf", () => {
+    const b = scopeBronnen(basis);
+    expect(b).toHaveLength(1);
+    expect(b[0]!.bron).toBe("kop");
+    expect(b[0]!.pad).toBe(`/repos/eigenaar/engine/contents/tasks/T-20261002-proef/opdracht.md?ref=${KOP}`);
+  });
+
+  it("zet de eigen kop altijd vooraan, ook met scope_repo", () => {
+    const b = scopeBronnen({ ...basis, scopeRepo: "eigenaar/kennis" });
+    expect(b[0]!.bron).toBe("kop");
+    expect(b[0]!.pad).toContain("/repos/eigenaar/engine/");
+  });
+
+  it("leest de terugval uit de andere repository, op haar eigen ref", () => {
+    const b = scopeBronnen({ ...basis, scopeRepo: "eigenaar/kennis" });
+    expect(b).toHaveLength(2);
+    expect(b[1]!.bron).toBe("eigenaar/kennis@main");
+    expect(b[1]!.pad).toBe("/repos/eigenaar/kennis/contents/tasks/T-20261002-proef/opdracht.md?ref=main");
+  });
+
+  it("gebruikt voor de terugval NOOIT de kop van de pull request", () => {
+    // De kern van de hele voorziening: kan de aanvrager zijn eigen scope
+    // kiezen? Alleen als zijn ref in de terugval voorkomt. Die staat er niet.
+    const b = scopeBronnen({ ...basis, scopeRepo: "eigenaar/kennis" });
+    expect(b[1]!.pad).not.toContain(KOP);
+    expect(b[1]!.pad).toContain("ref=main");
+  });
+
+  it("voegt geen tweede plek toe wanneer scope_repo de repository van de PR zelf is", () => {
+    // Anders zou een pull request in de kennisrepository zijn eigen dossier
+    // op de kop kunnen wijzigen en alsnog op main worden afgerekend — een
+    // tweede, soepeler pad in precies de repository waar het niet mag.
+    const b = scopeBronnen({ ...basis, scopeRepo: "Eigenaar/Engine" });
+    expect(b).toHaveLength(1);
+  });
+
+  it("valt terug op main wanneer scope_ref leeg is", () => {
+    const b = scopeBronnen({ ...basis, scopeRepo: "eigenaar/kennis", scopeRef: "   " });
+    expect(b[1]!.bron).toBe("eigenaar/kennis@main");
+  });
+
+  it("codeert het taak-id, zodat een naam met een schuine streep geen ander pad wordt", () => {
+    // Niet de punten zijn het gevaar maar de schuine strepen: alleen die
+    // zouden het pad uit de takenmap kunnen tillen. Gecodeerd blijft het één
+    // padsegment, en dan is "T-1/../../etc" gewoon een taak die niet bestaat.
+    const b = scopeBronnen({ ...basis, taak: "T-1/../../etc", scopeRepo: "eigenaar/kennis" });
+    for (const plek of b) {
+      const na = plek.pad.slice(plek.pad.indexOf("/contents/tasks/") + "/contents/tasks/".length);
+      expect(na.split("/")[0]).toBe("T-1%2F..%2F..%2Fetc");
+    }
   });
 });

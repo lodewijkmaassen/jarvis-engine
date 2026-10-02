@@ -97,8 +97,31 @@ export const configSchema = z.strictObject({
        * engine. Bijvoorbeeld het deploymentbestand van de hostingpartij.
        */
       extra_paden: z.array(z.string().trim().min(1)).default([]),
+      /**
+       * De repository waarin de taakdossiers van dit project leven, voor het
+       * geval ze niet in deze repository staan: `eigenaar/naam`. Leeg = niet
+       * van toepassing, en dan verandert er niets.
+       *
+       * Een taak kan code in meer dan één repository raken, maar het dossier
+       * staat per ontwerp op één plek. De engine mag bijvoorbeeld geen
+       * projectkennis dragen — de portabiliteitstest en de sanitizer bewaken
+       * dat — dus een engine-PR kan het dossier van de taak die hem opdroeg
+       * nooit op de eigen kop hebben. Zonder dit veld is zo'n pull request
+       * structureel niet te attesteren: de scope is er niet te vinden en het
+       * akkoord van de eigenaar valt dood, hoe geldig het ook is.
+       *
+       * De hash wordt dan gelezen uit `scope_ref` van deze repository — een
+       * branch die de pull request niet kan schrijven. Dat is wat de
+       * terugvalweg veilig maakt: wie hier iets aan zijn eigen scope wil
+       * veranderen, moet dat in de andere repository doen, langs de gewone
+       * weg, en dan verandert de hash en vervalt het akkoord precies zoals
+       * bedoeld.
+       */
+      scope_repo: z.string().trim().default(""),
+      /** De ref waarop `scope_repo` wordt gelezen. Nooit een ref uit de pull request zelf. */
+      scope_ref: z.string().trim().default("main"),
     })
-    .default({ url: "", sleutel: "", bot: "", uitvoerders: [], extra_paden: [] }),
+    .default({ url: "", sleutel: "", bot: "", uitvoerders: [], extra_paden: [], scope_repo: "", scope_ref: "main" }),
   // Jarvis als eigen project in het overzicht: de kern op de kaart. Wat in
   // deze repository bij Jarvis hoort (paden voor de beweging) en welke tag op
   // een record "dit gaat over Jarvis" betekent, zegt de configuratie; leeg =
