@@ -1087,7 +1087,12 @@ function render() {
   // bevestiging maar een vermoeden. Nu staat er wat er is: niemand aan zet.
   const n = nulstand(o, acties);
   if (n) $status.innerHTML += `<span class="nulstand">${esc(n)}</span>`;
-  document.getElementById("kop-versie").textContent = `v${o.versie ?? 1}`;
+  // Het bouwmerk staat naast de versie, en niet alleen in een meta-tag: wie
+  // naar de pagina kijkt moet kunnen zien uit welke commit zij is gebouwd.
+  // Zonder dat was een uitrol die de bestanden niet verving van een geslaagde
+  // uitrol niet te onderscheiden (2026-10-02).
+  const merk = document.querySelector('meta[name="jarvis-bouwmerk"]')?.content ?? "";
+  document.getElementById("kop-versie").textContent = merk ? `v${o.versie ?? 1} · ${merk.slice(0, 7)}` : `v${o.versie ?? 1}`;
 }
 
 document.addEventListener("click", async (e) => {

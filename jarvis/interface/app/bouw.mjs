@@ -2,6 +2,15 @@
 // (standaard deze map) samen met manifest, service worker en iconen.
 //
 //   node bouw.mjs [doelmap] [--url <supabase-url> --sleutel <publishable key>]
+//                            [--merk <commit>]
+//
+// `--merk` schrijft het bouwmerk in de pagina: een `<meta name="jarvis-bouwmerk">`
+// met de commit waaruit is gebouwd, die de pagina naast `v${versie}` toont en
+// die `jarvis uitrol` na afloop uit de uitgerolde pagina terugleest. Zonder dat
+// merk is een uitrol niet na te meten — dat is op 2026-10-02 misgegaan: de
+// uitrol verving de bestanden niet, alle controle stopte bij de repositorygrens,
+// en "klaar" was een aanname. Het merk is geen geheim: het is de commit die ook
+// in de repository staat.
 //
 // Zonder `config.js` in de doelmap vindt de pagina de database niet en toont
 // ze "geen gegevens". Dat is één keer in productie gebeurd: de bouw meldde het
@@ -12,7 +21,7 @@
 // De twee waarden zijn publieke identifiers — ze staan in elke browser die de
 // interface opent, en de grens ligt bij RLS, niet bij de sleutel. Ze komen van
 // de aanroeper en niet uit een bestand hier: de engine kent geen projecten.
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,6 +55,11 @@ mkdirSync(doel, { recursive: true });
 
 const url = vlaggen.get("url");
 const sleutel = vlaggen.get("sleutel");
+const merk = vlaggen.get("merk");
+if (merk !== undefined && !/^[0-9a-f]{7,40}$/.test(merk)) {
+  console.error(`bouw: --merk verwacht een commit-sha (7 tot 40 hexadecimale tekens), kreeg ${JSON.stringify(merk)}.`);
+  process.exit(2);
+}
 if ((url === undefined) !== (sleutel === undefined)) {
   console.error("bouw: geef --url en --sleutel samen, of geen van beide.");
   process.exit(2);
@@ -72,8 +86,30 @@ if (url !== undefined && sleutel !== undefined) {
   process.exit(1);
 }
 
-copyFileSync(path.join(hier, "..", "jarvis.html"), path.join(doel, "index.html"));
+// De pagina wordt gelezen en geschreven in plaats van gekopieerd, omdat het
+// bouwmerk erin hoort en niet ernaast. Een los `bouwmerk.json` zou de vraag
+// beantwoorden "is er een nieuw bestand uitgerold" en niet de vraag die telt:
+// "is de pagina die de eigenaar opent de pagina die wij bouwden".
+const bron = readFileSync(path.join(hier, "..", "jarvis.html"), "utf8");
+const pagina =
+  merk === undefined
+    ? bron
+    : bron.replace("</head>", `<meta name="jarvis-bouwmerk" content="${merk}">\n</head>`);
+if (merk !== undefined && pagina === bron) {
+  console.error("bouw: de pagina heeft geen </head> om het bouwmerk in te zetten. Er is niets gebouwd.");
+  process.exit(1);
+}
+writeFileSync(path.join(doel, "index.html"), pagina, "utf8");
 for (const naam of ["manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "vercel.json"]) {
   if (path.resolve(hier) !== doel) copyFileSync(path.join(hier, naam), path.join(doel, naam));
 }
 console.log(`app gebouwd in ${doel}`);
+if (merk === undefined) {
+  // Een waarschuwing en geen fout: de bouw zelf is in orde en wie hem met de
+  // hand draait heeft geen commit. Maar een uitrol zonder merk is achteraf
+  // niet van een mislukte uitrol te onderscheiden, dus zegt de bouw dat hier
+  // en eist de uitrolworkflow het merk wel.
+  console.warn("bouw: geen --merk meegegeven; `jarvis uitrol` kan deze uitrol niet nameten.");
+} else {
+  console.log(`bouwmerk ${merk} in index.html`);
+}
