@@ -73,5 +73,13 @@ attestatie:
   uitvoerders:
     - claude[bot]
   extra_paden: []
+  # De attestatieworkflow voegt zelf samen wat zij heeft goedgekeurd. De
+  # uitvoerder kan `jarvis pr mergen` niet draaien: de permissieclassificatie
+  # van zijn omgeving weigert dat, ook met een geldige review, omdat zij de
+  # opdrachtregel leest en de autorisatietoestand niet kan zien. Het oordeel
+  # blijft hetzelfde — dezelfde beoordeelSamenvoegen, dezelfde kop; alleen de
+  # hand die de knop indrukt verandert. De eigenaar heeft dit op 2026-10-02
+  # geautoriseerd binnen T-20261002-technische-uitvoering.
+  samenvoegen: true
 
 rollen_map: jarvis/roles
