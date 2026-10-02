@@ -2790,11 +2790,11 @@ function administratievePatronen(config: JarvisConfig): readonly RegExp[] {
  *
  * Staat het dossier er niet, dan was er tot nu toe geen scope en viel het
  * akkoord van de eigenaar dood. Dat trof elke taak die code in meer dan één
- * repository raakt, want het dossier staat per ontwerp op één plek: de engine
- * mag geen projectkennis dragen, dus een engine-PR kan het dossier van de taak
- * die hem opdroeg niet op de eigen kop hebben. Gemeten op 2026-10-02 bij
- * engine-PR #74: "opdracht.md ontbreekt op de kop; zonder scope geen akkoord",
- * met een geldig taakakkoord van die ochtend.
+ * repository raakt, want het dossier staat op één plek: een repository draagt
+ * de dossiers van haar eigen project, niet die van een ander. Een pull request
+ * die een taak van elders uitvoert, kan dat dossier dus niet op de eigen kop
+ * hebben. Gemeten op 2026-10-02: "opdracht.md ontbreekt op de kop; zonder
+ * scope geen akkoord", met een geldig taakakkoord van die ochtend.
  *
  * De terugval leest het dossier daarom uit de repository waarin het leeft,
  * op een vaste ref. Drie dingen maken dat veilig, en ze horen alle drie

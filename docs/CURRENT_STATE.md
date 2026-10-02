@@ -345,12 +345,14 @@ engine bij het verifiëren van een attestatie, en een onbekende sleutel breekt
 dat. Wat er geleverd is, is dus de voorziening en niet het eindeffect.
 
 De aanleiding is een structureel gat, niet een ongeluk. Een taak kan code in
-meer dan één repository raken, maar een taakdossier staat per ontwerp op één
-plek — en deze repository mag er geen dragen. Een pull request hier kon het
-dossier van de taak die hem opdroeg dus nooit op de eigen kop hebben, en de
-attestatie weigerde met "opdracht.md ontbreekt op de kop; zonder scope geen
-akkoord" terwijl het akkoord van de eigenaar gewoon bestond. Daarmee was elke
-engine-wijziging binnen een goedgekeurde taak alleen met de hand af te maken.
+meer dan één repository raken, maar een taakdossier staat op één plek. Deze
+repository heeft wel degelijk een eigen `tasks/`-map met eigen dossiers; wat
+zij niet draagt zijn de dossiers van een consumer. Een pull request hier die
+een taak van zo'n consumer uitvoert, kon dat dossier dus nooit op de eigen kop
+hebben, en de attestatie weigerde met "opdracht.md ontbreekt op de kop; zonder
+scope geen akkoord" terwijl het akkoord van de eigenaar gewoon bestond.
+Daarmee was elke wijziging hier binnen een goedgekeurde taak van een consumer
+alleen met de hand af te maken.
 
 Drie dingen houden de terugval dicht. De eigen kop gaat altijd voor, dus voor
 een pull request die het dossier zélf meeneemt verandert er niets. De terugval
