@@ -12,7 +12,7 @@ _Gegenereerd op 2026-10-02._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 40 |
+| Testbestanden | 41 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -327,6 +327,47 @@ run van dezelfde workflow. Bewust smal: vergeleken wordt op naam én herkomst
 workflow met een job `poort` een echte rode poort niet onzichtbaar maakt. Een
 geannuleerde run vervangt niets, en zonder bekende herkomst vervalt er niets.
 Aan de autorisatie — goedkeuring, attestatie, scopecontrole — is niets gewijzigd.
+
+
+Nieuw sinds 2026-10-02: **de attestatieworkflow voegt zelf samen wat zij heeft
+goedgekeurd**, wanneer `attestatie.samenvoegen` in `jarvis.config.yml` aanstaat.
+
+De aanleiding staat los van de governance en zat in de uitvoeringsomgeving. De
+uitvoerder kan `jarvis pr mergen` niet draaien: de permissieclassificatie van
+zijn omgeving weigert dat met "Merge Without Review", ook wanneer de
+goedkeurende review er aantoonbaar staat en de opdracht zelf zegt "klaar om
+samen te voegen". Die classificatie leest de opdrachtregel en kan de
+autorisatietoestand niet zien, dus meer bewijs leveren helpt niet. Daardoor
+bleef de laatste stap van een volledig geautoriseerde keten liggen voor een
+mens.
+
+Er komt geen autorisatieweg bij. De run leest de pull request opnieuw (de
+review die zij zojuist afgaf hoort erbij te staan), velt het oordeel met
+dezelfde `beoordeelSamenvoegen` die `jarvis pr mergen` gebruikt, en pint de
+merge op de kop die is geattesteerd — duwt iemand er een commit tussen, dan
+weigert GitHub. Nog niet rijp is geen fout: de attestatie staat en blijft
+staan, en een volgende ronde voegt samen.
+
+Het samenvoegen is een **eigen job** met `contents: write`, die alleen draait
+wanneer de eerste job meldt dat de configuratie het aanzet. Rechten gelden per
+job: zat het in één job, dan kreeg elke repository die deze workflow spiegelt
+schrijfrecht op haar hoofdbranch, ook zonder de functie te gebruiken. Op
+workflowniveau staan nu geen rechten. De tweede job neemt niets aan uit de
+eerste: dezelfde beoordeling draait er opnieuw op de huidige feiten, en de
+configuratie moet het daar ook nog toestaan.
+
+Twee dingen die uit de toetsing kwamen en er wezenlijk bij horen. Het
+samenvoegen leest de database via dezelfde leesbeelden als het attesteren, want
+in een runner is er geen verbindingsreeks en draagt de Edge Function geen
+credential — zonder dat zou elke attestatie daar "niet te verifiëren" heten. En
+een al bestaande attestatie is geen reden om te stoppen: GitHub berekent
+`mergeable` asynchroon, dus de eerste ronde strandt regelmatig op een kop die
+nog niet beoordeeld is. De samenvoegstap wacht daar kort en begrensd op, en een
+volgende ronde probeert gewoon opnieuw.
+
+De uitkomst is machineleesbaar (`samenvoegen` en `samengevoegd` in
+`$GITHUB_OUTPUT`), zodat "geattesteerd maar niet samengevoegd" van buitenaf
+zichtbaar is in plaats van te verdwijnen achter een exitcode 0.
 
 
 ## Volgende stap

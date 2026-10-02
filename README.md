@@ -79,12 +79,19 @@ attestatie:
   sleutel: sb_publishable_…              # publieke sleutel (staat in elke browser)
   bot: <login van de bot>
   extra_paden: [vercel.json]             # projectpaden die ook een apart akkoord vragen
+  samenvoegen: false                     # mag de workflow ook samenvoegen? standaard nee
 ```
 
 GitHub telt de goedkeuring van de workflow alleen mee als de eigenaar per
 repository *Allow GitHub Actions to create and approve pull requests* heeft
 aangezet. Zonder configuratie of zonder workflow blijft de review van de
 eigenaar de enige autorisatie.
+
+`samenvoegen: true` laat de workflow de pull request die zij zojuist heeft
+goedgekeurd ook samenvoegen, in een tweede job met `contents: write` die
+alleen dan draait. Het oordeel komt van dezelfde beoordeling als
+`jarvis pr mergen` en wordt in die tweede job opnieuw gedraaid, met dezelfde
+leesbeelden en de publieke sleutel; er komt geen autorisatieweg bij. Zet het alleen aan waar dat schrijfrecht gewenst is.
 
 ## De eigen database vanuit de cloud
 
