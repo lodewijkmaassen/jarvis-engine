@@ -27,6 +27,7 @@ _Gegenereerd op 2026-10-02._
 | T-20260914-agent-operations | actief | Jarvis als observeerbaar en autonoom digitaal team — Operations-view en Task Controller |
 | T-20260914-eigen-laag | actief | De eigen Jarvis-laag (app en database) leidend; de artifact-database en sessiegebonden bestanden geen afhankelijkheid meer |
 | T-20260917-chatgpt-review | actief | Een tweede model als onafhankelijke reviewer in de keten, en eigenaarstaal in de app |
+| T-20261002-technische-uitvoering | actief | Technische uitvoering volledig door Jarvis |
 
 <!-- jarvis:feiten:eind -->
 
