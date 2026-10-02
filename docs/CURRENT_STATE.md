@@ -12,7 +12,7 @@ _Gegenereerd op 2026-10-02._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 43 |
+| Testbestanden | 44 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -107,6 +107,71 @@ geworden (`Opdracht.md` kwam er anders doorheen, net zoals
 scopepatroon valt nu dicht in plaats van open — het viel terug op "niets", in
 tegenspraak met de regel ernaast dat onbekend nooit de soepelste uitkomst mag
 geven.
+
+De vraag "wie is aan zet" wordt nog maar op één plaats beantwoord, en de
+database telt daarin mee. `akkoord_nodig` in `overzicht.ts` las eerder alleen
+het dossier: vraagt de voortgangslijst of de eigenaarslijst om een akkoord, dan
+stond de taak op "wacht op jou". De akkoordkaart in de interface keek daarnaast
+in `jarvis.autorisaties` en verdween zodra er een geldig akkoord op de huidige
+scope lag. Daardoor kon één taak tegelijk **WACHT OP JOU** tonen, in "Wie en
+waar" melden dat de eigenaar aan zet was, en onder "Bij jou uit deze taak" en in
+het centrale "Voor jou" **niets** laten zien. De eigenaar zag een vraag die hij
+nergens kon beantwoorden, omdat hij hem al beantwoord had (gemeld 2026-10-02,
+binnen `T-20261002-technische-uitvoering`).
+
+`leesTaken` krijgt nu de gemeten akkoordstand mee — taak-id naar de
+`scope_hash` van het laatste taakakkoord — en past dezelfde toets toe die de
+kaart al deed: een akkoord telt alleen op precies de huidige scope, dus een
+gewijzigde `opdracht.md` laat het vervallen zoals `DEC-0043` voorschrijft. De
+stand komt uit `AUTORISATIES_SQL` — één vraag voor alle taken samen, over de
+weg die er toch al is; er komt geen credential bij en de allowlist van de Edge
+Function blijft ongemoeid. Daar hoort een grens bij: dat statement geeft de
+laatste tweehonderd rijen, en valt een akkoord daarbuiten dan leest het als
+"geen akkoord" — een vraag te veel, nooit een akkoord te veel. Een eerdere
+versie vroeg per taak en zei erbij dat dat niets kostte; de toetsing mat dat
+`jarvis overzicht` daarmee van ongeveer één seconde naar acht tot veertien
+ging, omdat elke vraag een eigen HTTPS-ronde was. Is de database niet te lezen, dan is de stand *niet gemeten*
+(`akkoord_gemeten: false`) en valt het overzicht terug op het dossier — liever
+een vraag te veel dan een akkoord aannemen dat er niet is.
+
+De interface leest voortaan `zetVan(t)`: één ijking per render, en daarna lezen
+de kaart, de statusregel, "Wie en waar" en "Bij jou uit deze taak" uit dezelfde
+twee velden. Die laag mag alleen nog afzwakken — het venster tussen een vers
+akkoord en de volgende bouw — en nooit een vraag toevoegen die de bouw niet
+stelde. Een punt dat werkelijk bij de eigenaar ligt, houdt de taak op "wacht op
+jou", ook met een geldig akkoord.
+
+De bedrading wordt nu ook getoetst, en niet alleen de onderdelen. QA keurde de
+eerste ronde af omdat zeven sabotages op het productiepad de hele suite groen
+lieten: de doorgifte van de akkoordstand doorgesneden, `zetKort`/`zetTekst`
+terug op het oude veld, de ijking uit `render` gehaald — alles ongemerkt.
+`tests/jarvis/paginafuncties.ts` knipt de declaraties met haakjestelling uit
+`jarvis.html` en voert ze samen uit, zodat de pagina te toetsen is zoals zij
+draait en niet zoals zij leest; `staat` is het enige dat de test erin brengt.
+Daarop staan nu zeven scenario's die de vier plaatsen uit de melding naast
+elkaar leggen. Alle zeven sabotages vallen om. `leesTaakakkoorden` is daarvoor
+geëxporteerd met een injecteerbare verbinding — de enige manier om de
+faalrichting uit te voeren in plaats van haar af te lezen — en vangt sinds deze
+ronde ook een worp uit het opzetten van de verbinding zelf, die eerder
+`jarvis overzicht` en `jarvis regie` kon afbreken.
+
+Ronde 2 keurde opnieuw af, en wees twee dingen aan die een les dragen. De
+brontest op de aanroep van `bouwOverzicht` borgde een *vorm* en geen gedrag:
+`await leesTaakakkoorden(…) && null` kwam er ongemerkt doorheen, terwijl
+diezelfde aanroep meerregelig geschreven de suite rood maakte. Doorlaten wat
+fout is én afkeuren wat goed is. En de verdediging ervoor — "dit valt niet uit
+te voeren" — was onjuist: `tests/jarvis/extern.test.ts` draait die weg al.
+`bouwOverzichtVanuit` heeft nu dezelfde naad als `leesTaakakkoorden`, en de
+test draait de echte opdracht op de echte dossiers met één stub op de plaats
+van de database. Wie een test op brontekst schrijft, hoort eerst aan te tonen
+dat de uitvoerbare weg werkelijk is afgesloten.
+
+Het tweede: vier leesplaatsen van `zetVan` bleven onbewaakt, en ze één voor
+één afdekken dekt de volgende niet. Daarvoor staat er nu een invariant op de
+pagina — buiten `zetVan` en de filter op "niemand" leest niets `aan_zet`
+rechtstreeks — en een tweede die zegt dat `akkoord_open` en `eigen_punten`
+precies één schrijver hebben. Samen vangen zij ook het geval dat de ijking
+wél draait maar erna wordt overschreven.
 
 Een dossier kan nu sluiten zonder te beweren dat er iets is opgeleverd. Naast
 `afgerond` kent een taakdossier het statuswoord `vervallen`: beëindigd, bewaard

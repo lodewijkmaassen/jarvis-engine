@@ -191,12 +191,21 @@ describe("AC-6 — de interface kent elke waarde van aan_zet", () => {
   // brontekst bekeken. Een eerdere versie van deze test las alleen of de bron
   // bepaalde woorden bevatte; QA toonde met een sabotage aan dat `nulstand`
   // dan volledig uitgeschakeld kon worden zonder dat één test protesteerde.
-  function uitPagina<T>(naam: string): T {
+  /**
+   * De brontekst van één functie uit de pagina. Apart, omdat sommige functies
+   * elkaar aanroepen: `zetTekst` en `nulstand` lezen `zetVan`, en zonder die
+   * erbij viel de test om op een ReferenceError in plaats van op haar oordeel.
+   */
+  function bronVan(naam: string): string {
     const m = new RegExp(`(?:const WACHT_WOORD = \\{[^}]*\\};\\s*)?function ${naam}\\(([^)]*)\\) \\{([\\s\\S]*?)\\n\\}`).exec(html);
     if (!m) throw new Error(`${naam} is niet gevonden in jarvis.html`);
+    return `function ${naam}(${m[1]}) {${m[2]}\n}`;
+  }
+  function uitPagina<T>(naam: string, ook: readonly string[] = ["zetVan"]): T {
     const woorden = /const WACHT_WOORD = \{[^}]*\};/.exec(html)?.[0] ?? "";
+    const hulp = ook.filter((h) => h !== naam).map(bronVan).join("\n");
     // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    return new Function(`${woorden}\nreturn function ${naam}(${m[1]}) {${m[2]}\n};`)() as T;
+    return new Function(`${woorden}\n${hulp}\n${bronVan(naam)}\nreturn ${naam};`)() as T;
   }
 
   it("geeft elke wachtsoort een eigen woord, ook in de uitvoer", () => {

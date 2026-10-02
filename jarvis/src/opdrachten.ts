@@ -35,6 +35,7 @@ import { ALLOWLIST_BESTANDSNAAM, ENTROPIE_MINIMUM_LENGTE, LEGE_ALLOWLIST, laadAl
 import {
   RECENT_DAGEN,
   bouwOverzicht,
+  type Akkoordstand,
   dossiersZonderBekendeStatus,
   leesItemsOnder,
   openTakenUitDossiers,
@@ -768,7 +769,15 @@ async function opdrachtRollen(vlaggen: ReadonlyMap<string, string>): Promise<num
  * database, zodat de interface het toont zonder een tweede opdracht.
  */
 /** Het overzicht zoals `jarvis overzicht` het bouwt, voor hergebruik door `jarvis regie`. */
-async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
+export async function bouwOverzichtVanuit(
+  vlaggen: ReadonlyMap<string, string>,
+  // Dezelfde naad als in `leesTaakakkoorden` zelf, en om dezelfde reden: zonder
+  // haar valt alleen de *vorm* van de aanroep hieronder vast te leggen, niet
+  // haar werking. QA toonde aan dat een test op die vorm allebei de kanten op
+  // faalt — `await leesTaakakkoorden(…) && null` kwam er ongemerkt doorheen,
+  // terwijl dezelfde aanroep meerregelig geschreven de suite rood maakte.
+  leesAkkoorden: (taken: readonly string[]) => Promise<Akkoordstand | null> = leesTaakakkoorden,
+): Promise<{ wortel: string; wortels: readonly string[]; overzicht: Overzicht }> {
   const { wortel, config, lading } = await laadAlles();
   const nu = new Date();
 
@@ -819,7 +828,75 @@ async function bouwOverzichtVanuit(vlaggen: ReadonlyMap<string, string>): Promis
     externen.push({ ...extern, aansluitingLoopt: loopt });
   }
 
-  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht([...kern, eigen, ...externen], nu, kernId) };
+  const projecten = [...kern, eigen, ...externen];
+  const akkoorden = await leesAkkoorden(
+    projecten.flatMap((p) => p.taken.filter((t) => !sluitDossier(t.opdracht["status"] ?? "")).map((t) => t.id)),
+  );
+  return { wortel, wortels: [wortel, ...externPaden], overzicht: bouwOverzicht(projecten, nu, kernId, akkoorden) };
+}
+
+/**
+ * De laatste taakakkoorden van de eigenaar, per open taak: taak-id →
+ * `scope_hash`. Dit is de tweede helft van `akkoord_nodig` in het overzicht,
+ * en zonder haar vraagt de interface een akkoord dat er allang ligt — precies
+ * de tegenspraak die de eigenaar op 2026-10-02 meldde: de taak op "wacht op
+ * jou", de kaart om het akkoord te geven weg, en nergens iets te doen.
+ *
+ * **Eén vraag voor alle taken samen**, met `AUTORISATIES_SQL` — dat staat al
+ * op de allowlist van de Edge Function en geeft de laatste tweehonderd rijen
+ * op `op desc`. Daar hoort een grens bij die genoemd moet worden: valt een
+ * taakakkoord buiten die tweehonderd, dan leest het als "geen akkoord", en
+ * dat is de veilige kant — een vraag te veel, nooit een akkoord te veel. Op
+ * 2026-10-02 telt de tabel 62 rijen.
+ *
+ * Een eerdere versie stelde één vraag per open taak en zei erbij dat dat
+ * "niets kost dat de moeite waard is". Dat was onjuist en de toetsing heeft
+ * het gemeten: `jarvis overzicht` ging van ongeveer één seconde naar acht tot
+ * veertien, want elke vraag is een eigen HTTPS-ronde en ze liepen na elkaar.
+ * Een `select distinct on (taak)` zou nog zuiniger zijn maar staat niet op de
+ * allowlist, en die uitbreiden vraagt een uitrol van de functie — een
+ * handeling van de eigenaar. Die is hiervoor niet nodig.
+ *
+ * `null` bij elke storing, en dat is bewust geen lege map: zonder meting valt
+ * het overzicht terug op wat het dossier zegt. De verkeerde kant op falen zou
+ * hier zijn: een akkoord aannemen dat er niet is.
+ */
+export async function leesTaakakkoorden(
+  taken: readonly string[],
+  // De verbinding is injecteerbaar, en dat is geen test-ingang maar de enige
+  // manier om de faalrichting werkelijk uit te voeren in plaats van haar uit
+  // de brontekst af te lezen. QA toonde aan dat "lege map in plaats van null"
+  // ongemerkt door de suite kwam: de bouw beweert dan gemeten te hebben en
+  // neemt aan dat er geen akkoord is. Dat is de verkeerde kant op.
+  verbind: () => Promise<{ readonly sql: DbClient; readonly bron: string } | null> = verbindDb,
+): Promise<Akkoordstand | null> {
+  if (taken.length === 0) return new Map();
+  let verbinding;
+  try {
+    verbinding = await verbind();
+  } catch {
+    // Een worp uit het opzetten van de verbinding zelf stond buiten het
+    // vangnet hieronder en brak `jarvis overzicht` en `jarvis regie` af.
+    return null;
+  }
+  if (verbinding === null) return null;
+  try {
+    const gevraagd = new Set(taken);
+    const stand = new Map<string, string>();
+    // `order by op desc`, dus de eerste rij per taak is de laatste autorisatie.
+    for (const rij of await verbinding.sql.unsafe(AUTORISATIES_SQL)) {
+      if (rij["soort"] !== "taak") continue;
+      const taak = rij["taak"];
+      const hash = rij["scope_hash"];
+      if (typeof taak !== "string" || !gevraagd.has(taak) || stand.has(taak)) continue;
+      if (typeof hash === "string" && hash.length > 0) stand.set(taak, hash);
+    }
+    return stand;
+  } catch {
+    return null;
+  } finally {
+    await verbinding.sql.end({ timeout: 2 }).catch(() => {});
+  }
 }
 
 /**
