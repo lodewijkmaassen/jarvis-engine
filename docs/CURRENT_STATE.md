@@ -329,11 +329,20 @@ geannuleerde run vervangt niets, en zonder bekende herkomst vervalt er niets.
 Aan de autorisatie — goedkeuring, attestatie, scopecontrole — is niets gewijzigd.
 
 
-Nieuw sinds 2026-10-02: de attestatie vindt de scope van een taak ook wanneer
+Nieuw sinds 2026-10-02: de attestatie kán de scope van een taak vinden wanneer
 het dossier in een andere repository staat. `attestatie.scope_repo` en
 `scope_ref` in `jarvis.config.yml` wijzen die repository aan; `scopeBronnen`
 in `attestatie.ts` bepaalt de volgorde en is de hele veiligheidsbeslissing,
 daarom pure code zonder I/O.
+
+**De voorziening staat nergens aan, en dat is met opzet.** Twee dingen moeten
+eerst, allebei gemeten in de QA-ronde op #75. De attestatieworkflow draait met
+het kortlevende `GITHUB_TOKEN` van de run, dat buiten de eigen repository
+niets kan, en de repository met de dossiers is besloten — het verzoek zou 404
+geven en de terugval alsnog niets opleveren. En `attestatie` is een
+`strictObject`: een consumer met een oudere engine-pin leest de config van de
+engine bij het verifiëren van een attestatie, en een onbekende sleutel breekt
+dat. Wat er geleverd is, is dus de voorziening en niet het eindeffect.
 
 De aanleiding is een structureel gat, niet een ongeluk. Een taak kan code in
 meer dan één repository raken, maar een taakdossier staat per ontwerp op één

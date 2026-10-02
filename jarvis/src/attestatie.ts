@@ -171,6 +171,17 @@ export function isAdministratief(bestanden: readonly string[], patronen: readonl
   return bestanden.every((b) => patronen.some((p) => p.test(b.replace(/\\/g, "/"))));
 }
 
+/** `eigenaar/naam`, en niets anders: geen derde segment, geen query, geen fragment. */
+const REPO_VORM = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
+/** Een gewone branchnaam zonder schuine streep. Sluit `refs/pull/<n>/head` uit. */
+const REF_VORM = /^[A-Za-z0-9._-]+$/;
+
+/** `eigenaar/naam` zonder hoofdletters, zonder `.git` en zonder sluitende schuine streep. */
+function genormaliseerdeRepo(slug: string): string {
+  return slug.trim().toLowerCase().replace(/\.git$/, "").replace(/\/+$/, "");
+}
+
 /** Eén plek waar het taakdossier gezocht wordt, in volgorde van voorrang. */
 export type Scopebron = {
   /** Het API-pad, al gecodeerd. */
@@ -209,8 +220,17 @@ export function scopeBronnen(opties: {
   const pad = `${encodeURIComponent(opties.takenMap)}/${encodeURIComponent(opties.taak)}/opdracht.md`;
   const bronnen: Scopebron[] = [{ pad: `/repos/${opties.prRepo}/contents/${pad}?ref=${opties.kop}`, bron: "kop" }];
   const repo = opties.scopeRepo.trim();
-  if (repo === "" || repo.toLowerCase() === opties.prRepo.toLowerCase()) return bronnen;
+  // Vorm afdwingen in plaats van vertrouwen. Zonder deze controle komen `?`,
+  // `#` en een derde segment ongefilterd in het API-pad terecht, en dan is
+  // "nooit een ref uit de pull request" een afspraak in de configuratie in
+  // plaats van een eigenschap van de code. QA-bevinding op #75.
+  if (!REPO_VORM.test(repo)) return bronnen;
+  if (genormaliseerdeRepo(repo) === genormaliseerdeRepo(opties.prRepo)) return bronnen;
   const ref = opties.scopeRef.trim() || "main";
+  // Een pull-requestref zou de kop van een pull request terugbrengen langs de
+  // achterdeur; een ref met een schuine streep of een vreemd teken is sowieso
+  // geen hoofdbranch. Allebei weigeren we, en dan blijft alleen de eigen kop.
+  if (!REF_VORM.test(ref)) return bronnen;
   bronnen.push({ pad: `/repos/${repo}/contents/${pad}?ref=${encodeURIComponent(ref)}`, bron: `${repo}@${ref}` });
   return bronnen;
 }

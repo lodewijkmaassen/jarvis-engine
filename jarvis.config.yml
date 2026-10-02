@@ -73,14 +73,20 @@ attestatie:
   uitvoerders:
     - claude[bot]
   extra_paden: []
-  # Waar de taakdossiers leven. Deze repository is gereedschap zonder
-  # projectkennis — de portabiliteitstest en de sanitizer bewaken dat — dus
-  # een taak die hier code laat wijzigen heeft zijn dossier elders. Zonder
-  # deze verwijzing vindt de attestatie de scope niet en valt een geldig
-  # taakakkoord dood (gemeten 2026-10-02 op #74). De hash wordt gelezen op de
-  # hoofdbranch van die repository: een pull request hier kan daar niets
-  # schrijven, dus hij kan zijn eigen scope niet bijstellen.
-  scope_repo: lodewijkmaassen/tovas-flow
-  scope_ref: main
+  # scope_repo staat hier BEWUST NIET. Het veld bestaat (zie config.ts) en de
+  # voorziening werkt, maar aanzetten heeft nu geen zin en zou schade doen:
+  #
+  #  - De attestatieworkflow draait met het kortlevende GITHUB_TOKEN van de
+  #    run, dat buiten deze repository niets kan. De repository waarin de
+  #    dossiers leven is besloten, dus het verzoek geeft 404 en de terugval
+  #    levert alsnog niets. Zelfde weigering, nettere melding.
+  #  - `attestatie` is een strictObject. Een consumer die een oudere engine
+  #    pint, leest de config van déze repository bij het verifiëren van een
+  #    attestatie; een onbekende sleutel breekt dat met "Unrecognized keys".
+  #    Het veld kan hier dus pas aan nadat elke consumer op een engine met het
+  #    veld is gepind.
+  #
+  # Beide zijn gemeten in de QA-ronde op #75. Wat er eerst moet gebeuren staat
+  # in het dossier van T-20261002-technische-uitvoering.
 
 rollen_map: jarvis/roles

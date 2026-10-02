@@ -532,6 +532,27 @@ describe("scopeBronnen", () => {
     expect(b[1]!.bron).toBe("eigenaar/kennis@main");
   });
 
+  // De hardingen hieronder komen uit de QA-ronde op #75: zij wees erop dat de
+  // documentatie eigenschappen als code presenteerde die in werkelijkheid
+  // afspraken in de configuratie waren.
+  it("weigert een scope_repo die geen eigenaar/naam is", () => {
+    for (const slecht of ["eigenaar", "eigenaar/kennis/extra", "eigenaar/kennis?ref=x", "eigenaar/kennis#x", "../../x"]) {
+      expect(scopeBronnen({ ...basis, scopeRepo: slecht }), slecht).toHaveLength(1);
+    }
+  });
+
+  it("laat zich niet om de tuin leiden door een sluitende schuine streep of .git", () => {
+    for (const zelfde of ["eigenaar/engine/", "eigenaar/engine.git", "EIGENAAR/ENGINE"]) {
+      expect(scopeBronnen({ ...basis, scopeRepo: zelfde }), zelfde).toHaveLength(1);
+    }
+  });
+
+  it("weigert een pull-requestref als scope_ref; die zou de kop langs de achterdeur terugbrengen", () => {
+    for (const ref of ["refs/pull/75/head", "refs/heads/main", "a/b"]) {
+      expect(scopeBronnen({ ...basis, scopeRepo: "eigenaar/kennis", scopeRef: ref }), ref).toHaveLength(1);
+    }
+  });
+
   it("codeert het taak-id, zodat een naam met een schuine streep geen ander pad wordt", () => {
     // Niet de punten zijn het gevaar maar de schuine strepen: alleen die
     // zouden het pad uit de takenmap kunnen tillen. Gecodeerd blijft het één
