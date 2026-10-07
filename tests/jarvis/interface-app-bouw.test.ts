@@ -74,6 +74,24 @@ describe("bouw.mjs", () => {
     expect(bouw([doel, "--sleutel", "sb_publishable_x"]).code).toBe(2);
   });
 
+  // Een secret die niet bestaat rendert in `env:` als de lege string, niet als
+  // een afwezige vlag. Zonder deze grens schreef de bouw een `config.js` met
+  // lege waarden, gaf exitcode 0, en meldde de bouwmerkcontrole groen over een
+  // pagina die in productie "geen gegevens" toont.
+  it("weigert een lege --url of --sleutel in plaats van een lege config.js te schrijven", () => {
+    for (const vlaggen of [
+      ["--url", "", "--sleutel", ""],
+      ["--url", "", "--sleutel", "sb_publishable_x"],
+      ["--url", "https://x.supabase.co", "--sleutel", "   "],
+    ]) {
+      const doel = verse();
+      const r = bouw([doel, ...vlaggen, "--merk", "0123456789abcdef0123456789abcdef01234567"]);
+      expect(r.code, `vlaggen ${JSON.stringify(vlaggen)}`).toBe(2);
+      expect(existsSync(path.join(doel, "config.js")), `config.js na ${JSON.stringify(vlaggen)}`).toBe(false);
+      expect(existsSync(path.join(doel, "index.html")), `index.html na ${JSON.stringify(vlaggen)}`).toBe(false);
+    }
+  });
+
   // Het bouwmerk. Zonder dit merk is een uitrol die de bestanden niet verving
   // niet van een geslaagde te onderscheiden; dat is op 2026-10-02 gebeurd.
   it("zet het bouwmerk in de pagina wanneer --merk is meegegeven", () => {

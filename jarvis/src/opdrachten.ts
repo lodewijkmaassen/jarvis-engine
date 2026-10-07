@@ -53,8 +53,10 @@ import { controleerUitrol } from "./uitrol";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
 import {
   ACTIEVE_ATTESTATIE,
+  ACTIEVE_UITROL,
   ACTIEVE_WORKFLOW,
   canoniekeAttestatiePad,
+  canoniekeUitrolPad,
   canoniekeWorkflowPad,
   VERPLICHTE_GOVERNANCE_TESTS,
   WORKFLOW_MAP,
@@ -306,6 +308,10 @@ export async function controleerWorkflow(wortel: string): Promise<number> {
     attestatie: {
       actief: await feitenOver(wortelEchtPad, ACTIEVE_ATTESTATIE),
       canoniek: await feitenOver(wortelEchtPad, canoniekeAttestatiePad(modus)),
+    },
+    uitrol: {
+      actief: await feitenOver(wortelEchtPad, ACTIEVE_UITROL),
+      canoniek: await feitenOver(wortelEchtPad, canoniekeUitrolPad(modus)),
     },
     workflowMapInhoud,
     testGroottes,
@@ -1587,7 +1593,7 @@ function help(): number {
       "                                    (DEC-0046): hoogstens één per pull request; exit 4 = correctie nodig.",
       "  attestatie --pr <nummer>          In de attestatieworkflow: verifieert akkoord, scope, toetsing,",
       "                                    uitzonderingen en poort, en geeft dan de goedkeurende review af.",
-      "  uitrol --url <adres> --merk <commit>",
+      "  uitrol [--url <adres>] --merk <commit> | uitrol --gevraagd",
       "                                    Haalt de uitgerolde pagina op en vergelijkt het bouwmerk",
       "                                    met de commit die is uitgerold; 1 bij verschil, ontbreken",
       "                                    of een pagina die niet op te halen is.",
@@ -3210,17 +3216,51 @@ async function opdrachtAttestatie(vlaggen: ReadonlyMap<string, string>): Promise
 }
 
 /**
- * `jarvis uitrol --url <adres> --merk <commit>`
+ * `jarvis uitrol [--url <adres>] --merk <commit>` en `jarvis uitrol --gevraagd`
  *
  * De enige stap in de keten die buiten de repository kijkt. Hij hoort direct
  * na de uitrol te draaien en hard te falen: een uitrol die niet is nagemeten
  * is niet aangetoond, en dat verschil was op 2026-10-02 precies het defect.
+ *
+ * Zonder `--url` komt het adres uit `jarvis.config.yml` (`uitrol.adres`). Dat
+ * is de vorm die `jarvis-uitrol.yml` gebruikt, en met opzet: het adres dat
+ * wordt nagemeten hoort onder review te staan en niet in een
+ * repository-instelling, waar het buiten de diff om te zetten valt.
+ *
+ * `--gevraagd` meet niets en haalt niets op. Het zegt alleen of deze
+ * repository een uitroladres heeft, zodat de eerste job van de workflow — de
+ * job zonder secrets — kan bepalen of de job met de secrets moet draaien.
  */
 async function opdrachtUitrol(vlaggen: ReadonlyMap<string, string>): Promise<number> {
-  const adres = vlaggen.get("url");
+  const uitVlag = vlaggen.get("url") ?? "";
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  const configResultaat = await laadConfig(wortel);
+  if (!configResultaat.ok && (uitVlag === "" || vlaggen.has("gevraagd"))) {
+    // Alleen melden wanneer we de configuratie werkelijk nodig hadden: met
+    // een expliciete --url is een onleesbare configuratie niet ons probleem.
+    for (const f of configResultaat.fouten) console.error(`jarvis uitrol: ${f}`);
+    return 1;
+  }
+  const uitConfig = configResultaat.ok ? configResultaat.config.uitrol.adres : "";
+
+  if (vlaggen.has("gevraagd")) {
+    const gevraagd = uitConfig !== "";
+    await meldAanWorkflow("gevraagd", gevraagd ? "true" : "false");
+    console.log(
+      gevraagd
+        ? `jarvis uitrol: deze repository rolt uit naar ${uitConfig}.`
+        : "jarvis uitrol: jarvis.config.yml heeft geen uitrol.adres; deze repository rolt niets uit.",
+    );
+    return 0;
+  }
+
+  const adres = uitVlag || uitConfig;
   const merk = vlaggen.get("merk");
   if (!adres || !merk) {
-    console.error("jarvis uitrol: geef --url <adres van de uitgerolde pagina> en --merk <commit die is uitgerold>.");
+    console.error(
+      "jarvis uitrol: geef --merk <commit die is uitgerold>, en --url <adres van de uitgerolde pagina> " +
+        "of uitrol.adres in jarvis.config.yml.",
+    );
     return 2;
   }
   const { code, melding } = await controleerUitrol(adres, merk);

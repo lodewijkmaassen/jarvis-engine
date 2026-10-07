@@ -27,8 +27,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   ACTIEVE_ATTESTATIE,
+  ACTIEVE_UITROL,
   ACTIEVE_WORKFLOW,
   CANONIEKE_ATTESTATIE,
+  CANONIEKE_UITROL,
   CANONIEKE_WORKFLOW,
   CANONIEKE_WORKFLOW_CONSUMER,
   GOVERNANCE_CONFIG,
@@ -40,6 +42,24 @@ import {
   type GovernanceInvoer,
 } from "@/jarvis/src/workflow";
 import { controleerWorkflow, opdrachtPoort, poortStappen, poortUitkomst, prContextVanGebeurtenis } from "@/jarvis/src/opdrachten";
+
+// De regels die direct onder `jobs: <naam>:` staan, op hun eigen niveau en
+// zonder commentaar. Geen YAML-lezer: alleen de inspringing wordt geteld, zodat
+// een eigenschap van de job niet te verwarren is met een regel in een stap of
+// met tekst in een commentaar.
+function jobBlok(tekst: string, naam: string): string[] {
+  const regels = tekst.split("\n");
+  const begin = regels.findIndex((r) => r === `  ${naam}:`);
+  if (begin === -1) return [];
+  const uit: string[] = [];
+  for (const regel of regels.slice(begin + 1)) {
+    if (regel.trim() === "" || regel.trimStart().startsWith("#")) continue;
+    const inspringing = regel.length - regel.trimStart().length;
+    if (inspringing <= 2) break;
+    if (inspringing === 4) uit.push(regel.trim());
+  }
+  return uit;
+}
 
 /** Ruwe bytes, zonder encoding: elke omzetting naar tekst is al een interpretatie. */
 const ACTIEF = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-lint.yml"));
@@ -220,6 +240,65 @@ describe("de gehardde governancecontrole", () => {
       expect(
         controleerGovernance(basis({ attestatie: attestatie({ echtPad: "/repo/x" }, { echtPad: "/repo/x" }) })).join(" "),
       ).toContain("hetzelfde bestand");
+    });
+  });
+
+  // Dezelfde vier gevallen voor de uitrolworkflow. Ze staan hier uitgeschreven
+  // en niet in een lus over de drie workflows: een tabel waar de controle haar
+  // scope uit haalt is precies wat `workflow.ts` niet wil, en een toets die
+  // dezelfde tabel gebruikt als de code bewijst alleen dat ze elkaar volgen.
+  describe("de uitrolworkflow", () => {
+    const uitrol = (actief: Partial<BestandsFeiten>, canoniek: Partial<BestandsFeiten> = {}) => ({
+      actief: feiten({ echtPad: `${WORTEL}/${ACTIEVE_UITROL}`, ...actief }),
+      canoniek: feiten({ echtPad: `${WORTEL}/${CANONIEKE_UITROL}`, ...canoniek }),
+    });
+
+    it("hoeft er niet te zijn — een project zonder interface rolt niets uit", () => {
+      expect(controleerGovernance(basis({ uitrol: uitrol({ bytes: null }, { bytes: null }) }))).toEqual([]);
+    });
+
+    it("moet, als hij er is, byte-identiek zijn aan de canonieke bron", () => {
+      expect(controleerGovernance(basis({ uitrol: uitrol({}) }))).toEqual([]);
+      const uit = controleerGovernance(basis({ uitrol: uitrol({ bytes: Buffer.from("anders") }) }));
+      expect(uit.join(" ")).toContain(`${ACTIEVE_UITROL} wijkt af`);
+    });
+
+    it("blokkeert zonder canonieke bron, achter een link, en als het hetzelfde bestand is", () => {
+      expect(controleerGovernance(basis({ uitrol: uitrol({}, { bytes: null }) })).join(" ")).toContain("canonieke bron ontbreekt");
+      expect(controleerGovernance(basis({ uitrol: uitrol({ viaSymlink: true }) })).join(" ")).toContain("symbolische link");
+      expect(
+        controleerGovernance(basis({ uitrol: uitrol({ echtPad: "/repo/x" }, { echtPad: "/repo/x" }) })).join(" "),
+      ).toContain("hetzelfde bestand");
+    });
+
+    it("staat op de lijst van toegestane workflows", () => {
+      expect(TOEGESTANE_WORKFLOWS).toContain("jarvis-uitrol.yml");
+    });
+
+    it("blokkeert een pad dat na het volgen van links buiten de repository wijst", () => {
+      const uit = controleerGovernance(
+        basis({ uitrol: uitrol({ echtPad: "/elders/jarvis-uitrol.yml" }, { echtPad: "/repo/c" }) }),
+      );
+      expect(uit.join(" ")).toContain("buiten de repository");
+    });
+
+    // De uitroljob draagt het langlevende productietoken. De grens die telt is
+    // `environment:` met een deployment branch policy: GitHub weigert dan zelf
+    // de secrets aan een run op een andere ref, ook wanneer de aanvaller dit
+    // bestand heeft gewijzigd. De `if`-regel is de goedkope vangrail ervoor.
+    //
+    // Beide worden hier op de job zelf vastgelegd en niet als tekst ergens in
+    // het bestand: een eerdere versie zocht de voorwaarde met `toContain` over
+    // de hele inhoud, en bleef groen toen zij uit de `if` verdween en als
+    // commentaar terugkwam.
+    it("laat de uitroljob alleen op main draaien, achter een omgeving", () => {
+      for (const pad of [".github/workflows/jarvis-uitrol.yml", "jarvis/canonical/jarvis-uitrol.yml"]) {
+        const job = jobBlok(readFileSync(path.join(process.cwd(), pad), "utf8"), "uitrollen");
+        const ifRegel = job.find((r) => r.startsWith("if:"));
+        expect(ifRegel, `geen if-regel op de job uitrollen in ${pad}`).toBeDefined();
+        expect(ifRegel).toContain("github.ref == 'refs/heads/main'");
+        expect(job, `geen environment op de job uitrollen in ${pad}`).toContain("environment: productie");
+      }
     });
   });
 
@@ -407,8 +486,12 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
     const attestatie = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-attestatie.yml"));
     await writeFile(path.join(map, ".github/workflows/jarvis-attestatie.yml"), attestatie);
     await writeFile(path.join(map, "jarvis/canonical/jarvis-attestatie.yml"), attestatie);
+    // En de uitrolworkflow, om dezelfde reden.
+    const uitrolBron = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-uitrol.yml"));
+    await writeFile(path.join(map, ".github/workflows/jarvis-uitrol.yml"), uitrolBron);
+    await writeFile(path.join(map, "jarvis/canonical/jarvis-uitrol.yml"), uitrolBron);
     for (const naam of TOEGESTANE_WORKFLOWS) {
-      if (naam !== "jarvis-lint.yml" && naam !== "jarvis-attestatie.yml") {
+      if (naam !== "jarvis-lint.yml" && naam !== "jarvis-attestatie.yml" && naam !== "jarvis-uitrol.yml") {
         await writeFile(path.join(map, ".github/workflows", naam), "op: {}\n");
       }
     }

@@ -33,6 +33,72 @@ _Gegenereerd op 2026-10-02._
 
 ## Waar staan we
 
+De uitrol van de interface heeft een canonieke workflow, en daarmee staat de
+laatste stap van een geautoriseerde levering niet langer op een laptop.
+`jarvis-uitrol.yml` bouwt op een samenvoeging naar `main` de interface met het
+bouwmerk van die commit, rolt haar uit, en haalt haar dan terug op: de harde
+controle van `jarvis uitrol` vergelijkt het bouwmerk in de uitgerolde pagina
+met de commit die is uitgerold, en faalt de workflow wanneer die twee niet
+gelijk zijn. Dat is precies het gat van 2026-10-02 — een uitrol die de
+bestanden niet verving, waarbij alle controle bij de repositorygrens stopte en
+"klaar" een aanname was.
+
+De workflow is in twee jobs geknipt, om dezelfde reden als bij de attestatie:
+de eerste leest alleen `uitrol.adres` uit `jarvis.config.yml` en zegt of er in
+deze repository iets uit te rollen valt; alleen wanneer dat zo is, draait de
+tweede job — en die is de enige die de secrets in handen krijgt. Een project
+zonder uitroladres brengt dus geen token in een runner. Het adres staat in de
+configuratie en niet in een repository-instelling, want wat gecontroleerd wordt
+hoort onder review te staan en niet naast de diff.
+
+De uitroljob draait onder `environment: productie`, en daar hoort de grens te
+liggen die bepaalt vanaf welke ref er uitgerold kan worden. **Die grens bestaat
+vandaag nog niet.** Zij bestaat pas wanneer op die omgeving een deployment branch
+policy staat die uitsluitend `main` toestaat, én de vijf waarden die de job nodig
+heeft daar als environment-secret staan in plaats van als repository-secret. Geen
+van beide is in deze repository af te dwingen of te meten, dus deze beschrijving
+stelt het niet als feit.
+
+De faalwijze is stil en daarom genoemd: GitHub maakt een omgeving die een workflow
+noemt stilzwijgend aan zodra de job voor het eerst draait, zonder protection
+rules. Staan de waarden op dat moment als repository-secret, dan rolt de workflow
+gewoon uit, is er geen branchgrens, en meldt niets dat er iets ontbreekt. De
+`if`-regel op de job helpt daar niet tegen: zij is een vangrail die de
+ongewijzigde kopie van een dispatch tegenhoudt, en een `workflow_dispatch` draait
+de definitie van de gekozen ref — wie daar mag pushen, brengt zijn eigen versie
+van die regel mee. Een eerdere versie van deze beschrijving beloofde de grens wél
+aan die regel alleen; twee onafhankelijke toetsingsronden haalden dat onderuit.
+
+Wat er daarvoor nodig is, is precies dit, en het hoort in één handeling:
+
+| Wat | Waar | Waarde |
+|---|---|---|
+| omgeving | Settings → Environments | naam `productie` |
+| branch policy | die omgeving, *Deployment branches and tags* | *Selected branches and tags*, één regel: `main` |
+| `VERCEL_TOKEN` | environment-secret van `productie` | Vercel → Account Settings → Tokens |
+| `VERCEL_ORG_ID` | environment-secret van `productie` | Vercel → project → Settings → General |
+| `VERCEL_PROJECT_ID` | environment-secret van `productie` | Vercel → project → Settings → General |
+| `JARVIS_SUPABASE_URL` | environment-secret van `productie` | `attestatie.url` in `jarvis.config.yml` |
+| `JARVIS_SUPABASE_SLEUTEL` | environment-secret van `productie` | `attestatie.sleutel` in `jarvis.config.yml` |
+
+De laatste twee zijn publieke waarden — ze staan in elke browser die de interface
+opent. Ze gaan als secret mee omdat de engine geen projectkennis in haar workflows
+draagt, niet omdat ze geheim zijn.
+
+Twee dingen zijn daarmee nog niet aangetoond: dat de uitroljob werkelijk groen
+draait, en dat de harde controle in CI rood valt op een uitrol die de bestanden
+niet vervangt. Beide vragen eerst die ene handeling. Tot dan faalt de uitroljob op
+de eerste samenvoeging naar `main` — bewust, want een uitroljob die wordt
+overgeslagen en toch groen meldt, is precies de aanname die hier moest worden
+opgeheven.
+
+De poort ziet die workflow als wat hij is: een derde ingang, naast de poort en
+de attestatie. Hij staat op `TOEGESTANE_WORKFLOWS`, en de byte-vergelijking met
+`jarvis/canonical/jarvis-uitrol.yml` geldt er onverkort — inclusief de
+symlink-, buiten-de-repository- en zelfde-bestandcontroles. Daarmee is een
+uitrolworkflow alleen toe te voegen door hem canoniek te maken, en dat is een
+wijziging onder CODEOWNERS.
+
 De opdrachttekst van een taak is geen administratieve wijziging meer.
 `DEC-0044` laat een administratieve pull request door zonder taakakkoord,
 zonder scopevergelijking én zonder onafhankelijke toetsing, en de takenmap

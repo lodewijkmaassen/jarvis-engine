@@ -1,0 +1,167 @@
+name: jarvis-uitrol
+
+# De uitrol van de interface, uit CI en niet van een laptop.
+#
+# Waarom deze workflow bestaat: tot 2026-10-02 werd de interface gebouwd met
+# `bouw.mjs` en uitgerold met `vercel --prod` vanaf de machine van de eigenaar.
+# Daarmee was de laatste stap van een al geautoriseerde levering een handeling
+# van een mens. Op 2026-10-02 ging die stap stil mis: de uitrol verving de
+# bestanden niet, alle controle stopte bij de repositorygrens, en "klaar" was
+# een aanname.
+#
+# Daarom staat de harde controle NA de uitrol en niet ernaast. `jarvis uitrol`
+# haalt de uitgerolde pagina op en vergelijkt haar bouwmerk met de commit die
+# is uitgerold; faalt dat, dan faalt deze workflow. Een uitrol die niet is
+# nagemeten geldt niet als uitrol.
+#
+# Deze workflow bevat geen logica. Elke stap zet waarden in de omgeving en
+# roept precies één vaste opdracht aan — geen voorwaarden, geen pipelines, geen
+# fallbacks. Dezelfde grens als in de poort, en om dezelfde reden: een
+# shellscript met vlaggen is een oppervlak dat niet te bewaken valt.
+#
+# De secrets staan UITSLUITEND in de job die uitrolt. De poort draait bewust
+# zonder secrets, en de eerste job hieronder ook: die leest alleen de
+# configuratie en beslist of er in deze repository iets uit te rollen valt.
+
+on:
+  push:
+    branches: [main]
+  # Met de hand, om een vastgelopen uitrol te herhalen. Geen invoer: wat er
+  # wordt uitgerold volgt uit de commit, niet uit wat iemand intypt.
+  workflow_dispatch:
+
+# Bewust NIET afbreken. Een uitrol die halverwege wordt gestopt laat productie
+# in een onbekende toestand achter, en dat is erger dan twee uitrollen na
+# elkaar — de tweede overschrijft de eerste en de controle meet de laatste.
+concurrency:
+  group: jarvis-uitrol-${{ github.ref }}
+  cancel-in-progress: false
+
+# Niets op workflowniveau; elke job vraagt wat hij nodig heeft.
+permissions: {}
+
+jobs:
+  # Zonder secrets. Leest de configuratie van dit project en zegt of er een
+  # uitroladres is. Een repository die er geen heeft, rolt niets uit en komt
+  # dus nooit bij de job die de secrets draagt.
+  bepalen:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      gevraagd: ${{ steps.bepalen.outputs.gevraagd }}
+    steps:
+      # Gepind op een commit-SHA (RSK-0020), net als in de poort: een
+      # verplaatsbare tag kan morgen andere code zijn.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # --ignore-scripts: geen lifecycle-scripts, om dezelfde reden als in de
+      # poort. Deze job leest één configuratiebestand.
+      - run: npm ci --ignore-scripts
+
+      - name: Valt er in deze repository iets uit te rollen?
+        id: bepalen
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs uitrol --gevraagd
+
+  # Alleen voor een repository die een uitroladres heeft ingesteld, en alleen op
+  # `main`. Draait deze job niet, dan komen de secrets ook niet in een runner
+  # terecht.
+  #
+  # De grens om het uitroltoken MOET op de omgeving liggen, en niet in dit
+  # bestand. Een `workflow_dispatch` draait de workflowdefinitie van de gekozen
+  # ref: wie op `jarvis/**` mag pushen, brengt zijn eigen versie van dit bestand
+  # mee en haalt een voorwaarde die hier staat er even goed uit. Alleen GitHub
+  # zelf kan de credentials weigeren aan een run op een andere ref.
+  #
+  # LET OP — die grens bestaat alleen wanneer BEIDE waar zijn:
+  #   1. de omgeving `productie` heeft een deployment branch policy die
+  #      uitsluitend `main` toestaat, en
+  #   2. de vijf waarden hieronder staan als ENVIRONMENT-secret op die omgeving,
+  #      niet als repository-secret.
+  #
+  # Geen van beide is hier af te dwingen of te controleren, en dit bestand mag
+  # dus niet beweren dat zij gelden. De faalwijze is stil en daarom genoemd:
+  # GitHub maakt een omgeving die een workflow noemt stilzwijgend aan zodra de
+  # job voor het eerst draait — zonder protection rules. Staan de waarden dan
+  # als repository-secret, dan rolt deze workflow gewoon uit, is er GEEN
+  # branchgrens, en ziet niemand dat.
+  #
+  # De volledige instructie staat in `docs/CURRENT_STATE.md`, in de tabel onder
+  # de alinea's over deze workflow: de omgeving `productie`, de branch policy op
+  # `main`, en de vijf waarden hieronder met hun vindplaats. Volg die tabel en
+  # niet `tasks/T-20261002-technische-uitvoering/opdracht.md`: stap 2 daarvan is
+  # ouder, zegt "repository-secret", en is daarmee precies de vergissing die
+  # hierboven beschreven staat. Die tekst is niet bijgewerkt omdat haar hash het
+  # taakakkoord draagt; `docs/CURRENT_STATE.md` gaat voor.
+  #
+  # De `if`-regel eronder is geen beveiliging maar een goedkope vangrail: zij
+  # houdt de ongewijzigde kopie van een dispatch op een branch tegen voordat de
+  # runner start. Wie het bestand wél wijzigt, komt daar langs.
+  uitrollen:
+    needs: bepalen
+    if: needs.bepalen.outputs.gevraagd == 'true' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: productie
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci --ignore-scripts
+
+      # Het bouwmerk is de commit die wordt uitgerold en niets anders: de
+      # controle onderaan leest hem straks terug uit de uitgerolde pagina.
+      #
+      # De twee Supabase-waarden zijn publieke identifiers — ze staan in elke
+      # browser die de interface opent, en de grens ligt bij RLS, niet bij de
+      # sleutel. Ze staan hier als secret omdat de engine geen projectkennis
+      # draagt, niet omdat ze geheim zijn. Ontbreken ze, dan faalt de bouw, en
+      # dat is bedoeld: een pagina zonder `config.js` vindt de database niet en
+      # toont "geen gegevens". Ook dat is één keer in productie gebeurd.
+      #
+      # Let op de vorm van dat falen. Een secret die niet bestaat of verkeerd
+      # heet, komt hier niet als een afwezige vlag binnen maar als de lege
+      # string. `bouw.mjs` weigert daarom een lege `--url` of `--sleutel`
+      # uitdrukkelijk (exitcode 2): zonder die grens schreef de bouw een lege
+      # `config.js`, slaagde met 0, en meldde de harde controle hieronder groen
+      # over een pagina die "geen gegevens" toont.
+      - name: De interface bouwen
+        env:
+          SUPABASE_URL: ${{ secrets.JARVIS_SUPABASE_URL }}
+          SUPABASE_SLEUTEL: ${{ secrets.JARVIS_SUPABASE_SLEUTEL }}
+          MERK: ${{ github.sha }}
+        run: node node_modules/jarvis-engine/jarvis/interface/app/bouw.mjs uitrol --url "$SUPABASE_URL" --sleutel "$SUPABASE_SLEUTEL" --merk "$MERK"
+
+      # Exact gepinde versie, geen `@latest`. Een exacte versie op npm is
+      # onveranderlijk; `@latest` is code die morgen anders kan zijn, en deze
+      # stap is de enige die een token in handen krijgt. Bijwerken = dit nummer
+      # wijzigen, en dat loopt langs de canonieke bron en een review.
+      - name: Uitrollen
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+        run: npx --yes vercel@62.2.0 deploy uitrol --prod --yes --token "$VERCEL_TOKEN"
+
+      # De harde controle, en de reden dat deze workflow bestaat. Geen --url:
+      # het adres komt uit `jarvis.config.yml`, dus het staat onder review en
+      # niet in een repository-instelling. Faalt dit, dan faalt de uitrol —
+      # ook wanneer de stap hierboven groen meldde.
+      - name: Harde controle — draagt productie het bouwmerk van deze commit?
+        env:
+          MERK: ${{ github.sha }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs uitrol --merk "$MERK"

@@ -82,4 +82,14 @@ attestatie:
   # geautoriseerd binnen T-20261002-technische-uitvoering.
   samenvoegen: true
 
+# Het publieke adres van de uitgerolde interface. Zonder dit adres wordt de
+# uitroljob op elke samenvoeging naar `main` overgeslagen en is `jarvis-uitrol`
+# groen zonder iets uit te rollen — precies de aanname die deze taak moest
+# opheffen. Het staat hier en niet in een repository-instelling, omdat de harde
+# controle na de uitrol dit adres ophaalt en vergelijkt: wat gecontroleerd
+# wordt hoort onder review te staan. Geen geheim; het is de adresbalk van elke
+# bezoeker.
+uitrol:
+  adres: https://jarvis-nine-virid.vercel.app
+
 rollen_map: jarvis/roles

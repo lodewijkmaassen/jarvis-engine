@@ -123,6 +123,22 @@ export const configSchema = z.strictObject({
       samenvoegen: z.boolean().default(false),
     })
     .default({ url: "", sleutel: "", bot: "", uitvoerders: [], extra_paden: [], samenvoegen: false }),
+  /**
+   * De uitrol van de interface (`jarvis-uitrol.yml`).
+   *
+   * `adres` is het publieke adres van de uitgerolde pagina. Het staat hier en
+   * niet in een repository-instelling, omdat de harde controle na de uitrol
+   * precies dit adres ophaalt: wat gecontroleerd wordt, hoort onder review te
+   * staan. Leeg = deze repository rolt niets uit, en de uitroljob draait niet.
+   *
+   * Het is geen geheim: het is het adres dat elke bezoeker in zijn
+   * adresbalk heeft.
+   */
+  uitrol: z
+    .strictObject({
+      adres: z.string().trim().default(""),
+    })
+    .default({ adres: "" }),
   // Jarvis als eigen project in het overzicht: de kern op de kaart. Wat in
   // deze repository bij Jarvis hoort (paden voor de beweging) en welke tag op
   // een record "dit gaat over Jarvis" betekent, zegt de configuratie; leeg =
