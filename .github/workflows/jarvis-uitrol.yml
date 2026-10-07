@@ -129,9 +129,16 @@ jobs:
       # De twee Supabase-waarden zijn publieke identifiers — ze staan in elke
       # browser die de interface opent, en de grens ligt bij RLS, niet bij de
       # sleutel. Ze staan hier als secret omdat de engine geen projectkennis
-      # draagt, niet omdat ze geheim zijn. Zonder die twee faalt de bouw, en
+      # draagt, niet omdat ze geheim zijn. Ontbreken ze, dan faalt de bouw, en
       # dat is bedoeld: een pagina zonder `config.js` vindt de database niet en
       # toont "geen gegevens". Ook dat is één keer in productie gebeurd.
+      #
+      # Let op de vorm van dat falen. Een secret die niet bestaat of verkeerd
+      # heet, komt hier niet als een afwezige vlag binnen maar als de lege
+      # string. `bouw.mjs` weigert daarom een lege `--url` of `--sleutel`
+      # uitdrukkelijk (exitcode 2): zonder die grens schreef de bouw een lege
+      # `config.js`, slaagde met 0, en meldde de harde controle hieronder groen
+      # over een pagina die "geen gegevens" toont.
       - name: De interface bouwen
         env:
           SUPABASE_URL: ${{ secrets.JARVIS_SUPABASE_URL }}

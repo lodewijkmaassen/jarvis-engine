@@ -60,6 +60,26 @@ if (merk !== undefined && !/^[0-9a-f]{7,40}$/.test(merk)) {
   console.error(`bouw: --merk verwacht een commit-sha (7 tot 40 hexadecimale tekens), kreeg ${JSON.stringify(merk)}.`);
   process.exit(2);
 }
+// Een GitHub-secret die niet bestaat of verkeerd heet, rendert in `env:` als
+// de lege string en niet als een afwezige vlag. Zonder deze controle schrijft
+// de bouw een `config.js` met lege waarden, slaagt met exitcode 0, en toont
+// productie "geen gegevens" terwijl de bouwmerkcontrole groen meldt — precies
+// de stille faalwijze die het bouwmerk moest opheffen. Een lege waarde is
+// daarom een fout en niet een afwezige vlag.
+for (const [naam, waarde] of [
+  ["url", url],
+  ["sleutel", sleutel],
+]) {
+  if (waarde !== undefined && waarde.trim() === "") {
+    console.error(
+      `bouw: --${naam} is leeg. Een secret die niet bestaat of verkeerd heet, komt als de lege\n` +
+        `      string binnen; een pagina met een lege config.js vindt de database niet en toont\n` +
+        `      "geen gegevens". Er is niets gebouwd.`,
+    );
+    process.exit(2);
+  }
+}
+
 if ((url === undefined) !== (sleutel === undefined)) {
   console.error("bouw: geef --url en --sleutel samen, of geen van beide.");
   process.exit(2);
