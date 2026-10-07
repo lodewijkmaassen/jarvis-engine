@@ -239,22 +239,21 @@ eigenaar en hoort in de lijst hieronder, niet in de bouw.
 
 ## Wat de eigenaar nog moet doen
 
-Niets om te beginnen — de analyse en het ontwerp vragen hem niets. De vier
-punten hieronder worden pas gevraagd op het moment dat de bouw ze nodig heeft,
-en elk is er een die aantoonbaar alleen hij kan zetten.
+Staat in `resultaat.md`, onder dezelfde kop, en nergens anders. Daar leest de
+poort hem (`leesEigenaarsPunten` filtert op `resultaat.md`) en daar toont de
+interface hem (`leesAandacht`); hier werd hij door niets gelezen. Deze
+verwijzing is zelf vast en beweegt niet mee met de uitvoering.
 
-- Stap 1: Akkoord van de eigenaar op deze taak in de Jarvis-app. De taak raakt
-  governance en CI en vraagt daarom zijn autorisatie (`DEC-0043`).
-- Stap 2: Een Vercel-token aanmaken en als repository-secret opslaan, samen met
-  de Supabase-url en de publieke sleutel die `bouw.mjs` nodig heeft. Waar:
-  Vercel → Account Settings → Tokens, en GitHub → `lodewijkmaassen/jarvis-engine`
-  → Settings → Secrets and variables → Actions. Controle: de uitrolworkflow
-  draait groen op een proefcommit.
-- Stap 3: Controleren of op `lodewijkmaassen/jarvis-engine` de instelling
-  *"Allow GitHub Actions to create and approve pull requests"* aanstaat
-  (Settings → Actions → General). Zonder die instelling telt de goedkeuring van
-  de attestatieworkflow niet mee. Controle: een attestatie op een proef-PR levert
-  een goedkeurende review op.
-- Controle: na oplevering voert Jarvis een volledige keten uit op één taak —
-  bouwen, toetsen, PR, attesteren, samenvoegen, uitrollen, productie nameten,
-  afsluiten — en meldt het resultaat, zonder dat de eigenaar tussenbeide komt.
+## Dit bestand staat vast vanaf het akkoord
+
+Vanaf het akkoord van de eigenaar op deze taak draagt `opdracht.md` alleen doel,
+functionele scope, aanpak, acceptatiecriteria, grenzen en `uitzonderingen` —
+niets dat tijdens de uitvoering beweegt. Voortgang, metingen, bevindingen en de
+eigenaarslijst horen in `resultaat.md`, dat buiten de scope-hash valt.
+
+Dat is geen verzachting van een controle maar het weghalen van de oorzaak. De
+scope-hash dekt dit bestand byte voor byte, dus zolang voortgang hier meeschreef,
+liet administratie het akkoord even hard vervallen als een echte
+scopewijziging. Met dit bestand vast betekent een wijziging hier weer een
+scopewijziging, en is een vervallen akkoord de juiste uitkomst in plaats van
+ruis.
