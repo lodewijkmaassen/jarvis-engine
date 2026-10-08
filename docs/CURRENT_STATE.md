@@ -552,7 +552,7 @@ wel en de rest van de kaart niet.
 
 Wat een controle ís, staat op één plek: `STAP_OF_CONTROLE` met het predicaat
 `isControle`, dat dat patroon zélf toepast. De lezer, de grens "een controle
-opent nooit een handeling" en `bouwOpties` gebruiken alle drie dat predicaat.
+opent nooit een handeling" en `bouwOpties` leunen alle drie op die bron.
 Ze stonden eerder los van elkaar uitgeschreven, en precies het uiteenlopen
 ervan kostte de eigenaar zijn knop. Een los "begint met controle" wordt niet
 aangeboden: juist de vormen die géén controle zijn, beginnen er wél mee.
@@ -562,7 +562,7 @@ met een eigen, iets ruimere vorm. Bestaand, zonder gevolg in de dossiers, en het
 hoort op dezelfde manier naar één bron.
 
 Twee dingen die een controle níet mag. Zij mag zeggen waaróp zij controleert,
-maar niet wíe haar doet: een object met "jij", "jou", "jouw", "eigenaar",
+maar niet wíe haar doet: een object met "je", "jij", "jou", "jouw", "eigenaar",
 "eigenaren" of "eigenaars" wijst juist werk aan de eigenaar toe en blijft een
 zichtbaar punt. En een woord dat enkel met "Controle" begint ("Controlepaneel")
 valt erbuiten.

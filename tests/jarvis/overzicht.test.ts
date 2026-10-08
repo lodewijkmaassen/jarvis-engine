@@ -799,6 +799,7 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
       "Controle door jou",
       "Controle op jou",
       "Controle op de eigenaren",
+      "Controle op je sleutel",
       "Controle oppassen voor de sleutel",
       "Controlepaneel openen",
     ]) {

@@ -442,7 +442,7 @@ export type GelezenItem = {
  * "Controlepaneel" valt erbuiten door de verplichte spatie, en de lengtegrens
  * volgt die van de ingesprongen variant in de lezer.
  */
-const CONTROLE_OBJECT = String.raw`(?!(?:[^:*]*\b(?:jij|jou|jouw|eigenaar|eigenaren|eigenaars)\b))[^:*]{1,60}`;
+const CONTROLE_OBJECT = String.raw`(?!(?:[^:*]*\b(?:je|jij|jou|jouw|eigenaar|eigenaren|eigenaars)\b))[^:*]{1,60}`;
 export const STAP_OF_CONTROLE = new RegExp(
   String.raw`^\**(Stap \d+|Controle(?:\s+op\s+${CONTROLE_OBJECT})?)\**\s*:\**\s*(.*)$`,
   "i",
@@ -457,8 +457,11 @@ export const STAP_OF_CONTROLE = new RegExp(
  * precies hoe de eigenaar eerder zijn knop "Gedaan" verloor.
  */
 export function isControle(label: string): boolean {
+  // Ruimer dan het patroon op één punt, en bewust: een label kan uit een bron
+  // komen die niet trimt, en dan is "wel een controle maar met een spatie
+  // ervoor" geen onderscheid dat iets betekent.
   const m = STAP_OF_CONTROLE.exec(`${label.trim()}:`);
-  return m !== null && /^controle\b/i.test(m[1].replace(/^\**/, ""));
+  return m !== null && /^controle\b/i.test(m[1]);
 }
 
 export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenItem[] {
