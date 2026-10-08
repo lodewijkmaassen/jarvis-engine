@@ -529,6 +529,61 @@ pagina blijft serveren is zelf een van de manieren waarop een uitrol mislukt.
 De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
 die dit merk verplicht stelt, is nog niet gebouwd.
 
+Nieuw sinds 2026-10-08: de lijst voor de eigenaar leest eerlijker. `leesItemsOnder`
+kon een punt onzichtbaar maken en werk van Jarvis als enige actie laten staan —
+het omgekeerde van wat de regel over die lijst wil. Twee wijzigingen, beide uit
+één gemeten geval in een echt taakdossier:
+
+- Een afgevinkte vette kop dekt geen openstaande `- Stap N:` meer. Deed zij dat
+  wel, dan heette het punt naar een afgeronde handeling en viel het als "gedaan"
+  weg; zo lagen twee werkelijke eigenaarspunten vijf dagen onzichtbaar. Valt de
+  kop weg, dan is de stap zelf de titel — lelijker, maar zichtbaar. Een
+  afgevinkte kop boven afgevinkte stappen houdt gewoon haar naam.
+- `- Controle op …: …` geldt als controle in plaats van als actie. Het patroon
+  eiste de dubbele punt direct achter "Controle", dus "Controle op de hele taak:"
+  werd zelf een punt — in het gemeten dossier het enige zichtbare punt van die
+  taak. `bouwOpties` kent dezelfde vorm, want een controle die daar als optie
+  belandt vervangt de standaardopties en kost de eigenaar zijn knop "Gedaan".
+
+Dekt de kop de stap niet, dan geldt zij ook niet als aanhef van de toelichting en
+niet voor de urgentie. Anders stond een afgeronde handeling vóór de tekst van een
+openstaand punt en kwam de weging nog uit die afgeronde kop — de titel klopte dan
+wel en de rest van de kaart niet.
+
+Wat een controle ís, staat op één plek: `STAP_OF_CONTROLE` met het predicaat
+`isControle`, dat dat patroon zélf toepast. De lezer, de grens "een controle
+opent nooit een handeling" en `bouwOpties` leunen alle drie op die bron.
+Ze stonden eerder los van elkaar uitgeschreven, en precies het uiteenlopen
+ervan kostte de eigenaar zijn knop. Een los "begint met controle" wordt niet
+aangeboden: juist de vormen die géén controle zijn, beginnen er wél mee.
+
+Dat geldt voor de controle, niet voor de stap: `bouwOpties` herkent "Stap N" nog
+met een eigen, iets ruimere vorm. Bestaand, zonder gevolg in de dossiers, en het
+hoort op dezelfde manier naar één bron.
+
+Twee dingen die een controle níet mag. Zij mag zeggen waaróp zij controleert,
+maar niet wíe haar doet: een object met "je", "jij", "jou", "jouw", "eigenaar",
+"eigenaren" of "eigenaars" wijst juist werk aan de eigenaar toe en blijft een
+zichtbaar punt. En een woord dat enkel met "Controle" begint ("Controlepaneel")
+valt erbuiten.
+
+Bewust niet gedaan: een grens op élke kop binnen de sectie. Dat lag voor de hand,
+maar het nam `context` ook af van de tweede aanroeper van deze functie en zag een
+`#` in een codeblok als kop, terwijl de meting op het echte dossier zonder die
+grens dezelfde uitkomst geeft.
+
+Wat hier nog niet goed is: valt de kop weg, dan komt de titel uit de eerste
+fysieke regel van de stap. Die kan midden in een zin afbreken; staat de staptekst
+volledig op de ingesprongen vervolgregel, dan is de titel leeg; en is die eerste
+regel één woord tussen backticks, dan heet het punt naar dat woord. De volledige
+tekst zit wel in de stappen van de kaart, dus er gaat geen informatie verloren.
+De reparatie is terugvallen op de volledige staptekst in plaats van op de eerste
+regel.
+
+Asymmetrisch gebleven, en bestaand: een gewoon lijstpunt onder een afgevinkte kop
+erft die kop nog wél als aanhef en urgentie. Alleen de stap-tak is omgezet. Dat
+hoort gelijkgetrokken, maar het is geen gevolg van deze wijziging.
+
 
 ## Volgende stap
 

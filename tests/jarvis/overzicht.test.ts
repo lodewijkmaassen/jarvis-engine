@@ -12,6 +12,8 @@ import {
   isAkkoordStap,
   isAkkoordVraag,
   isAfgevinkt,
+  isControle,
+  STAP_OF_CONTROLE,
   bouwOpties,
   leesAandacht,
   leesFeiten,
@@ -651,6 +653,162 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
     const uit = bouwOpties(items[0].regels, []);
     expect(uit.stappen).toHaveLength(1);
     expect(uit.controle).toMatch(/^Jarvis meet/);
+  });
+
+  // Gemeten op een echt taakdossier, 2026-10-07. Onder een afgevinkte vette
+  // kop stonden stap 1 tot en met 3; na een lege regel en alinea's tekst
+  // volgden stap 4 en stap 5 — de enige twee punten die werkelijk bij de
+  // eigenaar lagen. Die erfden de afgevinkte kop als titel en vielen daarmee
+  // als "gedaan" uit de lijst: vijf dagen onzichtbaar. Een afgevinkte kop dekt
+  // sindsdien geen openstaande stap meer; de stap zelf is dan de titel —
+  // lelijker, maar zichtbaar.
+  it("geeft een stap onder een afgevinkte kop zijn eigen tekst als titel", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**[x] Eén zitting, zodat de uitrol kan draaien**\n\n" +
+      "- Stap 1: [x] maak de sleutel aan.\n\n" +
+      "Tekst die ertussen staat.\n\n" +
+      "- Stap 4: zet de verplichte controle terug.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(2);
+    expect(items[0].titel).toBe("[x] Eén zitting, zodat de uitrol kan draaien");
+    expect(items[1].titel).toBe("zet de verplichte controle terug.");
+    expect(isAfgevinkt(items[1].titel)).toBe(false);
+  });
+
+  // Dezelfde vorm als hierboven, maar met de `###`-kop die in het echte
+  // dossier tussen de twee blokken stond. De kop zelf is geen grens — dat is
+  // bewust: een grens op elke kop nam `context` ook af van de andere
+  // aanroepers en zag een `#` in een codeblok als kop. Wat het punt zichtbaar
+  // houdt, is de afgevinkte kop die de openstaande stap niet meer dekt.
+  it("houdt het punt zichtbaar ook wanneer er een subkop tussen staat", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**[x] Eén zitting, zodat de uitrol kan draaien**\n\n" +
+      "- Stap 1: [x] maak de sleutel aan.\n\n" +
+      "### Nog één punt uit dezelfde zitting\n\n" +
+      "- Stap 4: zet de verplichte controle terug.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(2);
+    expect(isAfgevinkt(items[1].titel)).toBe(false);
+    expect(items[1].regels.map((r) => r.label)).toEqual(["Stap 4"]);
+  });
+
+  // "Controle op de hele taak: …" zegt zelf dat Jarvis het doet en dat de
+  // eigenaar er niet aan te pas komt. Het oude patroon eiste de dubbele punt
+  // direct achter "Controle", dus zo'n regel werd een eigenaarsactie — en in
+  // het gemeten dossier de enige zichtbare actie van de taak.
+  it("herkent een controle die zegt waarop zij controleert", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**Handeling 1 — de sleutel zetten**\n\n" +
+      "- Stap 1: zet de sleutel in de app.\n" +
+      "- Controle op de hele taak: Jarvis voert daarna de hele keten uit, zonder dat jij tussenbeide komt.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Handeling 1 — de sleutel zetten");
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle op de hele taak"]);
+  });
+
+  // En die controle mag geen keuzeknop worden. Een label dat als optie belandt
+  // vervángt de standaardopties, en dan verliest de eigenaar zijn knop
+  // "Gedaan" aan werk dat Jarvis zelf doet.
+  it("maakt van 'Controle op …' geen keuzeknop en laat 'Gedaan' staan", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**Handeling 1 — de sleutel zetten**\n\n" +
+      "- Stap 1: zet de sleutel in de app.\n" +
+      "- Controle op de hele taak: Jarvis meet daarna zelf dat het werkt.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    const uit = bouwOpties(items[0].regels, [{ keuze: "gedaan", label: "Gedaan", gevolg: "Jarvis streept dit af." }]);
+    expect(uit.opties.map((o) => o.keuze)).toEqual(["gedaan", "later"]);
+    expect(uit.controle).toMatch(/^Jarvis meet/);
+    expect(uit.stappen).toHaveLength(1);
+  });
+
+  it("maakt van een losse controle-op-iets ook geen eigen handeling", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "- Controle op de hele taak: Jarvis meet na de merge dat de poort groen is.\n";
+    expect(leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m)).toEqual([]);
+  });
+
+  // De grenzen van die verruiming. Alleen "Controle op …" telt: een regel die
+  // juist wél een handeling toewijst mag niet stil verdwijnen, en een woord
+  // dat enkel met "Controle" begint is een gewoon punt.
+  it("laat 'Controle door jou' een zichtbaar punt en houdt 'Controlepaneel' erbuiten", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "- Controle door jou: open het dashboard en kijk of de waarde er staat.\n" +
+      "- Controlepaneel openen: kies daar de juiste omgeving.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items.map((i) => i.titel)).toEqual([
+      "Controle door jou: open het dashboard en kijk of de waarde er staat.",
+      "Controlepaneel openen: kies daar de juiste omgeving.",
+    ]);
+  });
+
+  // Een controle mag zeggen waaróp zij controleert, maar niet wíe haar doet.
+  // Zonder deze grens verdween een regel die juist werk aan de eigenaar
+  // toewijst volledig uit de lijst: er stond geen punt vóór, dus hij werd aan
+  // niets gehangen en was weg. Stil verliezen is erger dan lelijk tonen.
+  it("laat een controle die werk aan de eigenaar toewijst een zichtbaar punt", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "- Controle op jou: jij moet het dashboard openen.\n" +
+      "- Controle op de hele taak door jou: open daarna het logboek.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items.map((i) => i.titel)).toEqual([
+      "Controle op jou: jij moet het dashboard openen.",
+      "Controle op de hele taak door jou: open daarna het logboek.",
+    ]);
+  });
+
+  // Dekt de kop de stap niet, dan geldt zij ook niet als aanhef. Anders stond
+  // een afgeronde handeling voor de toelichting van een openstaand punt en
+  // kwam de urgentie nog uit die afgeronde kop.
+  it("neemt een afgevinkte kop ook niet mee als context van het punt", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**[x] Eén zitting, zodat de uitrol kan draaien**\n\n" +
+      "- Stap 1: [x] maak de sleutel aan.\n\n" +
+      "- Stap 4: zet de verplichte controle terug.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items[0].context).toBe("[x] Eén zitting, zodat de uitrol kan draaien");
+    expect(items[1].context).toBe("");
+    expect(items[1].toelichting).toBe("zet de verplichte controle terug.");
+  });
+
+  // Eén bron voor het labelvocabulaire: de lezer, de grens "een controle opent
+  // nooit een handeling" en `bouwOpties` moeten niet uiteen kunnen lopen.
+  it("gebruikt hetzelfde patroon in de lezer en in bouwOpties", () => {
+    for (const label of ["Controle", "Controle op de hele taak", "Stap 3"]) {
+      expect(STAP_OF_CONTROLE.test(`${label}: tekst`)).toBe(true);
+    }
+    for (const label of ["Controle op jou", "Controlepaneel openen", "Controle door jou"]) {
+      expect(STAP_OF_CONTROLE.test(`${label}: tekst`)).toBe(false);
+    }
+    // Eén predicaat, dat het patroon zelf toepast. Een los "begint met
+    // controle" was een valstrik: juist de vormen die géén controle zijn,
+    // beginnen er wél mee.
+    for (const label of ["Controle", "Controle op de hele taak", "Controle OP de taak"]) {
+      expect(isControle(label)).toBe(true);
+    }
+    for (const label of [
+      "Stap 3",
+      "Controle door jou",
+      "Controle op jou",
+      "Controle op de eigenaren",
+      "Controle op je sleutel",
+      "Controle oppassen voor de sleutel",
+      "Controlepaneel openen",
+    ]) {
+      expect(isControle(label)).toBe(false);
+    }
+    // Een ingesprongen label dat werk toewijst blijft een optie, niet een controle.
+    const uit = bouwOpties([{ label: "Controle door jou", tekst: "open het dashboard." }], []);
+    expect(uit.controle).toBeNull();
+    expect(uit.opties.map((o) => o.keuze)).toEqual(["controle-door-jou", "later"]);
   });
 });
 
