@@ -652,6 +652,77 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
     expect(uit.stappen).toHaveLength(1);
     expect(uit.controle).toMatch(/^Jarvis meet/);
   });
+
+  // Gemeten op een echt taakdossier, 2026-10-07. Onder een afgevinkte vette
+  // kop stonden stap 1 tot en met 3; na een lege regel, alinea's tekst en een
+  // `###`-kop volgden stap 4 en stap 5 — de enige twee punten die werkelijk
+  // bij de eigenaar lagen. Die erfden de afgevinkte kop als titel en vielen
+  // daarmee als "gedaan" uit de lijst: vijf dagen onzichtbaar.
+  it("laat een kop in de sectie de vette kop ervóór sluiten", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**[x] Eén zitting, zodat de uitrol kan draaien**\n\n" +
+      "Afgerond; de eigenaar meldde dit.\n\n" +
+      "- Stap 1: [x] maak de sleutel aan.\n\n" +
+      "### Nog één punt uit dezelfde zitting\n\n" +
+      "Tekst die ertussen staat.\n\n" +
+      "**[ ] Eén instelling die alleen jij kunt zetten**\n\n" +
+      "- Stap 4: zet de verplichte controle terug.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items.map((i) => i.titel)).toEqual([
+      "[x] Eén zitting, zodat de uitrol kan draaien",
+      "[ ] Eén instelling die alleen jij kunt zetten",
+    ]);
+    expect(items[1].regels.map((r) => r.label)).toEqual(["Stap 4"]);
+  });
+
+  // Tweede verdediging op hetzelfde faalpad: ook zónder tussenkop mag een
+  // afgevinkte kop een openstaande stap niet dekken. De stap zelf is dan de
+  // eerlijke titel — lelijker, maar zichtbaar.
+  it("geeft een stap onder een afgevinkte kop zijn eigen tekst als titel", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**[x] Eén zitting, zodat de uitrol kan draaien**\n\n" +
+      "- Stap 1: [x] maak de sleutel aan.\n\n" +
+      "Tekst die ertussen staat, zonder kop.\n\n" +
+      "- Stap 4: zet de verplichte controle terug.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(2);
+    expect(items[1].titel).toBe("zet de verplichte controle terug.");
+    expect(isAfgevinkt(items[1].titel)).toBe(false);
+  });
+
+  // "Controle op de hele taak: …" zegt zelf dat Jarvis het doet en dat de
+  // eigenaar er niet aan te pas komt. Het oude patroon eiste de dubbele punt
+  // direct achter "Controle", dus zo'n regel werd een eigenaarsactie — en in
+  // het gemeten dossier de enige zichtbare actie van de taak.
+  it("herkent een controle die zegt waarop zij controleert", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**Handeling 1 — de sleutel zetten**\n\n" +
+      "- Stap 1: zet de sleutel in de app.\n" +
+      "- Controle op de hele taak: Jarvis voert daarna de hele keten uit, zonder dat jij tussenbeide komt.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Handeling 1 — de sleutel zetten");
+    expect(items[0].regels.map((r) => r.label)).toEqual(["Stap 1", "Controle op de hele taak"]);
+  });
+
+  it("maakt van een losse controle-op-iets ook geen eigen handeling", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "- Controle op de hele taak: Jarvis meet na de merge dat de poort groen is.\n";
+    expect(leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m)).toEqual([]);
+  });
+
+  // De grens van die verruiming: een woord dat met "Controle" begint maar een
+  // ander woord is, blijft een gewoon punt.
+  it("houdt een woord als 'Controlepaneel' buiten de controleregel", () => {
+    const tekst = "## Wat de eigenaar nog moet doen\n\n- Controlepaneel openen: kies daar de juiste omgeving.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Controlepaneel openen: kies daar de juiste omgeving.");
+  });
 });
 
 // ---------------------------------------------------------------------------

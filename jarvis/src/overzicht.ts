@@ -447,6 +447,17 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
     regels = [];
   };
   for (const regel of sectie.split("\n")) {
+    // Een kop binnen de sectie begint een nieuw blok, dus de vette kop ervóór
+    // geldt er niet meer. Zonder deze grens overleefde een kop de lege regel
+    // die het lopende punt sluit, en kreeg het eerste "- Stap N:" ná de kop
+    // de titel van het blok daarvóór. Gemeten op een taakdossier waarin die
+    // vorige kop was afgevinkt: twee werkelijke eigenaarspunten droegen
+    // daardoor de titel van een afgeronde handeling en verdwenen uit de lijst.
+    if (/^#{1,6}\s/.test(regel)) {
+      sluit();
+      context = "";
+      continue;
+    }
     const vet = /^\*\*(.+?)\*\*\s*$/.exec(regel.trim());
     if (vet) {
       sluit();
@@ -463,7 +474,15 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
       // De dubbele punt mag binnen de sterretjes staan (`**Controle:** …`); dat
       // is dezelfde regel en krijgt dezelfde grens. Zonder `\**` ná de dubbele
       // punt bleven de sluitende sterretjes in de tekst staan.
-      const stap = /^\**(Stap \d+|Controle)\**\s*:\**\s*(.*)$/i.exec(start[1]);
+      //
+      // Een controle die zegt waaróp zij controleert ("Controle op de hele
+      // taak: …") is dezelfde soort regel en hoort dezelfde grens te krijgen.
+      // Het oude patroon eiste de dubbele punt direct achter "Controle", dus
+      // zo'n regel werd zelf een eigenaarsactie — precies wat `CON-0016`
+      // verbiedt, en gemeten op een dossier waar het de enige zichtbare
+      // "actie" van een taak was. De spatie in `Controle(?:\s[^:*]*)?` houdt
+      // een woord als "Controlepaneel" buiten de regel.
+      const stap = /^\**(Stap \d+|Controle(?:\s[^:*]*)?)\**\s*:\**\s*(.*)$/i.exec(start[1]);
       if (stap) {
         const label = stap[1].trim();
         const regel = { label, tekst: stap[2].replace(/\*+$/, "").trim() };
@@ -472,12 +491,18 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
         // controle hoort dan bij het punt dat er net was, en anders bij niets.
         // Zonder deze grens werd de controletekst zelf een item, en daarmee in
         // "Voor jou" en in de regie een "wacht op jou" voor werk van Jarvis.
-        if (!huidig && /^controle$/i.test(label)) {
+        if (!huidig && /^controle\b/i.test(label)) {
           const vorige = items[items.length - 1];
           if (vorige) items[items.length - 1] = { ...vorige, regels: [...vorige.regels, regel] };
           continue;
         }
-        if (!huidig) huidig = [context || regel.tekst];
+        // Een afgevinkte kop mag een openstaande stap niet dekken. Deed zij dat
+        // wel, dan heette het nieuwe punt naar een afgeronde handeling en viel
+        // het als "gedaan" uit de lijst; de stap zelf is dan de eerlijke titel.
+        // Een afgevinkte kop boven afgevinkte stappen is wél gewoon de kop van
+        // een afgeronde handeling, en houdt haar naam.
+        const kopDektStap = !isAfgevinkt(context) || isAfgevinkt(regel.tekst);
+        if (!huidig) huidig = [(kopDektStap ? context : "") || regel.tekst];
         regels.push(regel);
         continue;
       }
