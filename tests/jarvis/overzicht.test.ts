@@ -12,6 +12,8 @@ import {
   isAkkoordStap,
   isAkkoordVraag,
   isAfgevinkt,
+  isControleLabel,
+  STAP_OF_CONTROLE,
   bouwOpties,
   leesAandacht,
   leesFeiten,
@@ -744,6 +746,54 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
       "Controle door jou: open het dashboard en kijk of de waarde er staat.",
       "Controlepaneel openen: kies daar de juiste omgeving.",
     ]);
+  });
+
+  // Een controle mag zeggen waaróp zij controleert, maar niet wíe haar doet.
+  // Zonder deze grens verdween een regel die juist werk aan de eigenaar
+  // toewijst volledig uit de lijst: er stond geen punt vóór, dus hij werd aan
+  // niets gehangen en was weg. Stil verliezen is erger dan lelijk tonen.
+  it("laat een controle die werk aan de eigenaar toewijst een zichtbaar punt", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "- Controle op jou: jij moet het dashboard openen.\n" +
+      "- Controle op de hele taak door jou: open daarna het logboek.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items.map((i) => i.titel)).toEqual([
+      "Controle op jou: jij moet het dashboard openen.",
+      "Controle op de hele taak door jou: open daarna het logboek.",
+    ]);
+  });
+
+  // Dekt de kop de stap niet, dan geldt zij ook niet als aanhef. Anders stond
+  // een afgeronde handeling voor de toelichting van een openstaand punt en
+  // kwam de urgentie nog uit die afgeronde kop.
+  it("neemt een afgevinkte kop ook niet mee als context van het punt", () => {
+    const tekst =
+      "## Wat de eigenaar nog moet doen\n\n" +
+      "**[x] Eén zitting, zodat de uitrol kan draaien**\n\n" +
+      "- Stap 1: [x] maak de sleutel aan.\n\n" +
+      "- Stap 4: zet de verplichte controle terug.\n";
+    const items = leesItemsOnder(tekst, /^## Wat de eigenaar nog moet doen\s*$/m);
+    expect(items[0].context).toBe("[x] Eén zitting, zodat de uitrol kan draaien");
+    expect(items[1].context).toBe("");
+    expect(items[1].toelichting).toBe("zet de verplichte controle terug.");
+  });
+
+  // Eén bron voor het labelvocabulaire: de lezer, de grens "een controle opent
+  // nooit een handeling" en `bouwOpties` moeten niet uiteen kunnen lopen.
+  it("gebruikt hetzelfde patroon in de lezer en in bouwOpties", () => {
+    for (const label of ["Controle", "Controle op de hele taak", "Stap 3"]) {
+      expect(STAP_OF_CONTROLE.test(`${label}: tekst`)).toBe(true);
+    }
+    for (const label of ["Controle op jou", "Controlepaneel openen", "Controle door jou"]) {
+      expect(STAP_OF_CONTROLE.test(`${label}: tekst`)).toBe(false);
+    }
+    expect(isControleLabel("Controle op de hele taak")).toBe(true);
+    expect(isControleLabel("Stap 3")).toBe(false);
+    // Een ingesprongen label dat werk toewijst blijft een optie, niet een controle.
+    const uit = bouwOpties([{ label: "Controle door jou", tekst: "open het dashboard." }], []);
+    expect(uit.controle).toBeNull();
+    expect(uit.opties.map((o) => o.keuze)).toEqual(["controle-door-jou", "later"]);
   });
 });
 
