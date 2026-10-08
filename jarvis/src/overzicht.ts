@@ -442,15 +442,23 @@ export type GelezenItem = {
  * "Controlepaneel" valt erbuiten door de verplichte spatie, en de lengtegrens
  * volgt die van de ingesprongen variant in de lezer.
  */
-const CONTROLE_OBJECT = String.raw`(?!(?:[^:*]*\b(?:jij|jou|jouw|eigenaar)\b))[^:*]{1,60}`;
+const CONTROLE_OBJECT = String.raw`(?!(?:[^:*]*\b(?:jij|jou|jouw|eigenaar|eigenaren|eigenaars)\b))[^:*]{1,60}`;
 export const STAP_OF_CONTROLE = new RegExp(
   String.raw`^\**(Stap \d+|Controle(?:\s+op\s+${CONTROLE_OBJECT})?)\**\s*:\**\s*(.*)$`,
   "i",
 );
 
-/** Of een label een controle is: werk van Jarvis, nooit een actie of een keuze. */
-export function isControleLabel(label: string): boolean {
-  return /^controle\b/i.test(label.trim());
+/**
+ * Of een label een controle is: werk van Jarvis, nooit een actie en nooit een
+ * keuze. Eén predicaat, en het past het patroon hierboven zélf toe — "begint
+ * met controle" apart aanbieden was een valstrik, want `Controle door jou` en
+ * `Controle oppassen voor de sleutel` beginnen er wel mee en zijn juist géén
+ * controle. Twee helften die een volgende aanroeper los kan gebruiken, is
+ * precies hoe de eigenaar eerder zijn knop "Gedaan" verloor.
+ */
+export function isControle(label: string): boolean {
+  const m = STAP_OF_CONTROLE.exec(`${label.trim()}:`);
+  return m !== null && /^controle\b/i.test(m[1].replace(/^\**/, ""));
 }
 
 export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenItem[] {
@@ -503,7 +511,7 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
         // controle hoort dan bij het punt dat er net was, en anders bij niets.
         // Zonder deze grens werd de controletekst zelf een item, en daarmee in
         // "Voor jou" en in de regie een "wacht op jou" voor werk van Jarvis.
-        if (!huidig && isControleLabel(label)) {
+        if (!huidig && isControle(label)) {
           const vorige = items[items.length - 1];
           if (vorige) items[items.length - 1] = { ...vorige, regels: [...vorige.regels, regel] };
           continue;
@@ -676,7 +684,7 @@ export function bouwOpties(
     // standaardopties, en dan verliest de eigenaar zijn knop "Gedaan" aan een
     // controle die Jarvis zelf doet. Eén bron met de lezer, want precies het
     // uiteenlopen van die twee kostte hem die knop.
-    else if (isControleLabel(l) && STAP_OF_CONTROLE.test(`${r.label}:`)) controle = r.tekst;
+    else if (isControle(r.label)) controle = r.tekst;
     else if (r.tekst.length > 0) opties.push({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst });
   }
   const basis = opties.length > 0 ? opties : [...standaard];

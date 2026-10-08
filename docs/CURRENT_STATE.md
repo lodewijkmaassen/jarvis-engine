@@ -550,15 +550,22 @@ niet voor de urgentie. Anders stond een afgeronde handeling vóór de tekst van 
 openstaand punt en kwam de weging nog uit die afgeronde kop — de titel klopte dan
 wel en de rest van de kaart niet.
 
-Het labelvocabulaire staat op één plek, `STAP_OF_CONTROLE` met `isControleLabel`.
-De lezer, de grens "een controle opent nooit een handeling" en `bouwOpties`
-gebruiken alle drie die bron. Ze stonden eerder los van elkaar uitgeschreven, en
-precies het uiteenlopen ervan kostte de eigenaar zijn knop.
+Wat een controle ís, staat op één plek: `STAP_OF_CONTROLE` met het predicaat
+`isControle`, dat dat patroon zélf toepast. De lezer, de grens "een controle
+opent nooit een handeling" en `bouwOpties` gebruiken alle drie dat predicaat.
+Ze stonden eerder los van elkaar uitgeschreven, en precies het uiteenlopen
+ervan kostte de eigenaar zijn knop. Een los "begint met controle" wordt niet
+aangeboden: juist de vormen die géén controle zijn, beginnen er wél mee.
+
+Dat geldt voor de controle, niet voor de stap: `bouwOpties` herkent "Stap N" nog
+met een eigen, iets ruimere vorm. Bestaand, zonder gevolg in de dossiers, en het
+hoort op dezelfde manier naar één bron.
 
 Twee dingen die een controle níet mag. Zij mag zeggen waaróp zij controleert,
-maar niet wíe haar doet: een regel met "jij", "jou", "jouw" of "eigenaar" in het
-object wijst juist werk aan de eigenaar toe en blijft een zichtbaar punt. En een
-woord dat enkel met "Controle" begint ("Controlepaneel") valt erbuiten.
+maar niet wíe haar doet: een object met "jij", "jou", "jouw", "eigenaar",
+"eigenaren" of "eigenaars" wijst juist werk aan de eigenaar toe en blijft een
+zichtbaar punt. En een woord dat enkel met "Controle" begint ("Controlepaneel")
+valt erbuiten.
 
 Bewust niet gedaan: een grens op élke kop binnen de sectie. Dat lag voor de hand,
 maar het nam `context` ook af van de tweede aanroeper van deze functie en zag een
@@ -566,11 +573,16 @@ maar het nam `context` ook af van de tweede aanroeper van deze functie en zag ee
 grens dezelfde uitkomst geeft.
 
 Wat hier nog niet goed is: valt de kop weg, dan komt de titel uit de eerste
-fysieke regel van de stap. Die kan midden in een zin afbreken, en staat de
-staptekst volledig op de ingesprongen vervolgregel, dan is de titel leeg. De
-volledige tekst zit wel in de stappen van de kaart, dus er gaat geen informatie
-verloren. De reparatie is terugvallen op de volledige staptekst in plaats van op
-de eerste regel.
+fysieke regel van de stap. Die kan midden in een zin afbreken; staat de staptekst
+volledig op de ingesprongen vervolgregel, dan is de titel leeg; en is die eerste
+regel één woord tussen backticks, dan heet het punt naar dat woord. De volledige
+tekst zit wel in de stappen van de kaart, dus er gaat geen informatie verloren.
+De reparatie is terugvallen op de volledige staptekst in plaats van op de eerste
+regel.
+
+Asymmetrisch gebleven, en bestaand: een gewoon lijstpunt onder een afgevinkte kop
+erft die kop nog wél als aanhef en urgentie. Alleen de stap-tak is omgezet. Dat
+hoort gelijkgetrokken, maar het is geen gevolg van deze wijziging.
 
 
 ## Volgende stap

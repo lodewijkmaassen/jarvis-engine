@@ -12,7 +12,7 @@ import {
   isAkkoordStap,
   isAkkoordVraag,
   isAfgevinkt,
-  isControleLabel,
+  isControle,
   STAP_OF_CONTROLE,
   bouwOpties,
   leesAandacht,
@@ -788,8 +788,22 @@ describe("stappen op het hoogste niveau (LRN-0014, cloud-schrijfwijze)", () => {
     for (const label of ["Controle op jou", "Controlepaneel openen", "Controle door jou"]) {
       expect(STAP_OF_CONTROLE.test(`${label}: tekst`)).toBe(false);
     }
-    expect(isControleLabel("Controle op de hele taak")).toBe(true);
-    expect(isControleLabel("Stap 3")).toBe(false);
+    // Eén predicaat, dat het patroon zelf toepast. Een los "begint met
+    // controle" was een valstrik: juist de vormen die géén controle zijn,
+    // beginnen er wél mee.
+    for (const label of ["Controle", "Controle op de hele taak", "Controle OP de taak"]) {
+      expect(isControle(label)).toBe(true);
+    }
+    for (const label of [
+      "Stap 3",
+      "Controle door jou",
+      "Controle op jou",
+      "Controle op de eigenaren",
+      "Controle oppassen voor de sleutel",
+      "Controlepaneel openen",
+    ]) {
+      expect(isControle(label)).toBe(false);
+    }
     // Een ingesprongen label dat werk toewijst blijft een optie, niet een controle.
     const uit = bouwOpties([{ label: "Controle door jou", tekst: "open het dashboard." }], []);
     expect(uit.controle).toBeNull();
