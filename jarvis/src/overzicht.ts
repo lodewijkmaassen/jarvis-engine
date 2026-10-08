@@ -447,17 +447,6 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
     regels = [];
   };
   for (const regel of sectie.split("\n")) {
-    // Een kop binnen de sectie begint een nieuw blok, dus de vette kop ervóór
-    // geldt er niet meer. Zonder deze grens overleefde een kop de lege regel
-    // die het lopende punt sluit, en kreeg het eerste "- Stap N:" ná de kop
-    // de titel van het blok daarvóór. Gemeten op een taakdossier waarin die
-    // vorige kop was afgevinkt: twee werkelijke eigenaarspunten droegen
-    // daardoor de titel van een afgeronde handeling en verdwenen uit de lijst.
-    if (/^#{1,6}\s/.test(regel)) {
-      sluit();
-      context = "";
-      continue;
-    }
     const vet = /^\*\*(.+?)\*\*\s*$/.exec(regel.trim());
     if (vet) {
       sluit();
@@ -480,9 +469,14 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
       // Het oude patroon eiste de dubbele punt direct achter "Controle", dus
       // zo'n regel werd zelf een eigenaarsactie — precies wat `CON-0016`
       // verbiedt, en gemeten op een dossier waar het de enige zichtbare
-      // "actie" van een taak was. De spatie in `Controle(?:\s[^:*]*)?` houdt
-      // een woord als "Controlepaneel" buiten de regel.
-      const stap = /^\**(Stap \d+|Controle(?:\s[^:*]*)?)\**\s*:\**\s*(.*)$/i.exec(start[1]);
+      // "actie" van een taak was.
+      //
+      // Bewust alleen "Controle op …", niet elk woord achter "Controle". Een
+      // regel als "- Controle door jou: …" wijst juist wél een handeling toe;
+      // die hoort een zichtbaar punt te blijven in plaats van stil te
+      // verdwijnen. "Controlepaneel" valt buiten de regel door de spatie, en
+      // de lengtegrens volgt die van de ingesprongen variant hieronder.
+      const stap = /^\**(Stap \d+|Controle(?:\s+op\s+[^:*]{1,60})?)\**\s*:\**\s*(.*)$/i.exec(start[1]);
       if (stap) {
         const label = stap[1].trim();
         const regel = { label, tekst: stap[2].replace(/\*+$/, "").trim() };
@@ -650,7 +644,13 @@ export function bouwOpties(
     if (stap) stappen.push({ nr: Number(stap[1]), tekst: r.tekst });
     else if (l === "advies") advies = r.tekst;
     else if (l === "waarom") waarom = r.tekst;
-    else if (l === "controle") controle = r.tekst;
+    // "Controle op …" is dezelfde controle als "Controle", en mag net zo goed
+    // geen keuzeknop worden: een label dat hier als optie belandt, vervángt de
+    // standaardopties, en dan verliest de eigenaar zijn knop "Gedaan" aan een
+    // controle die Jarvis zelf doet. De vorm volgt het patroon in
+    // `leesItemsOnder`; een ingesprongen label als "Controle door jou" blijft
+    // dus een optie, precies zoals het daar een punt blijft.
+    else if (/^controle(?:\s+op\s+.*)?$/i.test(l)) controle = r.tekst;
     else if (r.tekst.length > 0) opties.push({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst });
   }
   const basis = opties.length > 0 ? opties : [...standaard];

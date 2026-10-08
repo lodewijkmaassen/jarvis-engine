@@ -529,6 +529,32 @@ pagina blijft serveren is zelf een van de manieren waarop een uitrol mislukt.
 De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
 die dit merk verplicht stelt, is nog niet gebouwd.
 
+Nieuw sinds 2026-10-08: de lijst voor de eigenaar leest eerlijker. `leesItemsOnder`
+kon een punt onzichtbaar maken en werk van Jarvis als enige actie laten staan —
+het omgekeerde van wat de regel over die lijst wil. Twee wijzigingen, beide uit
+één gemeten geval in een echt taakdossier:
+
+- Een afgevinkte vette kop dekt geen openstaande `- Stap N:` meer. Deed zij dat
+  wel, dan heette het punt naar een afgeronde handeling en viel het als "gedaan"
+  weg; zo lagen twee werkelijke eigenaarspunten vijf dagen onzichtbaar. Valt de
+  kop weg, dan is de stap zelf de titel — lelijker, maar zichtbaar. Een
+  afgevinkte kop boven afgevinkte stappen houdt gewoon haar naam.
+- `- Controle op …: …` geldt als controle in plaats van als actie. Het patroon
+  eiste de dubbele punt direct achter "Controle", dus "Controle op de hele taak:"
+  werd zelf een punt — in het gemeten dossier het enige zichtbare punt van die
+  taak. `bouwOpties` kent dezelfde vorm, want een controle die daar als optie
+  belandt vervangt de standaardopties en kost de eigenaar zijn knop "Gedaan".
+
+Bewust niet gedaan: een grens op élke kop binnen de sectie. Dat lag voor de hand,
+maar het nam `context` ook af van de tweede aanroeper van deze functie en zag een
+`#` in een codeblok als kop, terwijl de meting op het echte dossier zonder die
+grens dezelfde uitkomst geeft. Alleen "Controle op …" telt als controle, niet elk
+woord achter "Controle": een regel als "Controle door jou: …" wijst juist wél een
+handeling toe en hoort zichtbaar te blijven.
+
+Wat hier nog niet goed is: valt de kop weg, dan komt de titel uit de eerste
+fysieke regel van de stap en kan hij midden in een zin afbreken.
+
 
 ## Volgende stap
 
