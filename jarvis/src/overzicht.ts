@@ -405,12 +405,26 @@ const KOP_GEBLOKKEERD = /^## Wat is geblokkeerd, en waarop\s*$/m;
 /**
  * Woorden die een zin verbinden en hem dus nooit afsluiten. Eindigt een titel
  * hierop, dan is de zin afgekapt en niet afgelopen.
+ *
+ * Uitsluitend voegwoorden en lidwoorden, en dat is een harde grens. Deze lijst
+ * stond eerst ook vol voorzetsels — "aan", "uit", "op", "om", "over", "in",
+ * "bij", "te", "na", "door" — en juist dat zijn in het Nederlands de deeltjes
+ * waarop een gebiedende zin afloopt. De eigenaarslijst bestaat vrijwel alleen
+ * uit gebiedende zinnen, dus knipte de naschoning hieronder het enige
+ * inhoudelijke woord van een complete opdracht weg: "Zet de proxy-instelling
+ * uit" werd "Zet de proxy-instelling…", en de lezer kon niet meer zien of hij
+ * iets aan of uit moest zetten. Erger dan een zichtbaar afgekapte titel, want
+ * het beletselteken deed alsof de bron ophield.
+ *
+ * Dat de functie niet weet óf de bron is afgekapt — zij raadt het uit het
+ * laatste woord — is de reden dat hier alleen woorden mogen staan die een
+ * afgeronde Nederlandse zin niet kán afsluiten. Een voorzetsel, een bijwoord
+ * ("dan", "dus") en een aanwijzend voornaamwoord ("dat", "die", "deze": "Doe
+ * dat", "Kies die") kunnen dat wel en horen er dus niet in.
  */
 const VERBINDEND_SLOTWOORD = new Set([
-  "aan", "als", "bij", "boven", "dan", "dat", "de", "deze", "die", "door",
-  "dus", "een", "en", "het", "in", "maar", "met", "na", "naar", "of", "om",
-  "omdat", "onder", "op", "over", "te", "tegen", "ter", "terwijl", "tot",
-  "uit", "van", "voor", "want", "zodat", "zodra", "zonder",
+  "als", "de", "een", "en", "het", "maar", "of", "omdat", "ter", "terwijl",
+  "want", "zodat", "zodra",
 ]);
 
 /**

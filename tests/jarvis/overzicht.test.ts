@@ -785,6 +785,32 @@ describe("kortTitel: een titel is een leesbare zin, geen stuk opmaak", () => {
     expect(onder(["- De sleutel zetten in de app, en"])[0].titel).toBe("De sleutel zetten in de app…");
   });
 
+  it("laat een gebiedende zin die op een werkwoordsdeeltje eindigt heel", () => {
+    // Deze zes waren de regressie van QA-ronde 1 op engine-PR 84: de lijst met
+    // verbindende slotwoorden bevatte ook voorzetsels, en daarmee knipte de
+    // naschoning het enige inhoudelijke woord van een complete opdracht weg.
+    // "Zet de proxy-instelling…" vertelt de lezer niet of hij aan of uit moet.
+    const gaaf = [
+      "Zet tweefactor-authenticatie aan",
+      "Zet de proxy-instelling uit",
+      "Vink in het dashboard de optie aan",
+      "Draai de sleutel om",
+      "Neem de factuur over",
+      "Zet de schakelaar op",
+    ];
+    for (const zin of gaaf) {
+      expect(onder([`- ${zin}`])[0].titel).toBe(zin);
+    }
+  });
+
+  it("knipt geen bijwoord en geen aanwijzend voornaamwoord weg", () => {
+    // "Doe dat", "Kies die", "Neem deze" en "Regel het dan" zijn afgeronde
+    // zinnen; alleen een voegwoord of lidwoord kan een zin niet afsluiten.
+    for (const zin of ["Doe dat", "Kies die", "Neem deze", "Regel het dan"]) {
+      expect(onder([`- ${zin}`])[0].titel).toBe(zin);
+    }
+  });
+
   it("laat een titel die wél afloopt ongemoeid", () => {
     expect(onder(["- De uitrol zelf."])[0].titel).toBe("De uitrol zelf.");
     expect(onder(["- Eén instelling bij GitHub die alleen jij kunt zetten"])[0].titel).toBe(
