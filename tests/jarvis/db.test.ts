@@ -8,7 +8,17 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { berichtId, claimSql, isTabel, NIEUWE_ANTWOORDEN_SQL, NIEUWE_BERICHTEN_SQL, verbindingsBron, verwerktSql } from "@/jarvis/src/db";
+import {
+  ANTWOORDEN_SQL,
+  berichtId,
+  claimSql,
+  isTabel,
+  NIEUWE_ANTWOORDEN_SQL,
+  NIEUWE_BERICHTEN_SQL,
+  toegestaneSql,
+  verbindingsBron,
+  verwerktSql,
+} from "@/jarvis/src/db";
 
 describe("claimen en verwerken", () => {
   it("claimt alleen een item dat nog nieuw is, en alleen in het schema jarvis", () => {
@@ -37,6 +47,24 @@ describe("claimen en verwerken", () => {
   it("leest nieuw werk uitsluitend uit het schema jarvis en alleen van de eigenaar", () => {
     expect(NIEUWE_ANTWOORDEN_SQL).toMatch(/from jarvis\.antwoorden where status = 'nieuw'/);
     expect(NIEUWE_BERICHTEN_SQL).toMatch(/from jarvis\.berichten where van = 'eigenaar' and status = 'nieuw'/);
+  });
+
+  it("leest alle gegeven antwoorden zonder op status te filteren", () => {
+    // De vraag "welke item-ids heeft de eigenaar beantwoord" is langs
+    // NIEUWE_ANTWOORDEN_SQL niet te stellen: dat statement verliest een
+    // antwoord zodra het is verwerkt. Deze leesweg mag dus geen status-filter
+    // dragen, en blijft binnen het schema jarvis.
+    expect(ANTWOORDEN_SQL).toMatch(/from jarvis\.antwoorden order by op$/);
+    expect(ANTWOORDEN_SQL).not.toContain("where");
+    expect(ANTWOORDEN_SQL).toContain("item_id");
+    expect(ANTWOORDEN_SQL).toContain("status");
+    expect(ANTWOORDEN_SQL.trimStart().slice(0, 6).toLowerCase()).toBe("select");
+  });
+
+  it("staat als statement toe wat de engine werkelijk uitvoert", () => {
+    // De Edge Function voert uitsluitend deze teksten uit; een statement dat
+    // hier ontbreekt werkt op de laptop wel en op de cloudroute niet.
+    expect(toegestaneSql()).toContain(ANTWOORDEN_SQL);
   });
 });
 

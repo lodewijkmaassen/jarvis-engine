@@ -5,6 +5,7 @@
   "update jarvis.antwoorden set status = 'verwerkt', verwerkt_op = now(), verwerking = $2 where id = $1 returning id",
   "update jarvis.berichten set status = 'verwerkt', verwerkt_op = now(), verwerking = $2 where id = $1 returning id",
   "select id, item_id, project, soort, titel, bron, keuze, keuze_label, notitie, op, status from jarvis.antwoorden where status = 'nieuw' order by op",
+  "select id, item_id, project, soort, titel, bron, keuze, keuze_label, notitie, op, status from jarvis.antwoorden order by op",
   "select id, van, tekst, op, status, context from jarvis.berichten where van = 'eigenaar' and status = 'nieuw' order by op",
   "insert into jarvis.berichten (id, van, tekst, status, context, verwerkt_op) values ($1, 'jarvis', $2, 'verwerkt', $3::text::jsonb, now()) returning id",
   "insert into jarvis.documenten (id, inhoud, bijgewerkt) values ($1, $2::text::jsonb, now()) on conflict (id) do update set inhoud = excluded.inhoud, bijgewerkt = now() returning id",

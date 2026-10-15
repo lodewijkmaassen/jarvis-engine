@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-10-02._
+_Gegenereerd op 2026-10-15._
 
 | Feit | Waarde |
 |---|---|
@@ -264,6 +264,17 @@ achter. Het register is bewust géén eigen tabel maar een document langs
 migratie en geen nieuwe uitrol van de Edge Function voor nodig. Omdat
 `toegestaneSql()` geen leesweg voor documenten kent, bewaart de lopende run
 zijn startregel in een bestand buiten elke repository.
+
+Gegeven antwoorden zijn sinds deze wijziging terug te lezen. Het enige
+statement op `jarvis.antwoorden` was `NIEUWE_ANTWOORDEN_SQL`, dat op
+`status = 'nieuw'` filtert: een antwoord verdween daaruit zodra een run het
+verwerkte, en de vraag "welke item-ids heeft de eigenaar beantwoord" bestond
+daarom alleen als aanname. `ANTWOORDEN_SQL` leest dezelfde kolommen zonder dat
+filter, staat in `toegestaneSql()` en is bereikbaar als `jarvis db antwoorden`.
+De cloudroute voert uitsluitend de teksten uit `jarvis/edge/jarvis-db/toegestaan.json`
+uit; tot die functie opnieuw is uitgerold antwoordt zij op dit statement 400.
+Die ene uitkomst heeft een eigen foutregel die de uitweg noemt — de laptoproute
+of een uitrol — in plaats van als mislukte verbinding te worden gemeld.
 
 De regie herkent sinds een eerdere wijziging een uitvoerder die stilvalt. Een claim
 waarvan de heartbeat verliep zonder fout, klaar of vrijgave viel terug op
