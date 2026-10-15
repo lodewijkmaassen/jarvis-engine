@@ -32,5 +32,5 @@ GitHub-secret als token.
 
 - [x] Fase 1 — databasefundament (`jarvis/migrations/v3`), getest op PostgreSQL
 - [x] Fase 2 — uitvoerderslaag: `jarvis v3`-CLI, mandaatbeoordeling, dispatcher, migratieroute, workflow `jarvis-v3`
-- [ ] Fase 3 — interface (drie weergaven op de V3-views) en productiemeting
+- [x] Fase 3 — interface /v3/ op de V3-views (productiemeting in de ToVas-app volgt bij de acceptatietest)
 - [ ] Fase 4 — acceptatietest H met alle negen tests
