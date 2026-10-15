@@ -77,6 +77,7 @@ import {
 } from "./attestatie";
 import { bepaalModus, beoordeelEngine, ENGINE_MAP, leesEngineStand, type HoofdbranchVergelijking } from "./engine";
 import {
+  ANTWOORDEN_SQL,
   AUTORISATIE_ID_SQL,
   AUTORISATIE_PR_SQL,
   AUTORISATIE_TAAK_SQL,
@@ -1573,7 +1574,7 @@ function help(): number {
       "  audit    <taak-id>                Reconstrueert een afgeronde taak uit de repository",
       "  rollen   [--schrijf]              Genereert de providerafgeleiden van de rolcontracten;",
       "                                    zonder --schrijf een driftcontrole (zit in de poort)",
-      "  db <nieuw|wachten|claim|verwerkt|bericht|document|run|toetsing|autorisaties|wie> [opties]",
+      "  db <nieuw|wachten|claim|verwerkt|antwoorden|bericht|document|run|toetsing|autorisaties|wie> [opties]",
       "                                    De eigen database van Jarvis (schema jarvis): nieuwe",
       "                                    antwoorden en berichten lezen, claimen, verwerken, documenten zetten,",
       "                                    een QA-toetsing vastleggen, akkoorden van de eigenaar lezen.",
@@ -2464,6 +2465,29 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       await schrijfActiviteit({ uitvoerder: door, rol: "qa", taak: null, project: null, soort: "toetsing", tekst: `toetsing ${oordeel} op ${repo}#${nummer} (${sha.slice(0, 7)})`, verwijzing: `${repo}#${nummer}` });
       return 0;
     }
+    if (wat === "antwoorden") {
+      // Alle gegeven antwoorden, ook de verwerkte. `db nieuw` toont alleen
+      // status 'nieuw' en is dus geen bron voor "wat heeft hij beantwoord".
+      let rijen: readonly Record<string, unknown>[];
+      try {
+        rijen = await sql.unsafe(ANTWOORDEN_SQL);
+      } catch (fout) {
+        const tekst = fout instanceof Error ? fout.message : String(fout);
+        // De Edge Function voert uitsluitend de teksten uit `toegestaan.json`
+        // uit. Een statement dat hier nieuw is, bestaat daar pas na een
+        // uitrol; tot dan antwoordt zij 400. Dat is geen fout in de opdracht
+        // en moet niet als "mislukt" van de verbinding worden gelezen.
+        if (/HTTP 400/.test(tekst)) {
+          console.error(
+            "jarvis db antwoorden: statement nog niet uitgerold in `jarvis-db`; draai dit op de laptoproute (JARVIS_DB_URL) of rol de Edge Function opnieuw uit.",
+          );
+          return 1;
+        }
+        throw fout;
+      }
+      console.log(JSON.stringify(rijen, null, 2));
+      return 0;
+    }
     if (wat === "autorisaties") {
       const taak = vlaggen.get("taak") ?? "";
       const rijen = taak ? await sql.unsafe(AUTORISATIE_TAAK_SQL, [taak]) : await sql.unsafe(AUTORISATIES_SQL);
@@ -2523,7 +2547,7 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
       console.log(`jarvis db: document ${id} gezet.`);
       return 0;
     }
-    console.error(`jarvis db: onbekende deelopdracht "${wat}". Gebruik nieuw, claim, verwerkt, bericht, document, run, toetsing, autorisaties of wie.`);
+    console.error(`jarvis db: onbekende deelopdracht "${wat}". Gebruik nieuw, claim, verwerkt, antwoorden, bericht, document, run, toetsing, autorisaties of wie.`);
     return 2;
   } catch (fout) {
     // Nooit de verbindingsreeks of het wachtwoord in een foutmelding.

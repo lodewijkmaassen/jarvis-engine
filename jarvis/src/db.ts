@@ -60,6 +60,18 @@ export const NIEUWE_ANTWOORDEN_SQL =
   "select id, item_id, project, soort, titel, bron, keuze, keuze_label, notitie, op, status " +
   "from jarvis.antwoorden where status = 'nieuw' order by op";
 
+/**
+ * Alle gegeven antwoorden, ongeacht hun status — de leesweg naar wat de
+ * eigenaar ooit heeft geantwoord. `NIEUWE_ANTWOORDEN_SQL` filtert op
+ * `status = 'nieuw'` en levert dus alleen werk dat nog moet worden verwerkt;
+ * zodra een run een antwoord verwerkt, is het langs die weg onzichtbaar. Voor
+ * de vraag "welke item-ids heeft hij beantwoord" is dat geen bron, en zonder
+ * eigen statement bestond die vraag alleen als aanname.
+ */
+export const ANTWOORDEN_SQL =
+  "select id, item_id, project, soort, titel, bron, keuze, keuze_label, notitie, op, status " +
+  "from jarvis.antwoorden order by op";
+
 export const NIEUWE_BERICHTEN_SQL =
   "select id, van, tekst, op, status, context from jarvis.berichten where van = 'eigenaar' and status = 'nieuw' order by op";
 
@@ -306,6 +318,7 @@ export function toegestaneSql(): readonly string[] {
     ...TABELLEN.map(claimSql),
     ...TABELLEN.map(verwerktSql),
     NIEUWE_ANTWOORDEN_SQL,
+    ANTWOORDEN_SQL,
     NIEUWE_BERICHTEN_SQL,
     BERICHT_VAN_JARVIS_SQL,
     DOCUMENT_SQL,
