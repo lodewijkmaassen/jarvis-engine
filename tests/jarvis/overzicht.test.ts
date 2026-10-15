@@ -752,3 +752,94 @@ describe("dossiersZonderBekendeStatus", () => {
     expect(dossiersZonderBekendeStatus([d("T-a", "vervallen", "Beëindigd")])).toEqual([]);
   });
 });
+
+// Twee leesfouten uit T-20261008-voor-jou-asymmetrie, criterium 4. Beide zijn
+// op 2026-10-14 op de echte repositories gemeten: de kaarten onder "Voor jou"
+// droegen de titels "[ ] Eén instelling bij GitHub die alleen jij kunt zetten"
+// en "open in de titelbalk van de cloudsessie het menu van de omgeving en".
+describe("kortTitel: een titel is een leesbare zin, geen stuk opmaak", () => {
+  const kop = /^## Wat de eigenaar nog moet doen\s*$/m;
+  const onder = (regels: readonly string[]) =>
+    leesItemsOnder(["## Wat de eigenaar nog moet doen", "", ...regels, ""].join("\n"), kop);
+
+  it("laat het vinkje van een checkbox-punt niet in de titel staan", () => {
+    const items = onder(["- [ ] Eén instelling bij GitHub die alleen jij kunt zetten"]);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("Eén instelling bij GitHub die alleen jij kunt zetten");
+    expect(items[0].titel).not.toContain("[ ]");
+  });
+
+  it("laat ook een afgevinkt vinkje niet in de titel staan", () => {
+    expect(onder(["- [x] Het recht is toegekend"])[0].titel).toBe("Het recht is toegekend");
+    expect(onder(["- [X] Het recht is toegekend"])[0].titel).toBe("Het recht is toegekend");
+  });
+
+  it("laat een titel niet op een voegwoord eindigen wanneer de bron op een regeleinde ophoudt", () => {
+    const items = onder(["- Stap 1: open in de titelbalk van de cloudsessie het menu van de omgeving en"]);
+    expect(items).toHaveLength(1);
+    expect(items[0].titel).toBe("open in de titelbalk van de cloudsessie het menu van de omgeving…");
+    expect(items[0].titel).not.toMatch(/\s(en|of|van|met|voor)$/);
+  });
+
+  it("knipt een rij verbindende slotwoorden in één keer weg, met de komma ervoor", () => {
+    expect(onder(["- De sleutel zetten in de app, en"])[0].titel).toBe("De sleutel zetten in de app…");
+  });
+
+  it("laat een gebiedende zin die op een werkwoordsdeeltje eindigt heel", () => {
+    // Deze zes waren de regressie van QA-ronde 1 op engine-PR 84: de lijst met
+    // verbindende slotwoorden bevatte ook voorzetsels, en daarmee knipte de
+    // naschoning het enige inhoudelijke woord van een complete opdracht weg.
+    // "Zet de proxy-instelling…" vertelt de lezer niet of hij aan of uit moet.
+    const gaaf = [
+      "Zet tweefactor-authenticatie aan",
+      "Zet de proxy-instelling uit",
+      "Vink in het dashboard de optie aan",
+      "Draai de sleutel om",
+      "Neem de factuur over",
+      "Zet de schakelaar op",
+    ];
+    for (const zin of gaaf) {
+      expect(onder([`- ${zin}`])[0].titel).toBe(zin);
+    }
+  });
+
+  it("knipt geen bijwoord en geen aanwijzend voornaamwoord weg", () => {
+    // "Doe dat", "Kies die", "Neem deze" en "Regel het dan" zijn afgeronde
+    // zinnen; alleen een voegwoord of lidwoord kan een zin niet afsluiten.
+    for (const zin of ["Doe dat", "Kies die", "Neem deze", "Regel het dan"]) {
+      expect(onder([`- ${zin}`])[0].titel).toBe(zin);
+    }
+  });
+
+  it("laat een titel die wél afloopt ongemoeid", () => {
+    expect(onder(["- De uitrol zelf."])[0].titel).toBe("De uitrol zelf.");
+    expect(onder(["- Eén instelling bij GitHub die alleen jij kunt zetten"])[0].titel).toBe(
+      "Eén instelling bij GitHub die alleen jij kunt zetten",
+    );
+  });
+
+  it("houdt het beletselteken van de lengtegrens, ook als het laatste woord gewoon doorloopt", () => {
+    const lang = `- ${"woord ".repeat(30).trim()} slot`;
+    const titel = onder([lang])[0].titel;
+    expect(titel.endsWith("…")).toBe(true);
+    expect(titel.length).toBeLessThanOrEqual(90);
+  });
+});
+
+// De val onder de vorige reparatie: het vinkje stond in `titel` en werd daar
+// door `isAfgevinkt` gelezen. Het uit de titel halen zette een afgevinkt punt
+// dus zó terug in de lijst van de eigenaar. De stand hoort daarom in een eigen
+// veld, en deze test faalt op de code die haar uit de titel afleidt.
+describe("de vinkstaat van een punt staat los van zijn titel", () => {
+  const kop = /^## Wat de eigenaar nog moet doen\s*$/m;
+
+  it("houdt de stand vast in `afgevinkt`, niet in de titel", () => {
+    const items = leesItemsOnder(
+      ["## Wat de eigenaar nog moet doen", "", "- [x] Zet de sleutel in de kluis.", "- Kies een naam.", ""].join("\n"),
+      kop,
+    );
+    expect(items.map((i) => i.afgevinkt)).toEqual([true, false]);
+    expect(items[0].titel).toBe("Zet de sleutel in de kluis.");
+    expect(items.every((i) => !isAfgevinkt(i.titel))).toBe(true);
+  });
+});

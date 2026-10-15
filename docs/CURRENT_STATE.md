@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-10-02._
+_Gegenereerd op 2026-10-14._
 
 | Feit | Waarde |
 |---|---|
@@ -32,6 +32,28 @@ _Gegenereerd op 2026-10-02._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Een titel in "Voor jou" is weer een leesbare zin. `kortTitel()` liet twee
+leesfouten door die op 2026-10-14 op de echte repositories te zien waren: het
+vinkje van een checkbox-punt bleef in de titel staan (`[ ] Eén instelling bij
+GitHub …`), want de lijstparser knipt alleen `- ` weg; en een titel eindigde op
+een voegwoord (`… het menu van de omgeving en`) omdat de bron zelf op een
+regeleinde ophoudt — vóór de maximumlengte, waar geen lengtegrens iets aan
+doet. Beide worden nu in `kortTitel()` opgeruimd, het tweede met een
+beletselteken in plaats van het afgekapte woord.
+
+Het vinkje uit de titel halen brak eerst de eigenaarslijst: `isAfgevinkt()` las
+de stand uit `item.titel`, dus een afgevinkt punt kwam ongemerkt terug in de
+lijst van de eigenaar. De stand staat daarom nu in een eigen veld
+`GelezenItem.afgevinkt`, gelezen uit de ruwe tekst, en de twee plekken die hem
+uit de titel afleidden lezen dat veld. Een test pint die val vast, zodat
+niemand de stand opnieuw uit opmaak afleidt. Gemeten na de wijziging blijft
+`indeling.bij_jou` op 3 staan tegenover 3 kaarten: geen item verloren of
+toegevoegd.
+
+Dit is criterium 4 van `T-20261008-voor-jou-asymmetrie`. De kern van die taak —
+één bron die bepaalt of een punt bij de eigenaar ligt — staat er nog niet in;
+die wacht op de ontwerpkeuze van de architect.
 
 De opdrachttekst van een taak is geen administratieve wijziging meer.
 `DEC-0044` laat een administratieve pull request door zonder taakakkoord,

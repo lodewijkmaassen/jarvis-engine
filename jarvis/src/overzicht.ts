@@ -402,15 +402,63 @@ export function leesRecent(gitLog: readonly GitRegel[], nu: Date): readonly Rece
 const KOP_EIGENAAR = /^## Wat de eigenaar nog moet doen\s*$/m;
 const KOP_GEBLOKKEERD = /^## Wat is geblokkeerd, en waarop\s*$/m;
 
+/**
+ * Woorden die een zin verbinden en hem dus nooit afsluiten. Eindigt een titel
+ * hierop, dan is de zin afgekapt en niet afgelopen.
+ *
+ * Uitsluitend voegwoorden en lidwoorden, en dat is een harde grens. Deze lijst
+ * stond eerst ook vol voorzetsels — "aan", "uit", "op", "om", "over", "in",
+ * "bij", "te", "na", "door" — en juist dat zijn in het Nederlands de deeltjes
+ * waarop een gebiedende zin afloopt. De eigenaarslijst bestaat vrijwel alleen
+ * uit gebiedende zinnen, dus knipte de naschoning hieronder het enige
+ * inhoudelijke woord van een complete opdracht weg: "Zet de proxy-instelling
+ * uit" werd "Zet de proxy-instelling…", en de lezer kon niet meer zien of hij
+ * iets aan of uit moest zetten. Erger dan een zichtbaar afgekapte titel, want
+ * het beletselteken deed alsof de bron ophield.
+ *
+ * Dat de functie niet weet óf de bron is afgekapt — zij raadt het uit het
+ * laatste woord — is de reden dat hier alleen woorden mogen staan die een
+ * afgeronde Nederlandse zin niet kán afsluiten. Een voorzetsel, een bijwoord
+ * ("dan", "dus") en een aanwijzend voornaamwoord ("dat", "die", "deze": "Doe
+ * dat", "Kies die") kunnen dat wel en horen er dus niet in.
+ */
+const VERBINDEND_SLOTWOORD = new Set([
+  "als", "de", "een", "en", "het", "maar", "of", "omdat", "ter", "terwijl",
+  "want", "zodat", "zodra",
+]);
+
+/**
+ * Knipt een verbindend slotwoord weg en zet er een beletselteken voor in de
+ * plaats. Nodig omdat de bron zelf kan ophouden op een regeleinde — "… het
+ * menu van de omgeving en" — dus vóór de maximumlengte, waar geen enkele
+ * lengtegrens iets aan doet.
+ */
+function zonderVerbindendSlotwoord(titel: string): string {
+  let kern = titel.replace(/…$/, "").trimEnd();
+  let geknipt = kern !== titel;
+  for (;;) {
+    const laatste = /\s(\p{L}+)$/u.exec(kern);
+    if (!laatste || !VERBINDEND_SLOTWOORD.has(laatste[1].toLowerCase())) break;
+    kern = kern.slice(0, laatste.index).trimEnd();
+    geknipt = true;
+  }
+  const schoon = kern.replace(/[,;:]+$/, "").trimEnd();
+  return geknipt && schoon.length > 0 ? `${schoon}…` : schoon;
+}
+
 /** Eerste zin, of de eerste N tekens; voor een titel die op een telefoon past. */
 function kortTitel(tekst: string, max = 90): string {
+  // Een markdown-checkbox hoort bij de lijstopmaak, niet bij de titel: de
+  // lijstparser knipt alleen "- " weg en laat "[ ] " staan.
+  const zonderVinkje = tekst.trim().replace(/^\[[ xX]?\]\s*/, "");
   // Een vetgedrukte aanhef is de titel; zo schrijven de taakdossiers hun
   // eigenaarslijst. Anders de eerste zin.
-  const vet = /^\*\*(.+?)\*\*/.exec(tekst.trim());
-  const basis = vet ? vet[1] : tekst;
+  const vet = /^\*\*(.+?)\*\*/.exec(zonderVinkje);
+  const basis = vet ? vet[1] : zonderVinkje;
   const schoon = basis.replace(/\*\*/g, "").replace(/`/g, "").replace(/\s+/g, " ").trim();
   const zin = vet ? schoon : (/^(.{4,}?[.!?])\s/.exec(schoon)?.[1] ?? schoon);
-  return zin.length > max ? `${zin.slice(0, max - 1).trimEnd()}…` : zin;
+  const kort = zin.length > max ? `${zin.slice(0, max - 1).trimEnd()}…` : zin;
+  return zonderVerbindendSlotwoord(kort);
 }
 
 /**
@@ -423,6 +471,13 @@ export type GelezenItem = {
   readonly titel: string;
   readonly toelichting: string;
   readonly context: string;
+  /**
+   * Of het punt een afgevinkte checkbox draagt. Een eigen veld, want het
+   * vinkje is de stand van het punt en geen deel van zijn titel: zodra
+   * `kortTitel` het uit de titel haalt — waar het de kaarten onleesbaar maakte
+   * — is dit de enige plek waar die stand nog staat.
+   */
+  readonly afgevinkt: boolean;
   /** De ingesprongen "- Label: tekst"-regels onder het punt. */
   readonly regels: readonly { readonly label: string; readonly tekst: string }[];
 };
@@ -442,7 +497,13 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
   const sluit = () => {
     if (!huidig) return;
     const geheel = huidig.join(" ").replace(/\s+/g, " ").trim();
-    items.push({ titel: kortTitel(geheel), toelichting: geheel.replace(/\*\*/g, ""), context, regels });
+    items.push({
+      titel: kortTitel(geheel),
+      toelichting: geheel.replace(/\*\*/g, ""),
+      context,
+      afgevinkt: isAfgevinkt(geheel),
+      regels,
+    });
     huidig = null;
     regels = [];
   };
@@ -741,7 +802,9 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
     const nietsGeblokkeerd = /^(niets|geen|nvt|n\.v\.t\.)\b/i.test(sectie.replace(/^[*_#>\s]+/, ""));
     if (sectie.length > 0 && !nietsGeblokkeerd) {
       const bron: readonly GelezenItem[] =
-        blok.length > 0 ? blok : [{ titel: kortTitel(sectie), toelichting: sectie, context: "", regels: [] }];
+        blok.length > 0
+          ? blok
+          : [{ titel: kortTitel(sectie), toelichting: sectie, context: "", afgevinkt: isAfgevinkt(sectie), regels: [] }];
       for (const [i, b] of bron.entries()) {
         items.push({
           id: `${p}:blokkade:${i + 1}`,
@@ -818,7 +881,7 @@ export function leesAandacht(invoer: ProjectInvoer): readonly AandachtItem[] {
       // gedaan is (afgevinkt) of dat het akkoord op deze taak vraagt (dat
       // loopt over de akkoordkaart) is op dit moment geen handeling van de
       // eigenaar en hoort er dus niet in.
-      if (isAfgevinkt(item.titel) || isAkkoordVraag(item.titel)) continue;
+      if (item.afgevinkt || isAkkoordVraag(item.titel)) continue;
       const blokkerend = /blokkerend/i.test(item.context);
       const naMerge = /na merge/i.test(item.context);
       // Een punt dat begint met "beslis" vraagt een keuze, geen handeling; dat
@@ -894,7 +957,7 @@ export function leesVoortgang(resultaat: string | null): readonly TaakStap[] {
 function vraagtAkkoord(resultaat: string | null): boolean {
   if (!resultaat) return false;
   return leesItemsOnder(resultaat, KOP_EIGENAAR).some(
-    (item) => !isAfgevinkt(item.titel) && isAkkoordVraag(item.titel),
+    (item) => !item.afgevinkt && isAkkoordVraag(item.titel),
   );
 }
 
