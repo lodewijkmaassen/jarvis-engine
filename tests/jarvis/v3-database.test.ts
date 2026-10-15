@@ -112,6 +112,16 @@ draai("V3-database (PostgreSQL)", () => {
     expect(await toestand(id)).toBe("AKKOORD_NODIG");
   });
 
+  it("de eigenaar geeft een opdracht; de uitvoerder kan dat niet, en dubbele titels botsen niet", async () => {
+    const a = (await eigenaar((tx) => tx`select jarvis.v3_nieuwe_opdracht('Een Proef-pagina!', 'Maak hem') as id`))[0]!.id as string;
+    const b = (await eigenaar((tx) => tx`select jarvis.v3_nieuwe_opdracht('Een Proef-pagina!', 'Nog een keer') as id`))[0]!.id as string;
+    expect(a).toMatch(/^V3-\d{8}-een-proef-pagina$/);
+    expect(b).toMatch(/^V3-\d{8}-een-proef-pagina-2$/);
+    expect(await toestand(a)).toBe("ONTVANGEN");
+    await expect(werker((tx) => tx`select jarvis.v3_nieuwe_opdracht('x', 'y')`)).rejects.toThrow(/permission denied/);
+    await expect(eigenaar((tx) => tx`select jarvis.v3_nieuwe_opdracht('  ', 'y')`)).rejects.toThrow(/verplicht/);
+  });
+
   it("test 1: één akkoord, één mandaat, daarna uitvoeren", async () => {
     const id = nieuwId();
     await totAkkoord(id);

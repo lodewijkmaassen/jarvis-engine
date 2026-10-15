@@ -402,6 +402,28 @@ begin
   return mid;
 end $$;
 
+-- De opdracht van de eigenaar zelf: een taak in ONTVANGEN, buiten het berichtenkanaal
+-- van V2 om, zodat een V2-uitvoerder haar nooit oppakt.
+create or replace function jarvis.v3_nieuwe_opdracht(p_titel text, p_opdracht text) returns text
+language plpgsql security definer set search_path = jarvis, pg_temp as $$
+declare slug text; nid text; n int := 1;
+begin
+  if not jarvis.v3_is_eigenaar() then raise exception 'v3: alleen de eigenaar geeft een opdracht'; end if;
+  if coalesce(trim(p_titel), '') = '' or coalesce(trim(p_opdracht), '') = '' then raise exception 'v3: titel en opdracht zijn verplicht'; end if;
+  slug := trim(both '-' from regexp_replace(lower(p_titel), '[^a-z0-9]+', '-', 'g'));
+  slug := left(coalesce(nullif(slug, ''), 'opdracht'), 30);
+  slug := trim(both '-' from slug);
+  if length(slug) < 2 then slug := 'opdracht'; end if;
+  nid := 'V3-' || to_char(now() at time zone 'utc', 'YYYYMMDD') || '-' || slug;
+  while exists (select 1 from jarvis.v3_taken where jarvis.v3_taken.id = nid) loop
+    n := n + 1;
+    nid := 'V3-' || to_char(now() at time zone 'utc', 'YYYYMMDD') || '-' || left(slug, 36) || '-' || n;
+  end loop;
+  insert into jarvis.v3_taken (id, titel, opdracht) values (nid, trim(p_titel), trim(p_opdracht));
+  perform jarvis.v3_log(nid, 'eigenaar', 'opdracht', '{}'::jsonb);
+  return nid;
+end $$;
+
 create or replace function jarvis.v3_wijs_af(p_taak text) returns void
 language plpgsql security definer set search_path = jarvis, pg_temp as $$
 begin
@@ -491,7 +513,7 @@ begin
   end if;
   if exists (select 1 from pg_roles where rolname = 'authenticated') then
     grant execute on function
-      jarvis.v3_geef_mandaat(text), jarvis.v3_wijs_af(text), jarvis.v3_beantwoord(uuid,text,jsonb)
+      jarvis.v3_geef_mandaat(text), jarvis.v3_wijs_af(text), jarvis.v3_beantwoord(uuid,text,jsonb), jarvis.v3_nieuwe_opdracht(text,text)
       to authenticated;
   end if;
 end $$;
