@@ -20,5 +20,9 @@
   "select op, uitvoerder, rol, taak, project, soort, tekst, verwijzing from jarvis.activiteit where op > now() - interval '3 days' order by op desc limit 1000",
   "select jarvis.vraag_review($1::text::jsonb) as id",
   "select status_code, content, error_msg, timed_out from jarvis.lees_review($1)",
-  "select inhoud, bijgewerkt from jarvis.documenten where id = $1"
+  "select inhoud, bijgewerkt from jarvis.documenten where id = $1",
+  "select * from jarvis.v3_werk where id = $1",
+  "select * from jarvis.v3_werk order by toestand_sinds",
+  "select * from jarvis.v3_verzoeken_zicht where taak_id = $1 order by geopend_op",
+  "select * from jarvis.v3_actueel order by toestand_sinds desc"
 ]

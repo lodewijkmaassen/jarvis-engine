@@ -295,6 +295,34 @@ export function isRunRegel(waarde: unknown): waarde is RunRegel {
   );
 }
 
+// --- V3 (taakregister, mandaat, verzoeken) -------------------------------
+//
+// De V3-logica woont in databasefuncties (jarvis/migrations/v3). De Edge
+// Function laat daarom één vorm aanroep door in plaats van elke functie
+// afzonderlijk: `select jarvis.v3_<naam>($1, $2::int, $3::text::jsonb, ...)`.
+// Een nieuwe V3-functie vraagt dan geen nieuwe uitrol van de Edge Function.
+// Veilig doordat de functies zelf per rol zijn toegekend (alleen jarvis_werker
+// krijgt de uitvoerdersfuncties) en doordat dit patroon geen ander schema,
+// geen subselect en geen puntkomma toelaat.
+//
+// JSON gaat altijd als tekst en wordt pas in de database jsonb (`$n::text::jsonb`),
+// om dezelfde reden als bij DOCUMENT_SQL.
+export const V3_AANROEP_PATROON =
+  /^select (?:\* from )?jarvis\.v3_[a-z_]+\((?:\$[1-8](?:::(?:int|uuid|text|text::jsonb))?(?:, )?)*\)(?: as [a-z_]+)?$/;
+
+/** Vaste leesopdrachten op de V3-views waar de uitvoerder mag lezen. */
+export const V3_WERK_SQL = "select * from jarvis.v3_werk where id = $1";
+export const V3_WERK_ALLE_SQL = "select * from jarvis.v3_werk order by toestand_sinds";
+export const V3_VERZOEKEN_SQL = "select * from jarvis.v3_verzoeken_zicht where taak_id = $1 order by geopend_op";
+export const V3_ACTUEEL_SQL = "select * from jarvis.v3_actueel order by toestand_sinds desc";
+
+export function v3Aanroep(naam: string, typen: readonly ("text" | "int" | "uuid" | "json")[], als?: string): string {
+  const args = typen.map((t, i) => `$${i + 1}${t === "text" ? "" : t === "json" ? "::text::jsonb" : `::${t}`}`).join(", ");
+  const sql = `select ${als ? "" : "* from "}jarvis.v3_${naam}(${args})${als ? ` as ${als}` : ""}`;
+  if (!V3_AANROEP_PATROON.test(sql)) throw new Error(`v3Aanroep: ${sql} valt buiten het toegestane patroon`);
+  return sql;
+}
+
 /**
  * Alle statements die de engine op de eigen database uitvoert, letterlijk.
  * De Edge Function `jarvis-db` (voor de cloud, die geen Postgres kan
@@ -322,5 +350,9 @@ export function toegestaneSql(): readonly string[] {
     VRAAG_REVIEW_SQL,
     LEES_REVIEW_SQL,
     DOCUMENT_LEES_SQL,
+    V3_WERK_SQL,
+    V3_WERK_ALLE_SQL,
+    V3_VERZOEKEN_SQL,
+    V3_ACTUEEL_SQL,
   ];
 }

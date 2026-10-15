@@ -1,0 +1,110 @@
+name: jarvis-v3
+
+# Jarvis V3: de deterministische poort, de dispatcher en de migratieroute.
+#
+# Draait GEEN model. Alles wat hier beslist staat in code op main van de
+# engine (`jarvis v3 …`), niet in een pull request en niet in deze tekst: de
+# workflow zet alleen invoer in de omgeving en roept een vaste opdracht aan.
+#
+# Drie jobs, elk met alleen de rechten die hij nodig heeft:
+#
+#   sweep       elke tien minuten en na elke poort-run: loopt de open
+#               Jarvis-pull requests langs. Valt een PR binnen het mandaat van
+#               zijn taak (paden, repo, migraties, toetsing GO, poort groen),
+#               dan keurt de poort goed en — alleen bij productie: true in het
+#               mandaat — voegt samen. Anders gebeurt er niets.
+#   dispatch    start de routine van de uitvoerder via de API als er werk is
+#               zonder levende uitvoerder (verlopen lease). Het token staat
+#               alleen als secret en gaat alleen in een header.
+#   migreren    na een push naar main: past NIEUWE migraties toe die binnen het
+#               mandaat van hun taak vallen, met een eigen database-rol in een
+#               GitHub-omgeving. De uitvoerder ziet die verbindingsreeks nooit.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_run:
+    workflows: ["jarvis-lint"]
+    types: [completed]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: jarvis-v3-${{ github.workflow }}-${{ github.event_name == 'push' && 'push' || 'sweep' }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  sweep:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Jarvis V3 — poort en samenvoegen
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JARVIS_DB_API: ${{ secrets.JARVIS_DB_API }}
+          JARVIS_DB_TOKEN: ${{ secrets.JARVIS_DB_TOKEN }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 sweep
+
+  dispatch:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Jarvis V3 — dispatcher
+        env:
+          JARVIS_DB_API: ${{ secrets.JARVIS_DB_API }}
+          JARVIS_DB_TOKEN: ${{ secrets.JARVIS_DB_TOKEN }}
+          JARVIS_ROUTINE_FIRE_URL: ${{ secrets.JARVIS_ROUTINE_FIRE_URL }}
+          JARVIS_ROUTINE_TOKEN: ${{ secrets.JARVIS_ROUTINE_TOKEN }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 dispatch
+
+  migreren:
+    if: github.event_name == 'push' && vars.JARVIS_MIGRATIES == 'aan'
+    runs-on: ubuntu-latest
+    environment: jarvis-migraties
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Jarvis V3 — migraties
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JARVIS_DB_API: ${{ secrets.JARVIS_DB_API }}
+          JARVIS_DB_TOKEN: ${{ secrets.JARVIS_DB_TOKEN }}
+          JARVIS_MIGRATIE_DB_URL: ${{ secrets.JARVIS_MIGRATIE_DB_URL }}
+          JARVIS_MIGRATIE_LEDGER: ${{ vars.JARVIS_MIGRATIE_LEDGER }}
+          VOOR: ${{ github.event.before }}
+          NA: ${{ github.sha }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 migreer --basis "$VOOR" --kop "$NA"

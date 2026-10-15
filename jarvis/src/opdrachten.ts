@@ -1616,7 +1616,7 @@ const BOT_TOKEN_BESTAND = process.env.JARVIS_BOT_TOKEN_BESTAND ?? path.join(home
  * dat het token ergens anders hoeft te staan. Het komt nergens in uitvoer,
  * logs of fouten.
  */
-async function leesBotToken(): Promise<string | null> {
+export async function leesBotToken(): Promise<string | null> {
   const uitOmgeving = (process.env.JARVIS_BOT_TOKEN ?? "").trim();
   if (uitOmgeving.length > 0) return uitOmgeving;
   try {
@@ -1641,9 +1641,9 @@ async function leesBotToken(): Promise<string | null> {
   }
 }
 
-type GitHubAntwoord = { readonly status: number; readonly lading: unknown; readonly koppen: Headers };
+export type GitHubAntwoord = { readonly status: number; readonly lading: unknown; readonly koppen: Headers };
 
-async function github(token: string, methode: string, pad: string, body?: unknown): Promise<GitHubAntwoord> {
+export async function github(token: string, methode: string, pad: string, body?: unknown): Promise<GitHubAntwoord> {
   const antwoord = await fetch(`https://api.github.com${pad}`, {
     method: methode,
     headers: {
@@ -1663,7 +1663,7 @@ async function github(token: string, methode: string, pad: string, body?: unknow
   return { status: antwoord.status, lading, koppen: antwoord.headers };
 }
 
-function foutTekst(a: GitHubAntwoord): string {
+export function foutTekst(a: GitHubAntwoord): string {
   const l = a.lading as { message?: unknown } | null;
   return typeof l?.message === "string" ? `${a.status}: ${l.message}` : `HTTP ${a.status}`;
 }
@@ -1725,7 +1725,7 @@ async function herkomstPerRun(
   return uit;
 }
 
-async function leesPullRequest(token: string, slug: string, nummer: number): Promise<PullRequestFeiten | string> {
+export async function leesPullRequest(token: string, slug: string, nummer: number): Promise<PullRequestFeiten | string> {
   const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
   if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
   const p = pr.lading as {
@@ -1997,7 +1997,7 @@ async function leesDbUrl(): Promise<string | null> {
 }
 
 /** De kleinste gemene deler van een postgres-verbinding en de HTTPS-client. */
-type DbClient = {
+export type DbClient = {
   unsafe: (sql: string, params?: readonly unknown[]) => Promise<readonly Record<string, unknown>[]>;
   end: (o: { timeout: number }) => Promise<void>;
 };
@@ -2017,7 +2017,14 @@ function apiClient(url: string): DbClient {
       try {
         antwoord = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json", "User-Agent": "jarvis-db", Connection: "close" },
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "jarvis-db",
+            Connection: "close",
+            // Buiten de proxy van het platform (GitHub Actions) komt het token uit
+            // JARVIS_DB_TOKEN, een secret. Het gaat alleen in deze header.
+            ...((process.env.JARVIS_DB_TOKEN ?? "").trim() ? { Authorization: `Bearer ${(process.env.JARVIS_DB_TOKEN ?? "").trim()}` } : {}),
+          },
           body: JSON.stringify({ sql, params }),
         });
       } catch (fout) {
@@ -2046,7 +2053,7 @@ function apiClient(url: string): DbClient {
  *      attestatie.url in jarvis.config.yml) — de cloud.
  * Geen van beide: null.
  */
-async function verbindDb(): Promise<{ readonly sql: DbClient; readonly bron: string } | null> {
+export async function verbindDb(): Promise<{ readonly sql: DbClient; readonly bron: string } | null> {
   const url = await leesDbUrl();
   if (url !== null) {
     const { default: postgres } = await import("postgres");
@@ -2845,7 +2852,7 @@ function sqlBron(sql: PgClient): AttestatieBron {
 }
 
 /** Alle pagina's van een GitHub-lijst; weigert boven het plafond (fail closed). */
-async function leesAllePaginas<T>(token: string, pad: string, plafond: number, haal: GithubLezer = github): Promise<readonly T[] | string> {
+export async function leesAllePaginas<T>(token: string, pad: string, plafond: number, haal: GithubLezer = github): Promise<readonly T[] | string> {
   const alles: T[] = [];
   for (let pagina = 1; pagina <= plafond; pagina += 1) {
     const a = await haal(token, "GET", `${pad}${pad.includes("?") ? "&" : "?"}per_page=100&page=${pagina}`);
