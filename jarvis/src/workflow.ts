@@ -92,6 +92,9 @@ export const TOEGESTANE_WORKFLOWS: readonly string[] = [
   "jarvis-lint.yml",
   // De attestatie namens de eigenaar (DEC-0043); canonieke bron verplicht.
   "jarvis-attestatie.yml",
+  // Jarvis V3: poort binnen het mandaat, dispatcher en migratieroute. Canonieke
+  // bron: jarvis/canonical/jarvis-v3.yml.
+  "jarvis-v3.yml",
   // Bestaande workflows van voor Jarvis. Ze staan hier omdat ze er zijn, niet
   // omdat ze beoordeeld zijn: alleen `jarvis-lint.yml` heeft een canonieke
   // bron. Wat deze lijst wel doet is een NIEUWE workflow tegenhouden.

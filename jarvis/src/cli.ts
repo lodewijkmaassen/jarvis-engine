@@ -11,6 +11,7 @@
 //
 // Gebruik: npx tsx jarvis/src/cli.ts <opdracht> [opties]
 import { AfbrekenFout, voerUit } from "./opdrachten";
+import { voerV3Uit } from "./v3-cli";
 
 /**
  * Proxy uit de omgeving. Een cloud-sessie van het platform laat al het
@@ -38,7 +39,8 @@ async function volgOmgevingsProxy(): Promise<void> {
 async function hoofd(): Promise<void> {
   await volgOmgevingsProxy();
   try {
-    process.exitCode = await voerUit(process.argv.slice(2));
+    const argv = process.argv.slice(2);
+    process.exitCode = argv[0] === "v3" ? await voerV3Uit(argv.slice(1)) : await voerUit(argv);
   } catch (fout) {
     if (fout instanceof AfbrekenFout) {
       console.error(fout.message);

@@ -28,6 +28,11 @@ import toegestaan from "./toegestaan.json" with { type: "json" };
 
 const TOEGESTAAN: ReadonlySet<string> = new Set(toegestaan as string[]);
 
+// V3: één vorm functie-aanroep, geen losse statements per functie (zie db.ts).
+// Moet letterlijk gelijk zijn aan V3_AANROEP_PATROON; een test bewaakt dat.
+const V3_AANROEP_PATROON =
+  /^select (?:\* from )?jarvis\.v3_[a-z_]+\((?:\$[1-8](?:::(?:int|uuid|text|text::jsonb))?(?:, )?)*\)(?: as [a-z_]+)?$/;
+
 /**
  * Vergelijkt twee geheimen via hun SHA-256-digest: de vergelijking duurt
  * altijd even lang en de lengte van het echte token lekt niet via timing
@@ -77,7 +82,7 @@ Deno.serve(async (req: Request) => {
   if (body === null || typeof body !== "object" || Array.isArray(body)) return antwoord(400, { fout: "geen JSON-object" });
   const sql = typeof body.sql === "string" ? body.sql : "";
   const params = Array.isArray(body.params) ? body.params : [];
-  if (!TOEGESTAAN.has(sql)) return antwoord(400, { fout: "statement niet toegestaan" });
+  if (!TOEGESTAAN.has(sql) && !V3_AANROEP_PATROON.test(sql)) return antwoord(400, { fout: "statement niet toegestaan" });
   if (params.length > 8 || params.some((p) => p !== null && !["string", "number", "boolean"].includes(typeof p))) {
     return antwoord(400, { fout: "parameters: hoogstens acht, alleen tekst, getal, boolean of null" });
   }

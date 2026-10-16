@@ -1,0 +1,139 @@
+name: jarvis-v3
+
+# Jarvis V3: de deterministische poort, de dispatcher en de migratieroute.
+#
+# Draait GEEN model. Alles wat hier beslist staat in code op main van de
+# engine (`jarvis v3 …`), niet in een pull request en niet in deze tekst: de
+# workflow zet alleen invoer in de omgeving en roept een vaste opdracht aan.
+#
+# De jobs sweep, eindcontrole en dispatch draaien in de GitHub-omgeving `jarvis-ci` (alleen branch main), zodat
+# een branch van de uitvoerder het CI-geheim niet kan lezen. Drie jobs, elk met alleen de rechten die hij nodig heeft:
+#
+#   sweep       elke tien minuten en na elke poort-run: loopt de open
+#               Jarvis-pull requests langs. Valt een PR binnen het mandaat van
+#               zijn taak (paden, repo, migraties, toetsing GO, poort groen),
+#               dan keurt de poort goed en — alleen bij productie: true in het
+#               mandaat — voegt samen. Anders gebeurt er niets.
+#   dispatch    start de routine van de uitvoerder via de API als er werk is
+#               zonder levende uitvoerder (verlopen lease). Het token staat
+#               alleen als secret en gaat alleen in een header.
+#   eindcontrole  meet elk acceptatiecriterium van taken in EINDCONTROLE op de echte
+#               omgeving en legt KLAAR vast. Alleen deze identiteit (jarvis_ci) kan dat;
+#               de uitvoerder kan zijn eigen werk niet voltooid verklaren.
+#   migreren    direct NA de sweep (needs: sweep) en bij elke ronde: past NIEUWE migraties toe van
+#               taken met een vastgelegde samenvoeging en een mandaat dat migraties toestaat, met een
+#               eigen database-rol in een GitHub-omgeving. De uitvoerder ziet die verbindingsreeks nooit.
+#               Bewust NIET gekoppeld aan een `push`-event: een merge die de sweep zelf doet (met het
+#               GITHUB_TOKEN) start geen push-workflow, en juist die merge moet de migratie starten.
+#               De route is idempotent (ledger), dus elke ronde mag opnieuw proberen.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_run:
+    workflows: ["jarvis-lint"]
+    types: [completed]
+  workflow_dispatch: {}
+
+concurrency:
+  group: jarvis-v3
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    environment: jarvis-ci
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Jarvis V3 — poort en samenvoegen
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 sweep
+
+  eindcontrole:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: jarvis-ci
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Jarvis V3 — eindcontrole
+        env:
+          # Alleen lezen: om te beoordelen of het bouwmerk op productie een nazaat is van de samenvoegcommit.
+          GITHUB_TOKEN: ${{ github.token }}
+          JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 eindcontrole
+
+  dispatch:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: jarvis-ci
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Jarvis V3 — dispatcher
+        env:
+          JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
+          JARVIS_ROUTINE_FIRE_URL: ${{ secrets.JARVIS_ROUTINE_FIRE_URL }}
+          JARVIS_ROUTINE_TOKEN: ${{ secrets.JARVIS_ROUTINE_TOKEN }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 dispatch
+
+  migreren:
+    needs: sweep
+    # always(): ook als de sweep niets te doen had of faalde, en voor de samenvoeging die de eigenaar zelf deed.
+    if: ${{ always() && vars.JARVIS_MIGRATIES == 'aan' }}
+    runs-on: ubuntu-latest
+    environment: jarvis-migraties
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Jarvis V3 — migraties
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
+          JARVIS_MIGRATIE_DB_URL: ${{ secrets.JARVIS_MIGRATIE_DB_URL }}
+          JARVIS_MIGRATIE_LEDGER: ${{ vars.JARVIS_MIGRATIE_LEDGER }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 migreer

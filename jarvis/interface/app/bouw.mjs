@@ -100,6 +100,15 @@ if (merk !== undefined && pagina === bron) {
   process.exit(1);
 }
 writeFileSync(path.join(doel, "index.html"), pagina, "utf8");
+// De V3-weergave: eigen route (/v3/), zelfde config.js en hetzelfde bouwmerk.
+const v3Bron = readFileSync(path.join(hier, "..", "v3.html"), "utf8");
+const v3Pagina = merk === undefined ? v3Bron : v3Bron.replace("</head>", `<meta name="jarvis-bouwmerk" content="${merk}">\n</head>`);
+if (merk !== undefined && v3Pagina === v3Bron) {
+  console.error("bouw: v3.html heeft geen </head> om het bouwmerk in te zetten. Er is niets gebouwd.");
+  process.exit(1);
+}
+mkdirSync(path.join(doel, "v3"), { recursive: true });
+writeFileSync(path.join(doel, "v3", "index.html"), v3Pagina, "utf8");
 for (const naam of ["manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "vercel.json"]) {
   if (path.resolve(hier) !== doel) copyFileSync(path.join(hier, naam), path.join(doel, naam));
 }
