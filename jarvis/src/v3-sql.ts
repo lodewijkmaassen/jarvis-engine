@@ -352,7 +352,7 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
   [/\b(session_replication_role|standard_conforming_strings|backslash_quote|escape_string_warning)\b/, "sessie-instellingen die het lezen van SQL of triggers veranderen"],
   [/\bdisable\b/, "DISABLE (triggers of beveiliging uitzetten)"],
   [/\blanguage\s+(?!(sql|plpgsql)\b)/, "een andere functietaal dan sql of plpgsql"],
-  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|pg_sleep)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
+  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|pg_sleep\w*|pg_advisory\w*|pg_notify|pg_stat_reset\w*|pg_reload_conf|pg_rotate_logfile|pg_switch_wal|pg_drop_\w+|pg_create_\w+|pg_promote|pg_wal_replay\w*|pg_truncate\w*|pg_import\w*|pg_export\w*)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
 ];
 
 /** Per statement (bovenste niveau) verboden beginwoorden: eigen transactiebesturing en sessie-instellingen. */
@@ -381,7 +381,7 @@ const DESTRUCTIEF_OVERAL: readonly Regel[] = [
   [/\bmerge\b/, "MERGE (kan wijzigen en verwijderen)"],
 ];
 /** Alleen in bodies (functie, trigger, DO): statements die bestaande objecten wijzigen horen daar niet. */
-const BODY_WIJZIGT_BESTAAND = /\b(alter|lock\s+table|reassign|import\s+foreign|security\s+label)\b/;
+const BODY_WIJZIGT_BESTAAND = /\b(alter|lock|reassign|import|security|comment|create|set|reset|discard|listen|notify|unlisten|call|refresh|analyze|do)\b/;
 /** Alleen op het bovenste niveau (wat nu wordt uitgevoerd). */
 const DESTRUCTIEF_BOVEN: readonly Regel[] = [
   [/\bcreate\s+or\s+replace\b/, "CREATE OR REPLACE (overschrijft bestaand gedrag)"],
@@ -396,7 +396,7 @@ const TOEGESTAAN: readonly RegExp[] = [
   /^create (unique )?index\b/,
   /^create type\b/,
   /^create sequence\b/,
-  /^create (temp(orary)? )?view\b/,
+  /^create view\b/,
   /^create (constraint )?trigger\b/,
   /^create function\b/,
   // `add` moet het commando zijn, direct na de tabelnaam; een naam of kolom die "add" heet telt niet.
@@ -511,6 +511,7 @@ function additieveGrammatica(statements: readonly string[]): string[] {
   const redenen: string[] = [];
   const nieuw = new Set<string>();
   const nieuweFuncties = new Set<string>();
+  const handtekeningen = new Set<string>();
   // Een naam met meer dan twee delen (db.schema.object) wordt niet gevolgd: fail-closed.
   const naamCheck = (n: string): string => {
     const c = canoniek(n);
@@ -524,7 +525,7 @@ function additieveGrammatica(statements: readonly string[]): string[] {
     if ((m = st.match(new RegExp(`^create (?:unlogged )?table (?:if not exists )?(${NAAM})`)))) {
       if (/\bpartition of\b|\binherits\b/.test(st)) redenen.push("CREATE TABLE … PARTITION OF of INHERITS verandert een bestaande tabel en vraagt destructief: true in het mandaat");
       if (!/^create (?:unlogged )?table if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!));
-    } else if ((m = st.match(new RegExp(`^create (?:(?:temp|temporary) )?(?:recursive )?view (${NAAM})`)))) nieuw.add(naamCheck(m[1]!));
+    } else if ((m = st.match(new RegExp(`^create (?:recursive )?view (${NAAM})`)))) nieuw.add(naamCheck(m[1]!));
     else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) { if (!/^create (?:unique )?index (?:concurrently )?if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!)); }
     else if ((m = st.match(new RegExp(`^create sequence (?:if not exists )?(${NAAM})`))) && /\bowned by\b/.test(st)) {
       // OWNED BY hangt de nieuwe sequentie aan een kolom; alleen aan een tabel uit deze migratie.
@@ -537,12 +538,18 @@ function additieveGrammatica(statements: readonly string[]): string[] {
       // Een nieuwe functie met dezelfde naam en een passender argumenttype overschrijft bij PostgreSQL elke bestaande
       // aanroep (create function public.lower(varchar) …). Alleen een triggerfunctie is niet aanroepbaar vanuit SQL.
       if (!/\breturns trigger\b/.test(st)) redenen.push("een functie die vanuit SQL aanroepbaar is kan een bestaande aanroep overschrijven en vraagt destructief: true in het mandaat");
-      nieuw.add(naamCheck(m[1]!));
-      nieuweFuncties.add(naamCheck(m[1]!));
+      // Functies hebben in PostgreSQL een eigen naamruimte: een functie `x` maakt `x` als tabel niet nieuw.
+      const naam = naamCheck(m[1]!);
+      nieuweFuncties.add(naam);
+      const args = st.match(new RegExp(`^create function ${NAAM} ?\\(([^)]*)\\)`));
+      if (args !== null) handtekeningen.add(`${naam}(${canoniek(args[1]!)})`);
     } else if (/^create (constraint )?trigger\b/.test(st)) {
-      const doel = alsNaam(st.match(new RegExp(`\\bon (${NAAM})`)));
+      // Vaste vorm: create [constraint] trigger NAAM before|after|instead of GEBEURTENISSEN on DOEL … — nooit "het eerste on".
+      const gebeurtenis = "(?:insert|delete|truncate|update(?: of [^\\s,]+(?: ?, ?[^\\s,]+)*)?)";
+      const t = st.match(new RegExp(`^create (?:constraint )?trigger ${NAAM} (?:before|after|instead of) ${gebeurtenis}(?: or ${gebeurtenis})* on (${NAAM})\\b`));
+      const doel = t === null ? null : naamCheck(t[1]!);
       const fn = alsNaam(st.match(new RegExp(`\\bexecute (?:function|procedure) (${NAAM}) ?\\(`)));
-      if (doel === null || !nieuw.has(doel)) redenen.push("een trigger op een bestaande tabel verandert wat schrijven doet en vraagt destructief: true in het mandaat");
+      if (doel === null || !nieuw.has(doel)) redenen.push("een trigger op een bestaande tabel (of in een vorm die niet te lezen is) vraagt destructief: true in het mandaat");
       if (fn === null || !nieuweFuncties.has(fn)) redenen.push("een trigger met een functie die niet in deze migratie is aangemaakt vraagt destructief: true in het mandaat");
     } else if ((m = st.match(new RegExp(`^alter table (?:if exists )?(?:only )?(${NAAM}) (.*)$`)))) {
       const tabel = naamCheck(m[1]!);
@@ -555,9 +562,15 @@ function additieveGrammatica(statements: readonly string[]): string[] {
         } else redenen.push(`ALTER TABLE-actie buiten ADD: "${a.slice(0, 40)}"`);
       }
     } else if ((m = st.match(/^comment on (table|view|index|sequence|type|function|column) (.+?) is\b/))) {
-      const x = canoniek(m[2]!).replace(/\(.*$/, "");
-      const doel = m[1] === "column" ? x.replace(/\.[^.]*$/, "") : x;
-      if (!nieuw.has(doel)) redenen.push("commentaar op een bestaand object vraagt destructief: true in het mandaat");
+      const volledig = canoniek(m[2]!);
+      if (m[1] === "function") {
+        // Naam én argumenten moeten die van een functie uit deze migratie zijn: `mijn(int)` is niet `mijn()`.
+        if (!handtekeningen.has(volledig)) redenen.push("commentaar op een functie die niet (met deze argumenten) in deze migratie is aangemaakt vraagt destructief: true in het mandaat");
+      } else {
+        const x = volledig.replace(/\(.*$/, "");
+        const doel = m[1] === "column" ? x.replace(/\.[^.]*$/, "") : x;
+        if (!nieuw.has(doel)) redenen.push("commentaar op een bestaand object vraagt destructief: true in het mandaat");
+      }
     } else if (/^comment on\b/.test(st)) redenen.push("commentaar op dit soort object is alleen met destructief: true toegestaan");
   }
   return redenen;

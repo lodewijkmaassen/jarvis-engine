@@ -560,6 +560,11 @@ describe("BLK-D: een goedaardige additieve migratie blijft doorgelaten; secrets 
     ];
     for (const g of goed) expect(beoordeelSql(g, false), g).toEqual([]);
   });
+  it("BLK-L: commentaar op een functie eist dezelfde naam én argumenten als de functie uit deze migratie", () => {
+    const sql = "create function mijn() returns trigger language plpgsql as $$ begin return new; end $$; comment on function mijn(int) is 'x';";
+    expect(beoordeelSql(sql, false).length).toBeGreaterThan(0);
+    expect(beoordeelSql("create function mijn() returns trigger language plpgsql as $$ begin return new; end $$; comment on function mijn() is 'x';", false)).toEqual([]);
+  });
   it("de CI-jobs die het CI-geheim gebruiken draaien in de omgeving jarvis-ci", () => {
     const yml = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-v3.yml"), "utf8");
     for (const j of ["sweep", "eindcontrole", "dispatch"]) {
