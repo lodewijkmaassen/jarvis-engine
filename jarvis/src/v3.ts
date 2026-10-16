@@ -129,6 +129,9 @@ export function beoordeelMigraties(
     if (!MIGRATIE_PAD.test(b.pad.replace(/\\/g, "/"))) continue;
     const redenen: string[] = [];
     if (!m.migraties) redenen.push("het mandaat staat geen migraties toe (migraties: false)");
+    // V3-beperking (bewust): alleen additieve migraties worden automatisch uitgevoerd. Een destructief mandaat wordt niet
+    // automatisch toegepast; dat vraagt een eigenaarsbesluit buiten de automatische route, tot een product het echt nodig heeft.
+    if (m.destructief) redenen.push("destructieve migraties worden in V3 niet automatisch uitgevoerd (alleen additieve)");
     if (b.sql === null) redenen.push("de inhoud van de migratie is niet te lezen");
     else {
       redenen.push(...beoordeelSql(b.sql, m.destructief).map((r) => `migratie: ${r}`));

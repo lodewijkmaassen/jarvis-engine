@@ -244,7 +244,8 @@ describe("migraties binnen het mandaat", () => {
       expect(r.join(), sql).toMatch(/destructief: true|whitelist/);
     }
     const ok = beoordeelV3Pr({ ...mig, mandaat: { ...m, destructief: true }, migratieBestanden: [{ pad: "supabase/migrations/0013_x.sql", sql: "drop table a;" }] });
-    expect(ok).toEqual([]);
+    // V3-beperking: een destructief mandaat wordt niet automatisch uitgevoerd
+    expect(ok.join()).toMatch(/niet automatisch uitgevoerd/);
   });
   it("weigeren een migratie waarvan de inhoud niet is aangeleverd", () => {
     expect(beoordeelV3Pr({ ...mig, mandaat: { ...mandaat, migraties: true }, migratieBestanden: [] }).join()).toMatch(/niet aangeleverd/);
