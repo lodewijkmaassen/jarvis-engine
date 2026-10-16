@@ -427,6 +427,43 @@ export type GelezenItem = {
   readonly regels: readonly { readonly label: string; readonly tekst: string }[];
 };
 
+/**
+ * Het label van een regel die onder één handeling hangt: "Stap N" of een
+ * controle. Eén bron voor alle drie de plekken die dit vocabulaire kennen —
+ * de lezer hieronder, de grens "een controle opent nooit een handeling", en
+ * `bouwOpties`. Lopen die uiteen, dan belandt een controle als keuzeknop in de
+ * lijst van de eigenaar en vervangt zij zijn knop "Gedaan"; dat is één keer
+ * gebeurd en het is geen faalpad dat drie keer opgeschreven hoort te staan.
+ *
+ * Een controle mag zeggen waaróp zij controleert ("Controle op de hele taak"),
+ * maar niet wíe haar doet: een regel als "Controle op jou: …" of
+ * "Controle door jou: …" wijst juist een handeling aan de eigenaar toe en
+ * hoort een zichtbaar punt te blijven in plaats van stil te verdwijnen.
+ * "Controlepaneel" valt erbuiten door de verplichte spatie, en de lengtegrens
+ * volgt die van de ingesprongen variant in de lezer.
+ */
+const CONTROLE_OBJECT = String.raw`(?!(?:[^:*]*\b(?:je|jij|jou|jouw|eigenaar|eigenaren|eigenaars)\b))[^:*]{1,60}`;
+export const STAP_OF_CONTROLE = new RegExp(
+  String.raw`^\**(Stap \d+|Controle(?:\s+op\s+${CONTROLE_OBJECT})?)\**\s*:\**\s*(.*)$`,
+  "i",
+);
+
+/**
+ * Of een label een controle is: werk van Jarvis, nooit een actie en nooit een
+ * keuze. Eén predicaat, en het past het patroon hierboven zélf toe — "begint
+ * met controle" apart aanbieden was een valstrik, want `Controle door jou` en
+ * `Controle oppassen voor de sleutel` beginnen er wel mee en zijn juist géén
+ * controle. Twee helften die een volgende aanroeper los kan gebruiken, is
+ * precies hoe de eigenaar eerder zijn knop "Gedaan" verloor.
+ */
+export function isControle(label: string): boolean {
+  // Ruimer dan het patroon op één punt, en bewust: een label kan uit een bron
+  // komen die niet trimt, en dan is "wel een controle maar met een spatie
+  // ervoor" geen onderscheid dat iets betekent.
+  const m = STAP_OF_CONTROLE.exec(`${label.trim()}:`);
+  return m !== null && /^controle\b/i.test(m[1]);
+}
+
 export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenItem[] {
   const tekst = document.replace(/\r\n/g, "\n");
   const m = kop.exec(tekst);
@@ -437,12 +474,16 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
 
   const items: GelezenItem[] = [];
   let context = "";
+  // De kop zoals hij voor het lopende punt geldt. Meestal gelijk aan `context`,
+  // maar een afgevinkte kop die een openstaande stap niet dekt, geldt voor dat
+  // punt helemaal niet — titel noch aanhef noch urgentie.
+  let kopVanItem = "";
   let huidig: string[] | null = null;
   let regels: { label: string; tekst: string }[] = [];
   const sluit = () => {
     if (!huidig) return;
     const geheel = huidig.join(" ").replace(/\s+/g, " ").trim();
-    items.push({ titel: kortTitel(geheel), toelichting: geheel.replace(/\*\*/g, ""), context, regels });
+    items.push({ titel: kortTitel(geheel), toelichting: geheel.replace(/\*\*/g, ""), context: kopVanItem, regels });
     huidig = null;
     regels = [];
   };
@@ -462,8 +503,9 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
       //
       // De dubbele punt mag binnen de sterretjes staan (`**Controle:** …`); dat
       // is dezelfde regel en krijgt dezelfde grens. Zonder `\**` ná de dubbele
-      // punt bleven de sluitende sterretjes in de tekst staan.
-      const stap = /^\**(Stap \d+|Controle)\**\s*:\**\s*(.*)$/i.exec(start[1]);
+      // punt bleven de sluitende sterretjes in de tekst staan. De vorm zelf
+      // staat in `STAP_OF_CONTROLE`, met de afweging erbij.
+      const stap = STAP_OF_CONTROLE.exec(start[1]);
       if (stap) {
         const label = stap[1].trim();
         const regel = { label, tekst: stap[2].replace(/\*+$/, "").trim() };
@@ -472,16 +514,31 @@ export function leesItemsOnder(document: string, kop: RegExp): readonly GelezenI
         // controle hoort dan bij het punt dat er net was, en anders bij niets.
         // Zonder deze grens werd de controletekst zelf een item, en daarmee in
         // "Voor jou" en in de regie een "wacht op jou" voor werk van Jarvis.
-        if (!huidig && /^controle$/i.test(label)) {
+        if (!huidig && isControle(label)) {
           const vorige = items[items.length - 1];
           if (vorige) items[items.length - 1] = { ...vorige, regels: [...vorige.regels, regel] };
           continue;
         }
-        if (!huidig) huidig = [context || regel.tekst];
+        // Een afgevinkte kop mag een openstaande stap niet dekken. Deed zij dat
+        // wel, dan heette het nieuwe punt naar een afgeronde handeling en viel
+        // het als "gedaan" uit de lijst; de stap zelf is dan de eerlijke titel.
+        // Een afgevinkte kop boven afgevinkte stappen is wél gewoon de kop van
+        // een afgeronde handeling, en houdt haar naam.
+        //
+        // Dekt de kop de stap niet, dan geldt zij ook niet als context. Anders
+        // bleef zij als aanhef van de toelichting staan en bleef de urgentie
+        // uit een afgeronde handeling komen — de titel klopte dan wel en de
+        // rest van de kaart niet.
+        const kopDektStap = !isAfgevinkt(context) || isAfgevinkt(regel.tekst);
+        if (!huidig) {
+          kopVanItem = kopDektStap ? context : "";
+          huidig = [kopVanItem || regel.tekst];
+        }
         regels.push(regel);
         continue;
       }
       sluit();
+      kopVanItem = context;
       huidig = [start[1]];
       continue;
     }
@@ -625,7 +682,12 @@ export function bouwOpties(
     if (stap) stappen.push({ nr: Number(stap[1]), tekst: r.tekst });
     else if (l === "advies") advies = r.tekst;
     else if (l === "waarom") waarom = r.tekst;
-    else if (l === "controle") controle = r.tekst;
+    // "Controle op …" is dezelfde controle als "Controle", en mag net zo goed
+    // geen keuzeknop worden: een label dat hier als optie belandt, vervángt de
+    // standaardopties, en dan verliest de eigenaar zijn knop "Gedaan" aan een
+    // controle die Jarvis zelf doet. Eén bron met de lezer, want precies het
+    // uiteenlopen van die twee kostte hem die knop.
+    else if (isControle(r.label)) controle = r.tekst;
     else if (r.tekst.length > 0) opties.push({ keuze: sleutelVan(r.label), label: r.label, gevolg: r.tekst });
   }
   const basis = opties.length > 0 ? opties : [...standaard];
