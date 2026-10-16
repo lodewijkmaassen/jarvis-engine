@@ -551,6 +551,15 @@ describe("BLK-D: een goedaardige additieve migratie blijft doorgelaten; secrets 
   it("laat gewone additieve migraties door", () => {
     expect(beoordeelSql("create table public.a (id serial primary key, n int default 5); alter table public.a add column b text default 'x'; alter table only public.a enable row level security;", false)).toEqual([]);
   });
+  it("blijft doorlaten: trigger, row level security en commentaar op objecten uit dezelfde migratie, add-acties, extensie in public", () => {
+    const goed = [
+      "create table public.a (id int); create function public.f() returns trigger language plpgsql as $$ begin return new; end $$; create trigger tg before insert on public.a for each row execute function public.f();",
+      "create table public.a (id int); alter table public.a enable row level security; comment on table public.a is 'x'; comment on column public.a.id is 'y';",
+      "create table public.a (id int); alter table public.a add column b int, add constraint c check (b > 0), add column d text default 'a,b';",
+      "create extension if not exists pgcrypto with schema extensions;",
+    ];
+    for (const g of goed) expect(beoordeelSql(g, false), g).toEqual([]);
+  });
   it("de CI-jobs die het CI-geheim gebruiken draaien in de omgeving jarvis-ci", () => {
     const yml = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-v3.yml"), "utf8");
     for (const j of ["sweep", "eindcontrole", "dispatch"]) {

@@ -354,7 +354,7 @@ function triggerExecute(st: string): boolean {
   return (
     /^create (constraint )?trigger\b/.test(st) &&
     /\bfor each (row|statement)\b/.test(st) &&
-    /\bexecute (function|procedure) [a-z0-9_.]+ ?\(/.test(st) &&
+    /\bexecute (function|procedure) [a-z0-9_]+( ?\. ?[a-z0-9_]+)* ?\(/.test(st) &&
     st.split("execute").length === 2
   );
 }
@@ -396,9 +396,9 @@ const TOEGESTAAN: readonly RegExp[] = [
   /^comment on\b/,
   /^set\s+(local\s+)?(statement_timeout|lock_timeout|idle_in_transaction_session_timeout|client_min_messages|check_function_bodies|search_path)\b/,
   // Onschadelijke extensies uit een vaste lijst; alles anders valt onder ALTIJD_VERBODEN.
-  /^create extension (if not exists )?"?(pgcrypto|uuid-ossp|pg_trgm|citext|unaccent|btree_gist|btree_gin)"?( with schema \w+)?$/,
+  /^create extension (if not exists )?"?(pgcrypto|uuid-ossp|pg_trgm|citext|unaccent|btree_gist|btree_gin)"?( with schema (public|extensions))?$/,
 ];
-const TOEGESTANE_EXTENSIE = /create extension (if not exists )?"?(pgcrypto|uuid-ossp|pg_trgm|citext|unaccent|btree_gist|btree_gin)"?( with schema \w+)?/g;
+const TOEGESTANE_EXTENSIE = /create extension (if not exists )?"?(pgcrypto|uuid-ossp|pg_trgm|citext|unaccent|btree_gist|btree_gin)"?( with schema (public|extensions))?/g;
 
 /** De bekende, onschadelijke aanroepen van de aanmeldlaag in beleidsregels; geen verwijzing naar het schema zelf. */
 const TOEGESTANE_AANROEPEN = /\bauth\s*\.\s*(uid|jwt|role|email)\s*\(\s*\)/g;
@@ -453,6 +453,7 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
         break;
       }
     }
+    redenen.push(...additieveGrammatica(statements));
   }
   return [...new Set(redenen)];
 }
@@ -466,4 +467,73 @@ function conflictDoUpdate(st: string): boolean {
 /** Gehandhaafd als dunne laag voor oudere aanroepers en tests. */
 export function destructieveSql(sql: string): readonly string[] {
   return beoordeelSql(sql, false);
+}
+
+// --- Positieve grammatica voor additieve migraties ------------------------------------------------------------
+// De whitelist hierboven kijkt naar het begin van een statement. Wat daarna komt, bepaalt of het statement
+// werkelijk additief is; daarom gelden hier per soort statement positieve regels, en geldt voor wijzigingen aan
+// bestaande objecten (trigger, row level security, commentaar) dat ze alleen mogen op objecten die DEZE migratie
+// zelf eerder heeft aangemaakt.
+
+const NAAM = "[^\\s(),.;]+(?: ?\\. ?[^\\s(),.;]+)?";
+const canoniek = (x: string): string => x.replace(/\s+/g, "");
+
+/** Splitst op komma's op het hoogste haakjesniveau. */
+function splitsOpKomma(tekst: string): string[] {
+  const delen: string[] = [];
+  let diepte = 0;
+  let begin = 0;
+  for (let i = 0; i < tekst.length; i += 1) {
+    const c = tekst[i];
+    if (c === "(") diepte += 1;
+    else if (c === ")") diepte -= 1;
+    else if (c === "," && diepte === 0) {
+      delen.push(tekst.slice(begin, i).trim());
+      begin = i + 1;
+    }
+  }
+  delen.push(tekst.slice(begin).trim());
+  return delen;
+}
+
+/** Positieve regels per soort statement (bovenste niveau, in volgorde). Lineair: elke regex is verankerd of heeft één vaste scheiding. */
+function additieveGrammatica(statements: readonly string[]): string[] {
+  const redenen: string[] = [];
+  const nieuw = new Set<string>();
+  const nieuweFuncties = new Set<string>();
+  const alsNaam = (m: RegExpMatchArray | null, groep = 1): string | null => (m?.[groep] === undefined ? null : canoniek(m[groep]!));
+  for (const st of statements) {
+    if (/^set\b/.test(st) && /\bsearch_path\b/.test(st)) redenen.push("SET search_path verandert hoe namen worden gelezen en vraagt destructief: true in het mandaat");
+    let m: RegExpMatchArray | null;
+    if ((m = st.match(new RegExp(`^create (?:unlogged )?table (?:if not exists )?(${NAAM})`)))) {
+      if (/\bpartition of\b|\binherits\b/.test(st)) redenen.push("CREATE TABLE … PARTITION OF of INHERITS verandert een bestaande tabel en vraagt destructief: true in het mandaat");
+      nieuw.add(canoniek(m[1]!));
+    } else if ((m = st.match(new RegExp(`^create (?:(?:temp|temporary) )?(?:recursive )?view (${NAAM})`)))) nieuw.add(canoniek(m[1]!));
+    else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) nieuw.add(canoniek(m[1]!));
+    else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) nieuw.add(canoniek(m[1]!));
+    else if ((m = st.match(new RegExp(`^create function (${NAAM})`)))) {
+      nieuw.add(canoniek(m[1]!));
+      nieuweFuncties.add(canoniek(m[1]!));
+    } else if (/^create (constraint )?trigger\b/.test(st)) {
+      const doel = alsNaam(st.match(new RegExp(`\\bon (${NAAM})`)));
+      const fn = alsNaam(st.match(new RegExp(`\\bexecute (?:function|procedure) (${NAAM}) ?\\(`)));
+      if (doel === null || !nieuw.has(doel)) redenen.push("een trigger op een bestaande tabel verandert wat schrijven doet en vraagt destructief: true in het mandaat");
+      if (fn === null || !nieuweFuncties.has(fn)) redenen.push("een trigger met een functie die niet in deze migratie is aangemaakt vraagt destructief: true in het mandaat");
+    } else if ((m = st.match(new RegExp(`^alter table (?:if exists )?(?:only )?(${NAAM}) (.*)$`)))) {
+      const tabel = canoniek(m[1]!);
+      const acties = splitsOpKomma(m[2]!);
+      for (const a of acties) {
+        if (/^add\b/.test(a)) {
+          if (/\busing\s+index\b/.test(a)) redenen.push("ADD CONSTRAINT … USING INDEX hernoemt een bestaande index");
+        } else if (a === "enable row level security") {
+          if (!nieuw.has(tabel)) redenen.push("row level security aanzetten op een bestaande tabel kan lezen blokkeren en vraagt destructief: true in het mandaat");
+        } else redenen.push(`ALTER TABLE-actie buiten ADD: "${a.slice(0, 40)}"`);
+      }
+    } else if ((m = st.match(/^comment on (table|view|index|sequence|type|function|column) (.+?) is\b/))) {
+      const x = canoniek(m[2]!).replace(/\(.*$/, "");
+      const doel = m[1] === "column" ? x.replace(/\.[^.]*$/, "") : x;
+      if (!nieuw.has(doel)) redenen.push("commentaar op een bestaand object vraagt destructief: true in het mandaat");
+    } else if (/^comment on\b/.test(st)) redenen.push("commentaar op dit soort object is alleen met destructief: true toegestaan");
+  }
+  return redenen;
 }
