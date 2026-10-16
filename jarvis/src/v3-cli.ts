@@ -57,6 +57,11 @@ import {
   type WerkRij,
 } from "./v3";
 
+/** Een bestandspad in een GitHub-URL: per segment gecodeerd. `encodeURI` laat `? # & =` staan, waardoor een bestandsnaam met een `?` een ander bestand opvraagt dan het samengevoegde. */
+export function padNaarUrl(pad: string): string {
+  return pad.split("/").map(encodeURIComponent).join("/");
+}
+
 const TOESTANDEN = ["ANALYSE", "UITVOEREN", "CONTROLE", "UITROL", "EINDCONTROLE", "KLAAR", "MISLUKT"] as const;
 
 function json(waarde: string | undefined, naam: string): unknown {
@@ -149,7 +154,7 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
   const migratieBestanden: { pad: string; sql: string | null }[] = [];
   for (const b of bestanden) {
     if (!MIGRATIE_PAD.test(b.filename) || b.status === "removed") continue;
-    const inhoud = await github(token, "GET", `/repos/${slug}/contents/${encodeURI(b.filename)}?ref=${pr.kop}`);
+    const inhoud = await github(token, "GET", `/repos/${slug}/contents/${padNaarUrl(b.filename)}?ref=${pr.kop}`);
     const l = inhoud.lading as { content?: string; encoding?: string } | null;
     migratieBestanden.push({ pad: b.filename, sql: inhoud.status === 200 && l?.encoding === "base64" && typeof l.content === "string" ? Buffer.from(l.content, "base64").toString("utf8") : null });
   }
@@ -461,7 +466,7 @@ async function migreerBestanden(o: {
   }
   const bestanden: { pad: string; sql: string }[] = [];
   for (const pad of o.bestandsnamen) {
-    const inhoud = await github(token, "GET", `/repos/${slug}/contents/${encodeURI(pad)}?ref=${o.ref}`);
+    const inhoud = await github(token, "GET", `/repos/${slug}/contents/${padNaarUrl(pad)}?ref=${o.ref}`);
     const l = inhoud.lading as { content?: string; encoding?: string } | null;
     if (inhoud.status !== 200 || l?.encoding !== "base64" || typeof l.content !== "string") {
       console.error(`jarvis v3 migreer: ${pad} niet te lezen.`);

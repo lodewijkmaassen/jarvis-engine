@@ -540,7 +540,7 @@ draai("V3-database (PostgreSQL)", () => {
     let aanroepen: { methode: string; pad: string }[] = [];
     let oud: Record<string, string | undefined> = {};
 
-    function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string; gesloten?: unknown[]; basis?: string } = {}) {
+    function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string; gesloten?: unknown[]; basis?: string; bestanden?: Record<string, string> } = {}) {
       aanroepen = [];
       let gemerged = opties.merged === true;
       vi.stubGlobal("fetch", async (invoer: string | URL, init?: { method?: string; body?: string }) => {
@@ -557,8 +557,16 @@ draai("V3-database (PostgreSQL)", () => {
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/commits`)
           return antwoord([{ sha: KOP, commit: { message: `werk\n\nJarvis-Role: developer\nJarvis-Task: ${id}` }, parents: [{}] }]);
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/files`) return antwoord(bestanden);
-        if (methode === "GET" && pad.startsWith(`/repos/${SLUG}/contents/`))
+        if (methode === "GET" && pad.startsWith(`/repos/${SLUG}/contents/`)) {
+          // Zoals GitHub: de URL is de waarheid. Een `?` of `#` die niet is gecodeerd, begint een query of fragment,
+          // en het opgevraagde bestand is dan een ANDER bestand. Met `bestanden` staat per pad vast wat er werkelijk staat.
+          if (opties.bestanden !== undefined) {
+            const gevraagd = decodeURIComponent(pad.slice(`/repos/${SLUG}/contents/`.length));
+            const inhoud = opties.bestanden[gevraagd];
+            return inhoud === undefined ? antwoord({ message: "Not Found" }, 404) : antwoord({ encoding: "base64", content: Buffer.from(inhoud).toString("base64") });
+          }
           return antwoord({ encoding: "base64", content: Buffer.from(opties.migratieSql ?? "select 1;").toString("base64") });
+        }
         if (methode === "POST" && pad === `/repos/${SLUG}/pulls/5/reviews`) return antwoord({});
         if (methode === "PUT" && pad === `/repos/${SLUG}/pulls/5/merge`) {
           gemerged = true;
@@ -676,6 +684,20 @@ draai("V3-database (PostgreSQL)", () => {
       stubGitHub(id2, [{ filename: ".github/workflows/x.yml", status: "modified" }], { merged: true });
       expect(await beoordeel()).toBe(3); // ook een al gemerged PR die buiten het mandaat valt, wordt niet vastgelegd
       expect(await toestand(id2)).toBe("CONTROLE");
+    });
+
+    it("BLK-B: een bestandsnaam met ? # of & laat de poort niet een ander bestand toetsen dan het samengevoegde", async () => {
+      const m = { ...MANDAAT, paden_ja: ["app/**", "supabase/migrations/*.sql"], migraties: true, destructief: false };
+      for (const naam of ["0101_qa?ref=benign&x=.sql", "0101_qa#x.sql", "0101_qa&y=.sql"]) {
+        const id = await taakKlaarVoorPr(m);
+        const echt = `supabase/migrations/${naam}`;
+        const afgekapt = echt.split(/[?#&]/)[0]!;
+        // Het afgekapte pad is een ander, goedaardig bestand; het echte bestand bevat de aanval.
+        stubGitHub(id, [{ filename: echt, status: "added" }], { bestanden: { [afgekapt]: "create table public.goedaardig (id int);", [echt]: "drop table public.klanten;" } });
+        expect(await beoordeel(["--samenvoegen"]), naam).toBe(3);
+        expect(schrijfacties(), naam).toEqual([]);
+        expect(await toestand(id), naam).toBe("CONTROLE");
+      }
     });
 
     it("R-2: een pull request naar een andere branch dan main wordt niet goedgekeurd en niet samengevoegd", async () => {

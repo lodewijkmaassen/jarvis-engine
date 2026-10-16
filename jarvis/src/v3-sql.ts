@@ -149,16 +149,32 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
       } else {
         const inhoud = sql.slice(i + 1, eind - 1);
         if (alsCode()) {
-          // `create function … as '<body>'`, `do '<code>'`: de tekst is code en wordt beoordeeld.
-          const sub = lexSql(inhoud.replace(/''/g, "'"), diepte + 1);
+          // `create function … as '<body>'`, `do '<code>'`: de tekst is code en wordt beoordeeld. Aaneengeschakelde
+          // teksten (een newline ertussen) vormen PostgreSQL samen ÉÉN tekst, ook midden in een woord (`'delet'⏎'e from …'`):
+          // ze worden eerst samengevoegd en dan pas gelezen.
+          let stuk = inhoud.replace(/''/g, "'");
+          let einde = eind;
+          for (;;) {
+            const volgende = volgendeAaneengeschakeldeTekst(sql, einde);
+            if (volgende === null) break;
+            if (volgende.eind === -1) {
+              fouten.push("een aaneengeschakelde tekst die niet wordt afgesloten");
+              einde = n;
+              break;
+            }
+            stuk += sql.slice(volgende.begin, volgende.eind - 1).replace(/''/g, "'");
+            einde = volgende.eind;
+          }
+          const sub = lexSql(stuk, diepte + 1);
           bij(" '' ", ` '' ${sub.alles} `);
           bodies.push(sub.alles, ...sub.bodies);
           fouten.push(...sub.fouten);
           codeTekst = true;
+          i = einde;
         } else {
           bij(" '' ");
+          i = eind;
         }
-        i = eind;
       }
       // Een volgende tekst direct erna (aaneengeschakelde teksten) is hetzelfde: na code blijft de context `code`.
       if (codeTekst) zetWoord("do");
@@ -220,6 +236,30 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
   }
   const strak = (t: string): string => t.replace(/\s+/g, " ").trim();
   return { boven: strak(boven), alles: strak(alles), bodies, fouten: [...new Set(fouten)] };
+}
+
+/**
+ * Staat er direct na een tekst een aaneengeschakelde tekst? PostgreSQL voegt twee teksten samen als er alleen
+ * witruimte en commentaar tussen staat, mét minstens één newline. Deze lezer is ruimer dan PostgreSQL (ook
+ * blokcommentaar telt als tussenruimte): te ruim samenvoegen kan alleen een extra afwijzing opleveren, nooit een gemiste.
+ */
+function volgendeAaneengeschakeldeTekst(sql: string, vanaf: number): { begin: number; eind: number } | null {
+  let j = vanaf;
+  let newline = false;
+  for (;;) {
+    const t = sql[j];
+    if (t === " " || t === "\t" || t === "\f" || t === "\v") j += 1;
+    else if (t === "\n" || t === "\r") { newline = true; j += 1; }
+    else if (t === "-" && sql[j + 1] === "-") { while (j < sql.length && sql[j] !== "\n" && sql[j] !== "\r") j += 1; }
+    else if (t === "/" && sql[j + 1] === "*") {
+      const e = sql.indexOf("*/", j + 2);
+      if (e === -1) return null;
+      for (let k = j; k < e; k += 1) if (sql[k] === "\n" || sql[k] === "\r") newline = true;
+      j = e + 2;
+    } else break;
+  }
+  if (!newline || sql[j] !== "'") return null;
+  return { begin: j + 1, eind: leesTekst(sql, j + 1, false) };
 }
 
 /** Eerste teken NA de afsluitende quote, of -1. In een E-tekst is een backslash een escape. */

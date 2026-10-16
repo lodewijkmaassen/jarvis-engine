@@ -504,3 +504,29 @@ describe("de V3-workflow start de migratiejob ook na een automatische merge (zon
     expect(readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-v3.yml"), "utf8")).toBe(yml);
   });
 });
+
+describe("BLK-A: aaneengeschakelde teksten worden eerst samengevoegd en dan als code gelezen", () => {
+  it("lexSql ziet delete in 'delet'⏎'e from klanten' en de verwijzing naar jarvis in drie stukken", () => {
+    const l = lexSql("create function f() returns int language plpgsql as 'begin delet'\n'e from klanten; end'");
+    expect(l.bodies.join(" ")).toMatch(/delete from klanten/);
+    const d = lexSql("do 'begin insert into jarv'\n'is.v'\n'3_x values (1); end'");
+    expect(d.alles).toMatch(/jarvis\s*\.\s*v3_x/);
+  });
+  it("neemt commentaar en lege regels tussen de teksten mee, en een tekst zonder newline ertussen niet", () => {
+    expect(lexSql("do 'begin delet' -- c\n\n'e from t; end'").bodies.join(" ")).toMatch(/delete from t/);
+    expect(lexSql("do 'begin delet' /* c */\n'e from t; end'").bodies.join(" ")).toMatch(/delete from t/);
+  });
+  it("een niet-afgesloten vervolgtekst is een fout", () => {
+    expect(lexSql("do 'begin x' \n'e from t; end").fouten.join()).toMatch(/niet wordt afgesloten/);
+  });
+});
+
+describe("BLK-B: een bestandspad in een GitHub-URL wordt per segment gecodeerd", () => {
+  it("laat ? # & = % niet door", async () => {
+    const { padNaarUrl } = await import("@/jarvis/src/v3-cli");
+    expect(padNaarUrl("supabase/migrations/0101_qa?ref=benign&x=.sql")).toBe("supabase/migrations/0101_qa%3Fref%3Dbenign%26x%3D.sql");
+    expect(padNaarUrl("a b/c#d/e%f.sql")).toBe("a%20b/c%23d/e%25f.sql");
+    expect(padNaarUrl("gewoon/pad.sql")).toBe("gewoon/pad.sql");
+  });
+});
+

@@ -83,4 +83,11 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
     effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-b2b'"))[0]?.["n"] === 1 },
   { naam: "B-2: do language 'plpgsql' '<code>' (taalnaam als tekst) wist een tabel", sql: "do language 'plpgsql' 'begin delete from public.klanten; end'", altijd: false, effect: geleegd },
   { naam: "B-2: code verdeeld over aaneengeschakelde teksten", sql: "do 'begin delete from public.klanten;'\n' end'", altijd: false, effect: geleegd },
+  // --- BLK-A (vijfde review): aaneengeschakelde teksten die MIDDEN in een woord of woordgroep zijn gesplitst
+  { naam: "BLK-A: delet|e midden in een woord, over twee teksten", sql: "create function public.f() returns int language plpgsql as 'begin delet'\n'e from public.klanten; return 1; end'; insert into public.t select f()::text;", altijd: false, effect: geleegd },
+  { naam: "BLK-A: gr|ant all … to anon, over twee teksten", sql: "create function public.f() returns int language plpgsql as 'begin gr'\n'ant all on public.klanten to anon; return 1; end'; insert into public.t select f()::text;", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select has_table_privilege('anon', 'public.klanten', 'DELETE') as ja"))[0]?.["ja"] === true },
+  { naam: "BLK-A: met commentaar tussen de teksten", sql: "create function public.f() returns int language plpgsql as 'begin delet' -- opmerking\n'e from public.klanten; return 1; end'; insert into public.t select f()::text;", altijd: false, effect: geleegd },
+  { naam: "BLK-A: jarv|is.v|3_instellingen over drie teksten, met destructief", sql: "do 'begin insert into jarv'\n'is.v'\n'3_instellingen values (''qa-blka'', ''1''); end'", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-blka'"))[0]?.["n"] === 1 },
 ];
