@@ -39,6 +39,16 @@ function schoonNaam(naam: string): string {
   return naam.toLowerCase().replace(/[^a-z0-9_]/g, "_");
 }
 
+/**
+ * Een aangehaalde naam, injectief afgebeeld: een eenvoudige naam blijft zoals hij is (PostgreSQL leest `"a_b"` en `a_b`
+ * als dezelfde naam); elke andere naam (hoofdletters, spaties, leestekens) krijgt de hex van de originele tekst erachter,
+ * zodat `"a b"` en `a_b`, of `"FOO"` en `foo`, nooit samenvallen. Het begin blijft leesbaar voor de verbodslijsten.
+ */
+function aangehaaldeNaam(naam: string): string {
+  if (/^[a-z_][a-z0-9_]*$/.test(naam)) return naam;
+  return `${schoonNaam(naam)}_q${Buffer.from(naam, "utf8").toString("hex")}`;
+}
+
 export function lexSql(sql: string, diepte = 0): SqlLex {
   const fouten: string[] = [];
   const bodies: string[] = [];
@@ -176,9 +186,9 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         i = n;
       } else {
         if (/[^\u0000-\u007f]/.test(naam)) fouten.push("niet-ASCII tekens in een aangehaalde naam");
-        bij(` ${schoonNaam(naam)} `);
+        bij(` ${aangehaaldeNaam(naam)} `);
         i = j;
-        zetWoord(schoonNaam(naam));
+        zetWoord(aangehaaldeNaam(naam));
       }
       if (!dicht) wisWoorden();
     } else if (c === "$") {
@@ -507,10 +517,10 @@ function additieveGrammatica(statements: readonly string[]): string[] {
     let m: RegExpMatchArray | null;
     if ((m = st.match(new RegExp(`^create (?:unlogged )?table (?:if not exists )?(${NAAM})`)))) {
       if (/\bpartition of\b|\binherits\b/.test(st)) redenen.push("CREATE TABLE … PARTITION OF of INHERITS verandert een bestaande tabel en vraagt destructief: true in het mandaat");
-      nieuw.add(canoniek(m[1]!));
+      if (!/^create (?:unlogged )?table if not exists\b/.test(st)) nieuw.add(canoniek(m[1]!));
     } else if ((m = st.match(new RegExp(`^create (?:(?:temp|temporary) )?(?:recursive )?view (${NAAM})`)))) nieuw.add(canoniek(m[1]!));
-    else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) nieuw.add(canoniek(m[1]!));
-    else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) nieuw.add(canoniek(m[1]!));
+    else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) { if (!/^create (?:unique )?index (?:concurrently )?if not exists\b/.test(st)) nieuw.add(canoniek(m[1]!)); }
+    else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) { if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(canoniek(m[1]!)); }
     else if ((m = st.match(new RegExp(`^create function (${NAAM})`)))) {
       nieuw.add(canoniek(m[1]!));
       nieuweFuncties.add(canoniek(m[1]!));

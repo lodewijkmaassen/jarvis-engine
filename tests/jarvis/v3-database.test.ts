@@ -593,7 +593,7 @@ draai("V3-database (PostgreSQL)", () => {
     let aanroepen: { methode: string; pad: string }[] = [];
     let oud: Record<string, string | undefined> = {};
 
-    function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string; gesloten?: unknown[]; basis?: string; bestanden?: Record<string, string>; reviews?: unknown[]; bijVerseLeesbeurt?: () => Promise<void> } = {}) {
+    function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string; gesloten?: unknown[]; basis?: string; bestanden?: Record<string, string>; reviews?: unknown[]; concept?: boolean; samenvoegStaat?: string; openPrs?: unknown[]; bijVerseLeesbeurt?: () => Promise<void> } = {}) {
       aanroepen = [];
       let leesbeurten = 0;
       let gemerged = opties.merged === true;
@@ -603,13 +603,13 @@ draai("V3-database (PostgreSQL)", () => {
         const pad = url.pathname;
         aanroepen.push({ methode, pad });
         const antwoord = (lading: unknown, status = 200) => new Response(JSON.stringify(lading), { status, headers: { "content-type": "application/json" } });
-        if (methode === "GET" && pad === `/repos/${SLUG}/pulls`) return antwoord(url.searchParams.get("state") === "closed" ? (opties.gesloten ?? []) : []);
+        if (methode === "GET" && pad === `/repos/${SLUG}/pulls`) return antwoord(url.searchParams.get("state") === "closed" ? (opties.gesloten ?? []) : (opties.openPrs ?? []));
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5`) {
           leesbeurten += 1;
           if (leesbeurten === 3) await opties.bijVerseLeesbeurt?.();
         }
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5`)
-          return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: opties.basis ?? "main" }, state: gemerged ? "closed" : "open", draft: false, mergeable: true, mergeable_state: "clean", body: "Uitzonderingen: geen", merged: gemerged, merge_commit_sha: gemerged ? MERGE : null });
+          return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: opties.basis ?? "main" }, state: gemerged ? "closed" : "open", draft: opties.concept === true, mergeable: (opties.samenvoegStaat ?? "clean") === "clean", mergeable_state: opties.samenvoegStaat ?? "clean", body: "Uitzonderingen: geen", merged: gemerged, merge_commit_sha: gemerged ? MERGE : null });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/reviews`) return antwoord(opties.reviews ?? []);
         if (methode === "PUT" && pad.startsWith(`/repos/${SLUG}/pulls/5/reviews/`) && pad.endsWith("/dismissals")) return antwoord({});
         if (methode === "GET" && pad === `/repos/${SLUG}/commits/${KOP}/check-runs`) return antwoord({ check_runs: [{ name: "poort", status: "completed", conclusion: "success" }] });
@@ -701,6 +701,38 @@ draai("V3-database (PostgreSQL)", () => {
       expect(aanroepen.some((a) => a.methode === "PUT" && a.pad === `/repos/${SLUG}/pulls/5/reviews/901/dismissals`)).toBe(true);
       expect(await toestand(id)).toBe("CONTROLE");
       await sql`delete from jarvis.toetsingen where oordeel = 'NO-GO' and pr_nummer = 5`;
+    });
+
+    it("BLK-F: een PR die nog niet samenvoegbaar is, krijgt geen goedkeuring (en een staande goedkeuring wordt ingetrokken)", async () => {
+      const id = await taakKlaarVoorPr(MANDAAT);
+      stubGitHub(id, [{ filename: "app/v3-proef/page.tsx", status: "added" }], {
+        samenvoegStaat: "behind",
+        reviews: [{ id: 903, state: "APPROVED", commit_id: KOP, body: "Attestatie V3: x", user: { login: "github-actions[bot]" } }],
+      });
+      expect(await beoordeel(["--samenvoegen"])).toBe(0);
+      expect(aanroepen.some((a) => a.methode === "POST" && a.pad.endsWith("/reviews"))).toBe(false);
+      expect(aanroepen.some((a) => a.pad === `/repos/${SLUG}/pulls/5/reviews/903/dismissals`)).toBe(true);
+      expect(aanroepen.some((a) => a.pad.endsWith("/merge"))).toBe(false);
+    });
+
+    it("BLK-F: de sweep trekt een staande goedkeuring in op een concept-PR, en beoordeelt dat PR niet", async () => {
+      const id = await taakKlaarVoorPr(MANDAAT);
+      stubGitHub(id, [{ filename: "app/v3-proef/page.tsx", status: "added" }], {
+        concept: true,
+        openPrs: [{ number: 5, draft: true, user: { login: "tovas-jarvis-bot" }, head: { ref: "jarvis/x" } }],
+        reviews: [{ id: 904, state: "APPROVED", commit_id: KOP, body: "Attestatie V3: x", user: { login: "github-actions[bot]" } }],
+      });
+      const { voerV3Uit } = await import("@/jarvis/src/v3-cli");
+      const stil = vi.spyOn(console, "error").mockImplementation(() => {});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        expect(await voerV3Uit(["sweep", "--repo", SLUG])).toBe(0);
+      } finally {
+        stil.mockRestore();
+        log.mockRestore();
+      }
+      expect(aanroepen.some((a) => a.pad === `/repos/${SLUG}/pulls/5/reviews/904/dismissals`)).toBe(true);
+      expect(aanroepen.some((a) => a.pad.endsWith("/merge"))).toBe(false);
     });
 
     it("BLK-F: een NO-GO op een stilstaande goedkeuring trekt die in bij elke ronde (geen merge)", async () => {

@@ -128,4 +128,13 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
     effect: async (tx) => (await tx.unsafe("select relrowsecurity as r from pg_class where oid = 'public.t'::regclass"))[0]?.["r"] === true },
   { naam: "G6: commentaar op een bestaand schema", sql: "comment on schema public is 'hacked-qa';", altijd: false,
     effect: async (tx) => (await tx.unsafe("select obj_description('public'::regnamespace, 'pg_namespace') as c"))[0]?.["c"] === "hacked-qa" },
+  // --- BLK-H (tiende review): IF NOT EXISTS registreert een bestaand object als nieuw; aangehaalde namen die samenvallen
+  { naam: "H1: create table if not exists + row level security op een bestaande tabel", sql: "create table if not exists public.t (n text); alter table public.t enable row level security;", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select relrowsecurity as r from pg_class where oid = 'public.t'::regclass"))[0]?.["r"] === true },
+  { naam: "H1: create table if not exists + trigger op een bestaande tabel", sql: "create table if not exists public.t (n text); create function public.fh() returns trigger language plpgsql as $$ begin return null; end $$; create trigger h before insert on public.t for each row execute function public.fh(); insert into public.t values ('qa-h1');", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.t where n = 'qa-h1'"))[0]?.["n"] === 0 },
+  { naam: "H1: create table if not exists + commentaar op een bestaande tabel", sql: "create table if not exists public.t (n text); comment on table public.t is 'hacked-h1';", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select obj_description('public.t'::regclass) as c"))[0]?.["c"] === "hacked-h1" },
+  { naam: "H2: public.\"T\" en public.t vallen niet samen (trigger op de bestaande t)", sql: 'create table public."T" (x int); create function public.fh() returns trigger language plpgsql as $$ begin return null; end $$; create trigger h before insert on public.t for each row execute function public.fh(); insert into public.t values (\'qa-h2\');', altijd: false,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.t where n = 'qa-h2'"))[0]?.["n"] === 0 },
 ];
