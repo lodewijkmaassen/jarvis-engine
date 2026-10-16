@@ -514,7 +514,8 @@ describe("BLK-A: aaneengeschakelde teksten worden eerst samengevoegd en dan als 
   });
   it("neemt commentaar en lege regels tussen de teksten mee, en een tekst zonder newline ertussen niet", () => {
     expect(lexSql("do 'begin delet' -- c\n\n'e from t; end'").bodies.join(" ")).toMatch(/delete from t/);
-    expect(lexSql("do 'begin delet' /* c */\n'e from t; end'").bodies.join(" ")).toMatch(/delete from t/);
+    // BLK-D: blokcommentaar is bij PostgreSQL géén tussenruimte voor aaneenschakeling; geen samenvoeging
+    expect(lexSql("do 'begin delet' /* c */\n'e from t; end'").bodies.join(" ")).not.toMatch(/delete from t/);
   });
   it("een niet-afgesloten vervolgtekst is een fout", () => {
     expect(lexSql("do 'begin x' \n'e from t; end").fouten.join()).toMatch(/niet wordt afgesloten/);

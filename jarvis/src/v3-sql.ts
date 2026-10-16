@@ -218,8 +218,8 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
 
 /**
  * Staat er direct na een tekst een aaneengeschakelde tekst? PostgreSQL voegt twee teksten samen als er alleen
- * witruimte en commentaar tussen staat, mét minstens één newline. Deze lezer is ruimer dan PostgreSQL (ook
- * blokcommentaar telt als tussenruimte): te ruim samenvoegen kan alleen een extra afwijzing opleveren, nooit een gemiste.
+ * witruimte en `--`-commentaar tussen staat, mét minstens één newline. Blokcommentaar telt niet als tussenruimte
+ * (PostgreSQL voegt daar niet samen); deze lezer volgt PostgreSQL hierin exact.
  */
 function volgendeAaneengeschakeldeTekst(sql: string, vanaf: number, escape: boolean): { begin: number; eind: number } | null {
   let j = vanaf;
@@ -229,12 +229,7 @@ function volgendeAaneengeschakeldeTekst(sql: string, vanaf: number, escape: bool
     if (t === " " || t === "\t" || t === "\f" || t === "\v") j += 1;
     else if (t === "\n" || t === "\r") { newline = true; j += 1; }
     else if (t === "-" && sql[j + 1] === "-") { while (j < sql.length && sql[j] !== "\n" && sql[j] !== "\r") j += 1; }
-    else if (t === "/" && sql[j + 1] === "*") {
-      const e = sql.indexOf("*/", j + 2);
-      if (e === -1) return null;
-      for (let k = j; k < e; k += 1) if (sql[k] === "\n" || sql[k] === "\r") newline = true;
-      j = e + 2;
-    } else break;
+    else break;
   }
   if (!newline || sql[j] !== "'") return null;
   return { begin: j + 1, eind: leesTekst(sql, j + 1, escape) };
