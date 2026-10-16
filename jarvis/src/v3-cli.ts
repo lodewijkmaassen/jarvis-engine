@@ -575,6 +575,21 @@ async function migreerUitstaand(slug: string, droog: boolean): Promise<number> {
     const pr = (rij["pr"] ?? null) as { repo?: string; nummer?: number; merge_sha?: string } | null;
     if (m === null || !m.migraties || !pr?.merge_sha || !pr.nummer || String(pr.repo).toLowerCase() !== slug.toLowerCase()) continue;
     const taak = String(rij["id"]);
+    // Wat de database zegt, wordt bij GitHub nagegaan: de pull request is werkelijk samengevoegd, in main, tot
+    // precies deze samenvoegcommit, en hoort bij deze taak. Een vervalst of verouderd `merge_sha` leidt tot niets.
+    const prInfo = await github(g.token, "GET", `/repos/${slug}/pulls/${pr.nummer}`);
+    const pl = prInfo.lading as { merged?: boolean; merge_commit_sha?: string | null; base?: { ref?: string } } | null;
+    if (prInfo.status !== 200 || pl?.merged !== true || !pl.merge_commit_sha || pl.merge_commit_sha.toLowerCase() !== pr.merge_sha.toLowerCase() || pl.base?.ref !== "main") {
+      console.error(`jarvis v3 migreer: ${taak}: pull request #${pr.nummer} is bij GitHub niet samengevoegd in main met de vastgelegde samenvoegcommit; niets toegepast.`);
+      code = Math.max(code, 3);
+      continue;
+    }
+    const prCommits = await leesAllePaginas<{ sha: string; commit: { message: string }; parents: unknown[] }>(g.token, `/repos/${slug}/pulls/${pr.nummer}/commits`, 5);
+    if (typeof prCommits === "string" || !takenUitCommits(prCommits.map((c) => ({ sha: c.sha, boodschap: c.commit.message, ouders: c.parents.length }))).taken.includes(taak)) {
+      console.error(`jarvis v3 migreer: ${taak}: pull request #${pr.nummer} hoort volgens zijn commits niet bij deze taak; niets toegepast.`);
+      code = Math.max(code, 3);
+      continue;
+    }
     const bestanden = await leesAllePaginas<{ filename: string; previous_filename?: string | null; status: string }>(g.token, `/repos/${slug}/pulls/${pr.nummer}/files`, 10);
     if (typeof bestanden === "string") {
       console.error(`jarvis v3 migreer: ${taak}: ${bestanden}`);

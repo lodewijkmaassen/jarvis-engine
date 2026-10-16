@@ -542,6 +542,7 @@ draai("V3-database (PostgreSQL)", () => {
 
     function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string; gesloten?: unknown[]; basis?: string } = {}) {
       aanroepen = [];
+      let gemerged = opties.merged === true;
       vi.stubGlobal("fetch", async (invoer: string | URL, init?: { method?: string; body?: string }) => {
         const url = new URL(String(invoer));
         const methode = init?.method ?? "GET";
@@ -550,7 +551,7 @@ draai("V3-database (PostgreSQL)", () => {
         const antwoord = (lading: unknown, status = 200) => new Response(JSON.stringify(lading), { status, headers: { "content-type": "application/json" } });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls`) return antwoord(url.searchParams.get("state") === "closed" ? (opties.gesloten ?? []) : []);
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5`)
-          return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: opties.basis ?? "main" }, state: opties.merged ? "closed" : "open", draft: false, mergeable: true, mergeable_state: "clean", body: "Uitzonderingen: geen", merged: opties.merged === true, merge_commit_sha: opties.merged ? MERGE : null });
+          return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: opties.basis ?? "main" }, state: gemerged ? "closed" : "open", draft: false, mergeable: true, mergeable_state: "clean", body: "Uitzonderingen: geen", merged: gemerged, merge_commit_sha: gemerged ? MERGE : null });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/reviews`) return antwoord([]);
         if (methode === "GET" && pad === `/repos/${SLUG}/commits/${KOP}/check-runs`) return antwoord({ check_runs: [{ name: "poort", status: "completed", conclusion: "success" }] });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/commits`)
@@ -559,7 +560,10 @@ draai("V3-database (PostgreSQL)", () => {
         if (methode === "GET" && pad.startsWith(`/repos/${SLUG}/contents/`))
           return antwoord({ encoding: "base64", content: Buffer.from(opties.migratieSql ?? "select 1;").toString("base64") });
         if (methode === "POST" && pad === `/repos/${SLUG}/pulls/5/reviews`) return antwoord({});
-        if (methode === "PUT" && pad === `/repos/${SLUG}/pulls/5/merge`) return antwoord({ sha: MERGE });
+        if (methode === "PUT" && pad === `/repos/${SLUG}/pulls/5/merge`) {
+          gemerged = true;
+          return antwoord({ sha: MERGE });
+        }
         return antwoord({ message: `ongestubd: ${methode} ${pad}` }, 404);
       });
     }
@@ -938,7 +942,7 @@ draai("V3-database (PostgreSQL)", () => {
           await schoon();
           const id = await taakKlaarVoorPr(MANDAAT_MIG);
           await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${SLUG}, 5, ${KOP}, ${MERGE})`);
-          stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: a.sql });
+          stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: a.sql, merged: true });
           expect(await migreerUitstaand(), a.naam).toBe(3);
           expect(await bestaat("public.klanten"), a.naam).toBe(true);
           expect((await sql.unsafe("select count(*)::int as n from public.klanten"))[0]!.n, a.naam).toBe(3);
@@ -947,18 +951,52 @@ draai("V3-database (PostgreSQL)", () => {
         }
       });
 
+      it("B-1: de uitvoerder kan merge_sha niet vervalsen; wat de database zegt wordt bij GitHub nagegaan", async () => {
+        await schoon();
+        // (1) via de database: merge_sha uit het bewijs van de uitvoerder wordt niet bewaard
+        const id = await taakKlaarVoorPr(MANDAAT_MIG);
+        await werker(async (tx) => {
+          await tx`select jarvis.v3_overgang(${id}, 'cloud-1', 'UITVOEREN', '{}'::jsonb)`;
+          await tx`select jarvis.v3_overgang(${id}, 'cloud-1', 'CONTROLE', ${JSON.stringify({ pr: { repo: SLUG, nummer: 777, sha: "abc1234", merge_sha: "deadbeef1234" } })}::text::jsonb)`;
+        });
+        const pr = (await sql`select pr from jarvis.v3_taken where id = ${id}`)[0]!.pr as Record<string, unknown>;
+        expect(Object.keys(pr).sort()).toEqual(["nummer", "repo", "sha"]);
+        await werker((tx) => tx`select jarvis.v3_overgang(${id}, 'cloud-1', 'UITVOEREN', '{}'::jsonb)`);
+        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.forged_qa (id int);" });
+        expect(await migreerUitstaand()).toBe(0);
+        expect(await bestaat("public.forged_qa")).toBe(false);
+        // (2) tweede laag: zelfs een vervalst merge_sha in de database (hier met de hand gezet) leidt tot niets,
+        //     want GitHub zegt dat de pull request niet samengevoegd is of een andere samenvoegcommit heeft
+        await sql`update jarvis.v3_taken set pr = ${JSON.stringify({ repo: SLUG, nummer: 5, sha: KOP, merge_sha: "deadbeef1234" })}::text::jsonb where id = ${id}`;
+        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.forged_qa (id int);" }); // niet samengevoegd
+        expect(await migreerUitstaand()).toBe(3);
+        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.forged_qa (id int);", merged: true }); // samengevoegd, maar tot een andere commit
+        expect(await migreerUitstaand()).toBe(3);
+        expect(await bestaat("public.forged_qa")).toBe(false);
+        expect(await ledgerRijen()).toBe(false);
+        // (3) een pull request die niet bij deze taak hoort (andere Jarvis-Task-trailer)
+        await sql`update jarvis.v3_taken set pr = ${JSON.stringify({ repo: SLUG, nummer: 5, sha: KOP, merge_sha: MERGE })}::text::jsonb where id = ${id}`;
+        stubGitHub("V3-20261015-andere-taak", [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.forged_qa (id int);", merged: true });
+        expect(await migreerUitstaand()).toBe(3);
+        expect(await bestaat("public.forged_qa")).toBe(false);
+        // en de echte samenvoeging werkt wel
+        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.forged_qa (id int);", merged: true });
+        expect(await migreerUitstaand()).toBe(0);
+        expect(await bestaat("public.forged_qa")).toBe(true);
+      });
+
       it("AUTONOOM: een mandaat zonder migraties of een gewijzigd bestand leidt tot niets of een weigering", async () => {
         await schoon();
         const id = await taakKlaarVoorPr(MANDAAT); // migraties: false
         await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${SLUG}, 5, ${KOP}, ${MERGE})`);
-        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.nieuw_qa (id int);" });
+        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.nieuw_qa (id int);", merged: true });
         expect(await migreerUitstaand()).toBe(0);
         expect(await bestaat("public.nieuw_qa")).toBe(false);
         await sql`update jarvis.v3_taken set toestand = 'MISLUKT' where id = ${id}`;
         const id2 = await taakKlaarVoorPr(MANDAAT_MIG);
         await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id2}, ${SLUG}, 5, ${KOP}, ${MERGE})`);
         for (const status of ["modified", "renamed", "removed"]) {
-          stubGitHub(id2, [{ filename: MIG_PAD, status }], { migratieSql: "create table public.nieuw_qa (id int);" });
+          stubGitHub(id2, [{ filename: MIG_PAD, status }], { migratieSql: "create table public.nieuw_qa (id int);", merged: true });
           expect(await migreerUitstaand(), status).toBe(3);
           expect(await bestaat("public.nieuw_qa"), status).toBe(false);
         }

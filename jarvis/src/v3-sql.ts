@@ -104,9 +104,10 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         continue;
       }
       i = j;
-      if (volgende === "'") {
-        // Een tekst met voorvoegsel: alleen exact `E` is een escape-tekst; B, X en N zijn gewone tekst;
-        // elk ander woord direct voor een quote is een naam gevolgd door een gewone tekst.
+      if (volgende === "'" && (w === "e" || w === "b" || w === "x" || w === "n")) {
+        // Een tekst met voorvoegsel: `E` is een escape-tekst; B, X en N zijn gewone tekst. Elk ANDER woord direct voor
+        // een quote (`as'…'`, `do'…'`, `name'…'`) is gewoon een woord: de quote wordt hieronder als tekst gelezen,
+        // mét de controle of die tekst code is.
         const escape = w === "e";
         const eind = leesTekst(sql, j + 1, escape);
         if (eind === -1) {
@@ -117,11 +118,13 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
             const inhoud = sql.slice(j + 1, eind - 1);
             if (alsCode()) fouten.push("een E-tekst als functiebody of DO-code is niet toegestaan");
             void inhoud;
+          } else if (alsCode()) {
+            fouten.push("een B-, X- of N-tekst als functiebody of DO-code is niet toegestaan");
           }
           bij(w + " '' ", w + " '' ");
           i = eind;
         }
-        wisWoorden();
+        zetWoord("''");
         continue;
       }
       bij(w + " ");
@@ -138,6 +141,7 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
       i = j;
       wisWoorden();
     } else if (c === "'") {
+      let codeTekst = false;
       const eind = leesTekst(sql, i + 1, false);
       if (eind === -1) {
         fouten.push("een tekst die niet wordt afgesloten");
@@ -150,12 +154,15 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
           bij(" '' ", ` '' ${sub.alles} `);
           bodies.push(sub.alles, ...sub.bodies);
           fouten.push(...sub.fouten);
+          codeTekst = true;
         } else {
           bij(" '' ");
         }
         i = eind;
       }
-      wisWoorden();
+      // Een volgende tekst direct erna (aaneengeschakelde teksten) is hetzelfde: na code blijft de context `code`.
+      if (codeTekst) zetWoord("do");
+      else zetWoord("''");
     } else if (c === '"') {
       let j = i + 1;
       let naam = "";
@@ -177,8 +184,9 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         if (/[^\u0000-\u007f]/.test(naam)) fouten.push("niet-ASCII tekens in een aangehaalde naam");
         bij(` ${schoonNaam(naam)} `);
         i = j;
+        zetWoord(schoonNaam(naam));
       }
-      wisWoorden();
+      if (!dicht) wisWoorden();
     } else if (c === "$") {
       const m = /^\$([A-Za-z_\u0080-￿][A-Za-z0-9_\u0080-￿]*)?\$/.exec(sql.slice(i, i + 200));
       if (m) {

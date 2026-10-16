@@ -329,7 +329,9 @@ begin
       raise exception 'v3: CONTROLE vraagt bewijs.pr met repo, nummer en sha';
     end if;
     if not (m.repos @> array[p_bewijs#>>'{pr,repo}']) then raise exception 'v3: repo valt buiten het mandaat'; end if;
-    update jarvis.v3_taken set pr = p_bewijs->'pr' where id = p_taak;
+    -- Alleen repo, nummer en sha van de uitvoerder; `merge_sha` kan uitsluitend via v3_ci_samengevoegd ontstaan.
+    update jarvis.v3_taken set pr = jsonb_build_object('repo', p_bewijs#>>'{pr,repo}', 'nummer', (p_bewijs#>>'{pr,nummer}')::int, 'sha', p_bewijs#>>'{pr,sha}')
+     where id = p_taak;
     ok := true;
   elsif t.toestand = 'CONTROLE' and p_naar = 'UITVOEREN' then ok := true;
   elsif t.toestand = 'UITROL' and p_naar = 'EINDCONTROLE' then

@@ -74,4 +74,13 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
   { naam: "NB-1: query_to_xml leest een beschermd schema via een tekst", sql: "insert into public.t select left(query_to_xml('select sleutel from jarvis.v3_instellingen', false, false, '')::text, 60)", altijd: true,
     effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.t"))[0]?.["n"] === 1 },
   { naam: "NB-1: ts_stat voert zelf SQL uit", sql: "select * from ts_stat('select * from jarvis.v3_instellingen')", altijd: true },
+  // --- B-2 (vierde review): een woord direct gevolgd door een quote, of een code-tekst na een aangehaalde taalnaam
+  { naam: "B-2: as'<body>' zonder spatie wist een tabel", sql: "create function public.f() returns int language plpgsql as'begin delete from public.klanten; return 1; end'; insert into public.t select f()::text;", altijd: false, effect: geleegd },
+  { naam: "B-2: do'<code>' zonder spatie naar het schema van Jarvis", sql: "do'begin insert into jarvis.v3_instellingen values (''qa-b2a'', ''1''); end'", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-b2a'"))[0]?.["n"] === 1 },
+  { naam: "B-2: do language plpgsql'<code>' zonder spatie", sql: "do language plpgsql'begin delete from public.klanten; end'", altijd: false, effect: geleegd },
+  { naam: "B-2: do language \"plpgsql\" '<code>' (aangehaalde taalnaam) naar het schema van Jarvis", sql: "do language \"plpgsql\" 'begin insert into jarvis.v3_instellingen values (''qa-b2b'', ''1''); end'", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-b2b'"))[0]?.["n"] === 1 },
+  { naam: "B-2: do language 'plpgsql' '<code>' (taalnaam als tekst) wist een tabel", sql: "do language 'plpgsql' 'begin delete from public.klanten; end'", altijd: false, effect: geleegd },
+  { naam: "B-2: code verdeeld over aaneengeschakelde teksten", sql: "do 'begin delete from public.klanten;'\n' end'", altijd: false, effect: geleegd },
 ];
