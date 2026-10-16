@@ -109,6 +109,7 @@ export const V3_ONOPHEFBAAR: readonly { readonly patroon: RegExp; readonly waaro
   { patroon: /(^|\/)package(-lock)?\.json$/, waarom: "de pin van de poortcode (jarvis-engine) en alle afhankelijkheden" },
   { patroon: /(^|\/)\.npmrc$/, waarom: "npm-configuratie (bron van pakketten)" },
   { patroon: /(^|\/)npm-shrinkwrap\.json$/, waarom: "de pin van de poortcode" },
+  { patroon: /^bin\//, waarom: "de ingang van de poortcode (bin/jarvis.mjs)" },
   { patroon: /(^|\/)tsconfig[^/]*\.json$/, waarom: "de TypeScript-configuratie waarmee de poortcode wordt geladen" },
 ];
 

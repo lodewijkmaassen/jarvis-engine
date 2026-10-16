@@ -95,7 +95,7 @@ describe("B4: de poortcode en haar pin zijn voor ieder mandaat gesloten", () => 
   it("weigert jarvis/src, edge, migrations, canonical, roles, package.json, het lockfile, .npmrc en elke jarvis.config.yml", () => {
     const dicht = [
       "jarvis/src/v3.ts", "jarvis/edge/jarvis-db/index.ts", "jarvis/migrations/v3/0002_x.sql", "jarvis/migrations/0002_x.sql", "jarvis/canonical/jarvis-v3.yml", "jarvis/roles/qa.md",
-      "tsconfig.json", "tsconfig.build.json", "sub/tsconfig.base.json",
+      "tsconfig.json", "tsconfig.build.json", "sub/tsconfig.base.json", "bin/jarvis.mjs", "bin/x",
       "package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc", "sub/package.json", "sub/package-lock.json", "sub/.npmrc", "jarvis.config.yml", "sub/jarvis.config.yml",
       ".github/workflows/x.yml", "CODEOWNERS", "docs/CODEOWNERS", ".claude/settings.json", "jarvis/allowlist.yml", ".env.local",
     ];
@@ -446,5 +446,61 @@ describe("BLK-1: de lexer leest SQL zoals PostgreSQL en faalt gesloten", () => {
       "select * from v3_taken", "select 1 from jarvis", "set standard_conforming_strings = off", "set backslash_quote = on",
     ]) expect(beoordeelSql(sql, true).length, sql).toBeGreaterThan(0);
     expect(beoordeelSql("set search_path = public, extensions_pg;", true).length).toBe(0);
+  });
+});
+
+describe("NB-2: bin/ is de ingang van de poortcode", () => {
+  it("is voor ieder mandaat gesloten, ook bij een patroon dat het niet noemt", () => {
+    const breed: Mandaat = { ...mandaat, paden_ja: ["b*/**", "bin/**"], paden_nee: [] };
+    for (const pad of ["bin/jarvis.mjs", "bin/x/y.mjs"]) expect(beoordeelV3Pr({ ...basis, mandaat: breed, bestanden: [pad] }).join(), pad).toMatch(/veiligheidsgrens/);
+  });
+});
+
+describe("lineaire patronen: grote invoer kost geen minuten", () => {
+  const meet = (f: () => unknown): number => { const t = Date.now(); f(); return Date.now() - t; };
+  it("on conflict, 1 MB zonder puntkomma", () => {
+    expect(meet(() => beoordeelSql("insert into t values (1) on conflict ".repeat(30000), false))).toBeLessThan(3000);
+  });
+  it("normaliseerMigratie met veel witruimte en commentaar na een begin; … commit;", () => {
+    const veel = "begin; select 1; commit;" + " ".repeat(200000) + "x";
+    expect(meet(() => normaliseerMigratie(veel))).toBeLessThan(1000);
+    const commentaar = "/* x */ ".repeat(50000) + "begin; select 1;";
+    expect(meet(() => normaliseerMigratie(commentaar))).toBeLessThan(1000);
+    const regels = "begin;\nselect 1;\ncommit;\n" + "-- opmerking\n".repeat(50000);
+    expect(meet(() => normaliseerMigratie(regels))).toBeLessThan(2000);
+  });
+  it("normaliseerMigratie verwerkt een afsluitend commentaar en laat een commit in een naam met rust", () => {
+    expect(normaliseerMigratie("begin;\ncreate table a (id int);\ncommit; -- einde\n")).not.toMatch(/begin|commit/);
+    expect(normaliseerMigratie("begin; create table recommit (id int); recommit;")).toMatch(/begin/);
+  });
+  it("elk patroon van de scanner blijft snel op 1 MB aan lastige tekens", () => {
+    for (const stuk of ["'", "$", "/*", '"', "e'", "$a$", " alter ", " do ", " execute ", " create trigger "]) {
+      expect(meet(() => beoordeelSql(stuk.repeat(Math.ceil(1_000_000 / stuk.length)), false)), JSON.stringify(stuk)).toBeLessThan(4000);
+    }
+  });
+});
+
+describe("de V3-workflow start de migratiejob ook na een automatische merge (zonder push-event)", () => {
+  const yml = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-v3.yml"), "utf8");
+  const blok = (naam: string) => yml.slice(yml.indexOf(`\n  ${naam}:`), (yml.indexOf("\n  ", yml.indexOf(`\n  ${naam}:`) + 5) > 0 ? undefined : undefined));
+  it("heeft geen push-trigger en geen afhankelijkheid van before/after van een push", () => {
+    expect(yml).not.toMatch(/^\s{2}push:/m);
+    expect(yml).not.toMatch(/github\.event\.before|github\.event\.after|--basis|--kop/);
+  });
+  it("laat de migratiejob direct na de sweep lopen, ook als de sweep niets deed, en alleen als de eigenaar migraties heeft aangezet", () => {
+    const m = yml.slice(yml.indexOf("\n  migreren:"));
+    expect(m).toMatch(/needs: sweep/);
+    expect(m).toMatch(/always\(\)/);
+    expect(m).toMatch(/vars\.JARVIS_MIGRATIES == 'aan'/);
+    expect(m).toMatch(/environment: jarvis-migraties/);
+    expect(m).toMatch(/v3 migreer\s*$/m);
+    expect(m).toMatch(/ref: main/);
+    void blok;
+  });
+  it("draait ook op het rooster, zodat een gemiste ronde de volgende keer wordt ingehaald", () => {
+    expect(yml).toMatch(/schedule:\s*\n\s*- cron: "\*\/10/);
+  });
+  it("de actieve kopie is byte-identiek aan de canonieke", () => {
+    expect(readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-v3.yml"), "utf8")).toBe(yml);
   });
 });

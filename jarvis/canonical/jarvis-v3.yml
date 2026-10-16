@@ -19,9 +19,12 @@ name: jarvis-v3
 #   eindcontrole  meet elk acceptatiecriterium van taken in EINDCONTROLE op de echte
 #               omgeving en legt KLAAR vast. Alleen deze identiteit (jarvis_ci) kan dat;
 #               de uitvoerder kan zijn eigen werk niet voltooid verklaren.
-#   migreren    na een push naar main: past NIEUWE migraties toe die binnen het
-#               mandaat van hun taak vallen, met een eigen database-rol in een
-#               GitHub-omgeving. De uitvoerder ziet die verbindingsreeks nooit.
+#   migreren    direct NA de sweep (needs: sweep) en bij elke ronde: past NIEUWE migraties toe van
+#               taken met een vastgelegde samenvoeging en een mandaat dat migraties toestaat, met een
+#               eigen database-rol in een GitHub-omgeving. De uitvoerder ziet die verbindingsreeks nooit.
+#               Bewust NIET gekoppeld aan een `push`-event: een merge die de sweep zelf doet (met het
+#               GITHUB_TOKEN) start geen push-workflow, en juist die merge moet de migratie starten.
+#               De route is idempotent (ledger), dus elke ronde mag opnieuw proberen.
 
 on:
   schedule:
@@ -29,19 +32,16 @@ on:
   workflow_run:
     workflows: ["jarvis-lint"]
     types: [completed]
-  push:
-    branches: [main]
   workflow_dispatch: {}
 
 concurrency:
-  group: jarvis-v3-${{ github.workflow }}-${{ github.event_name == 'push' && 'push' || 'sweep' }}
+  group: jarvis-v3
   cancel-in-progress: false
 
 permissions: {}
 
 jobs:
   sweep:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -108,17 +108,19 @@ jobs:
         run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 dispatch
 
   migreren:
-    if: github.event_name == 'push' && vars.JARVIS_MIGRATIES == 'aan'
+    needs: sweep
+    # always(): ook als de sweep niets te doen had of faalde, en voor de samenvoeging die de eigenaar zelf deed.
+    if: ${{ always() && vars.JARVIS_MIGRATIES == 'aan' }}
     runs-on: ubuntu-latest
     environment: jarvis-migraties
     timeout-minutes: 20
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: main
-          fetch-depth: 0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
@@ -130,6 +132,4 @@ jobs:
           JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
           JARVIS_MIGRATIE_DB_URL: ${{ secrets.JARVIS_MIGRATIE_DB_URL }}
           JARVIS_MIGRATIE_LEDGER: ${{ vars.JARVIS_MIGRATIE_LEDGER }}
-          VOOR: ${{ github.event.before }}
-          NA: ${{ github.sha }}
-        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 migreer --basis "$VOOR" --kop "$NA"
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 migreer

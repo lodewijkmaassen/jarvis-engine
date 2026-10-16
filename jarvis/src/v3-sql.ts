@@ -47,6 +47,17 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
   const n = sql.length;
   let i = 0;
   let laatsteWoord = "";
+  let voorlaatsteWoord = "";
+  const zetWoord = (w: string): void => {
+    voorlaatsteWoord = laatsteWoord;
+    laatsteWoord = w;
+  };
+  const wisWoorden = (): void => {
+    voorlaatsteWoord = "";
+    laatsteWoord = "";
+  };
+  // Een tekst op deze plekken is CODE: `as '<body>'`, `do '<code>'` en `do language x '<code>'`.
+  const alsCode = (): boolean => laatsteWoord === "as" || laatsteWoord === "do" || voorlaatsteWoord === "language";
   const bij = (b: string, a: string = b): void => {
     boven += b;
     alles += a;
@@ -89,7 +100,7 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         fouten.push("een unicode-escape (U&) is niet toegestaan");
         i = j + 1; // het volgende quote-teken wordt als gewone tekst/naam gelezen zodat de lexer niet uit de pas raakt
         bij(" u_escape ");
-        laatsteWoord = "";
+        wisWoorden();
         continue;
       }
       i = j;
@@ -104,17 +115,17 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         } else {
           if (escape) {
             const inhoud = sql.slice(j + 1, eind - 1);
-            if (laatsteWoord === "as") fouten.push("een E-tekst als functiebody is niet toegestaan");
+            if (alsCode()) fouten.push("een E-tekst als functiebody of DO-code is niet toegestaan");
             void inhoud;
           }
           bij(w + " '' ", w + " '' ");
           i = eind;
         }
-        laatsteWoord = "";
+        wisWoorden();
         continue;
       }
       bij(w + " ");
-      laatsteWoord = w;
+      zetWoord(w);
     } else if (c >= "0" && c <= "9") {
       let j = i;
       let dollar = false;
@@ -125,7 +136,7 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
       if (dollar) fouten.push("een dollarteken binnen een getal");
       bij(sql.slice(i, j).replace(/\$/g, "_") + " ");
       i = j;
-      laatsteWoord = "";
+      wisWoorden();
     } else if (c === "'") {
       const eind = leesTekst(sql, i + 1, false);
       if (eind === -1) {
@@ -133,8 +144,8 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         i = n;
       } else {
         const inhoud = sql.slice(i + 1, eind - 1);
-        if (laatsteWoord === "as") {
-          // `create function … as '<body>'`: de body is code en wordt beoordeeld.
+        if (alsCode()) {
+          // `create function … as '<body>'`, `do '<code>'`: de tekst is code en wordt beoordeeld.
           const sub = lexSql(inhoud.replace(/''/g, "'"), diepte + 1);
           bij(" '' ", ` '' ${sub.alles} `);
           bodies.push(sub.alles, ...sub.bodies);
@@ -144,7 +155,7 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         }
         i = eind;
       }
-      laatsteWoord = "";
+      wisWoorden();
     } else if (c === '"') {
       let j = i + 1;
       let naam = "";
@@ -167,7 +178,7 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         bij(` ${schoonNaam(naam)} `);
         i = j;
       }
-      laatsteWoord = "";
+      wisWoorden();
     } else if (c === "$") {
       const m = /^\$([A-Za-z_\u0080-￿][A-Za-z0-9_\u0080-￿]*)?\$/.exec(sql.slice(i, i + 200));
       if (m) {
@@ -182,7 +193,7 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
           fouten.push(...sub.fouten);
           i = sluit + m[0].length;
         }
-        laatsteWoord = "";
+        wisWoorden();
       } else {
         bij(c);
         i += 1;
@@ -196,7 +207,7 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
     } else {
       bij(c);
       i += 1;
-      if (!/\s/.test(c)) laatsteWoord = "";
+      if (!/\s/.test(c)) wisWoorden();
     }
   }
   const strak = (t: string): string => t.replace(/\s+/g, " ").trim();
@@ -231,10 +242,46 @@ export function sqlTokens(sql: string, alleenBovenste = false): string {
  * De beoordeling en de uitvoering gebruiken PRECIES dezelfde uitvoer van deze functie.
  */
 export function normaliseerMigratie(sql: string): string {
-  const begin = /^(\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/))*\s*begin\s*;/i;
-  const commit = /\bcommit\s*;\s*(?:--[^\n]*)?\s*$/i;
-  if (!begin.test(sql) || !commit.test(sql)) return sql;
-  return sql.replace(begin, " ").replace(commit, " ");
+  const n = sql.length;
+  // Begin: spaties en commentaar overslaan, dan `begin` en `;`.
+  let a = 0;
+  for (;;) {
+    while (a < n && /\s/.test(sql[a]!)) a += 1;
+    if (sql[a] === "-" && sql[a + 1] === "-") {
+      while (a < n && sql[a] !== "\n") a += 1;
+    } else if (sql[a] === "/" && sql[a + 1] === "*") {
+      const e = sql.indexOf("*/", a + 2);
+      if (e === -1) return sql;
+      a = e + 2;
+    } else break;
+  }
+  if (sql.slice(a, a + 5).toLowerCase() !== "begin") return sql;
+  let b = a + 5;
+  while (b < n && /\s/.test(sql[b]!)) b += 1;
+  if (sql[b] !== ";") return sql;
+  const start = b + 1;
+  // Einde: achterwaarts spaties en regelcommentaar overslaan, dan `;` en `commit`.
+  let e = n;
+  for (;;) {
+    while (e > start && /\s/.test(sql[e - 1]!)) e -= 1;
+    const regelStart = Math.max(sql.lastIndexOf("\n", e - 1) + 1, start);
+    const regel = sql.slice(regelStart, e);
+    if (regel.trimStart().startsWith("--")) {
+      e = regelStart;
+      if (e === start) return sql;
+      continue;
+    }
+    // `commit; -- opmerking` op één regel: alleen als wat voor het commentaar staat op `;` eindigt.
+    const c2 = regel.indexOf("--");
+    if (c2 >= 0 && regel.slice(0, c2).trimEnd().endsWith(";")) e = regelStart + regel.slice(0, c2).trimEnd().length;
+    break;
+  }
+  if (sql[e - 1] !== ";") return sql;
+  let c = e - 1;
+  while (c > start && /\s/.test(sql[c - 1]!)) c -= 1;
+  if (c - 6 < start || sql.slice(c - 6, c).toLowerCase() !== "commit") return sql;
+  if (c - 7 >= start && /[A-Za-z0-9_$]/.test(sql[c - 7]!)) return sql;
+  return " " + sql.slice(start, c - 6) + " ";
 }
 
 type Regel = readonly [RegExp, string];
@@ -244,7 +291,7 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
   [/\bjarvis\w*\b/, "verwijst naar Jarvis zelf (schema of rol jarvis…)"],
   [/\bv3_\w+\b/, "verwijst naar een V3-object"],
   [/\b(auth|vault|extensions|storage|pg_catalog|information_schema|pg_temp)\s*\./, "verwijst naar een beschermd schema (auth, vault, pg_catalog, …)"],
-  [/\bexecute\b(?!\s+(on|function|procedure)\b)/, "dynamische SQL (EXECUTE)"],
+  [/\b(query_to_xml\w*|cursor_to_xml\w*|table_to_xml\w*|schema_to_xml\w*|database_to_xml\w*|ts_stat)\b/, "functies die zelf SQL uitvoeren (query_to_xml, ts_stat, …)"],
   [/\bcopy\b/, "COPY"],
   [/\balter\s+(system|database|role|user|group|default\s+privileges)\b/, "ALTER SYSTEM, DATABASE, ROLE of DEFAULT PRIVILEGES"],
   [/\bcreate\s+(role|user|group|extension|event\s+trigger|server|foreign|publication|subscription|language|operator|cast|rule|database|schema|tablespace|collation|text\s+search|transform|access\s+method)\b/, "CREATE ROLE, EXTENSION, SCHEMA of vergelijkbaar"],
@@ -260,6 +307,15 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
 const STATEMENT_BEGIN_VERBODEN = /^(begin|commit|end|rollback|abort|savepoint|release|start|prepare|reset|discard|load|listen|notify|unlisten|checkpoint)\b/;
 /** Een `set` mag alleen deze onschuldige instellingen aanraken. */
 const SET_TOEGESTAAN = /^set\s+(local\s+)?(statement_timeout|lock_timeout|idle_in_transaction_session_timeout|client_min_messages|check_function_bodies|search_path)\b/;
+/** De enige toegestane vorm van EXECUTE op het bovenste niveau: de triggerdefinitie (drie lineaire toetsen, precies één EXECUTE). */
+function triggerExecute(st: string): boolean {
+  return (
+    /^create (constraint )?trigger\b/.test(st) &&
+    /\bfor each (row|statement)\b/.test(st) &&
+    /\bexecute (function|procedure) [a-z0-9_.]+ ?\(/.test(st) &&
+    st.split("execute").length === 2
+  );
+}
 /** `search_path` mag niet naar een beschermd schema wijzen, in welke vorm dan ook. */
 const SEARCH_PATH_BESCHERMD = /\b(auth|vault|extensions|storage|pg_catalog|information_schema|pg_temp)\b/;
 
@@ -269,7 +325,6 @@ const DESTRUCTIEF_OVERAL: readonly Regel[] = [
   [/\btruncate\b/, "TRUNCATE"],
   [/\bdelete\b/, "DELETE"],
   [/\bupdate\b/, "UPDATE"],
-  [/\bon\s+conflict\b.*\bdo\s+update\b/, "INSERT … ON CONFLICT DO UPDATE (kan bestaande rijen overschrijven)"],
   [/\b(vacuum|reindex|cluster|refresh\s+materialized)\b/, "onderhoudsopdracht"],
 ];
 /** Alleen op het bovenste niveau (wat nu wordt uitgevoerd). */
@@ -277,7 +332,6 @@ const DESTRUCTIEF_BOVEN: readonly Regel[] = [
   [/\bcreate\s+or\s+replace\b/, "CREATE OR REPLACE (overschrijft bestaand gedrag)"],
   [/\b(policy|grant|revoke)\b/, "POLICY, GRANT of REVOKE (toegangsrechten)"],
   [/\bsecurity\s+definer\b/, "SECURITY DEFINER"],
-  [/(^|;\s*)do\b/, "een DO-blok"],
 ];
 /** Per statement: een ALTER die laat vallen, hernoemt, van eigenaar of type verandert, of triggers aanzet. */
 const ALTER_DESTRUCTIEF = /\b(drop|rename|owner|type|force|enable\s+(trigger|rule|replica|always))\b/;
@@ -323,16 +377,30 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
     if (STATEMENT_BEGIN_VERBODEN.test(st)) redenen.push("eigen transactiebesturing of sessiecommando");
     if (/^set\b/.test(st) && !SET_TOEGESTAAN.test(st)) redenen.push("een SET-instelling buiten de kleine toegestane lijst");
     if (st.includes("search_path") && SEARCH_PATH_BESCHERMD.test(st)) redenen.push("search_path naar een beschermd schema");
+    // EXECUTE: dynamische SQL is nergens toegestaan. Op het bovenste niveau bestaat alleen de triggervorm
+    // `create trigger … execute function|procedure <naam>(` en `grant execute on …`.
+    if (/\bexecute\b/.test(st) && !triggerExecute(st) && !/\bexecute\s+on\b/.test(st)) redenen.push("dynamische SQL (EXECUTE)");
   }
-  // search_path binnen een body (bijv. een functie die hem zet) mag ook niet naar een beschermd schema wijzen.
-  for (const b of lex.bodies) if (b.toLowerCase().includes("search_path") && SEARCH_PATH_BESCHERMD.test(b.toLowerCase())) redenen.push("search_path naar een beschermd schema");
+  // In een body (functie, trigger, DO-blok) is elke EXECUTE dynamische SQL, ook `execute function;` met een variabele die zo heet.
+  const bodyTeksten = lex.bodies.map((b) => b.toLowerCase().replace(TOEGESTANE_AANROEPEN, " auth_aanroep "));
+  for (const b of bodyTeksten) {
+    if (/\bexecute\b/.test(b)) redenen.push("dynamische SQL (EXECUTE) in een body");
+    if (b.includes("search_path") && SEARCH_PATH_BESCHERMD.test(b)) redenen.push("search_path naar een beschermd schema");
+  }
 
   if (!destructief) {
-    const codeTekst = [boven, ...lex.bodies.map((b) => b.toLowerCase())];
-    for (const t of codeTekst) for (const [r, naam] of DESTRUCTIEF_OVERAL) if (r.test(t)) redenen.push(`${naam} vraagt destructief: true in het mandaat`);
-    for (const [r, naam] of DESTRUCTIEF_BOVEN) if (r.test(boven)) redenen.push(`${naam} vraagt destructief: true in het mandaat`);
+    const codeTekst = [boven, ...bodyTeksten];
+    for (const t of codeTekst) {
+      for (const [r, naam] of DESTRUCTIEF_OVERAL) if (r.test(t)) redenen.push(`${naam} vraagt destructief: true in het mandaat`);
+      for (const [r, naam] of DESTRUCTIEF_BOVEN) if (r.test(t)) redenen.push(`${naam} vraagt destructief: true in het mandaat`);
+      // Per statement (linear): DO, ALTER die laat vallen, en INSERT … ON CONFLICT DO UPDATE.
+      for (const st of t.split(";").map((x) => x.trim())) {
+        if (/^do\b/.test(st)) redenen.push("een DO-blok vraagt destructief: true in het mandaat");
+        if (/\balter\b/.test(st) && ALTER_DESTRUCTIEF.test(st)) redenen.push("ALTER dat laat vallen, hernoemt, van eigenaar of type verandert, of triggers aanzet vraagt destructief: true in het mandaat");
+        if (conflictDoUpdate(st)) redenen.push("INSERT … ON CONFLICT DO UPDATE vraagt destructief: true in het mandaat");
+      }
+    }
     for (const st of statements) {
-      if (/^alter\b/.test(st) && ALTER_DESTRUCTIEF.test(st)) redenen.push("ALTER dat laat vallen, hernoemt, van eigenaar of type verandert, of triggers aanzet vraagt destructief: true in het mandaat");
       if (!TOEGESTAAN.some((r) => r.test(st))) {
         redenen.push(`statement valt buiten de additieve whitelist: "${st.slice(0, 60)}"`);
         break;
@@ -340,6 +408,12 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
     }
   }
   return [...new Set(redenen)];
+}
+
+/** `on conflict … do update` binnen één statement, zonder terugloop: één indexOf, dan één lineaire regex. */
+function conflictDoUpdate(st: string): boolean {
+  const i = st.indexOf("on conflict");
+  return i >= 0 && /\bdo\s+update\b/.test(st.slice(i));
 }
 
 /** Gehandhaafd als dunne laag voor oudere aanroepers en tests. */

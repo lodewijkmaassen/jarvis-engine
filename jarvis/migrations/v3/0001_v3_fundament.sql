@@ -162,7 +162,7 @@ create or replace function jarvis.v3_verboden_pad(p text) returns boolean
 language sql immutable as $$
   select p ~ '^\*' or p = '**' or p ~ '^\.github(/|$)' or p ~* '(^|/)CODEOWNERS$'
       or p ~* '(^|/)jarvis\.config\.yml$' or p ~ '^jarvis/(src|canonical|edge|migrations)(/|$)'
-      or p ~ '^\.claude(/|$)'
+      or p ~ '^\.claude(/|$)' or p ~ '^bin(/|$)'
 $$;
 
 create or replace function jarvis.v3_mandaat_check(m jsonb) returns text
@@ -379,7 +379,7 @@ begin
   -- sweep een oude, al gemelde PR opnieuw op UITROL nadat een eindcontrole is mislukt, en wist het de lease van de uitvoerder.
   if exists (select 1 from jarvis.v3_gebeurtenissen g
               where g.taak_id = p_taak and g.actor = 'ci' and g.soort = 'toestand'
-                and g.data->>'repo' = p_repo and g.data->>'pr' = p_nummer::text) then
+                and lower(g.data->>'repo') = lower(p_repo) and g.data->>'pr' = p_nummer::text) then
     raise exception 'v3: pull request %#% is voor % al vastgelegd', p_repo, p_nummer, p_taak;
   end if;
   update jarvis.v3_taken set toestand = 'UITROL', toestand_sinds = now(), blokkade = null,
@@ -434,7 +434,7 @@ begin
   fout := jarvis.v3_mandaat_check(p_m);
   if fout is not null then raise exception 'v3: mandaat ongeldig: %', fout; end if;
   nee := array(select jsonb_array_elements_text(coalesce(p_m->'paden_nee','[]'::jsonb)));
-  nee := nee || array['.github/**','**/CODEOWNERS','**/jarvis.config.yml','jarvis/src/**','jarvis/canonical/**','jarvis/edge/**','jarvis/migrations/**','.claude/**'];
+  nee := nee || array['.github/**','**/CODEOWNERS','**/jarvis.config.yml','jarvis/src/**','jarvis/canonical/**','jarvis/edge/**','jarvis/migrations/**','.claude/**','bin/**'];
   insert into jarvis.v3_mandaten (taak_id, versie, doel, acceptatie, repos, paden_ja, paden_nee, productie, migraties, destructief, kosten_max_eur, inhoud_hash)
   values (p_taak, p_versie, p_m->>'doel', p_m->'acceptatie',
           array(select jsonb_array_elements_text(p_m->'repos')), array(select jsonb_array_elements_text(p_m->'paden_ja')),
@@ -568,7 +568,11 @@ begin
     execute format('revoke all on jarvis.v3_instellingen, jarvis.v3_mandaten, jarvis.v3_taken, jarvis.v3_verzoeken, jarvis.v3_gebeurtenissen from %I', r);
     execute format('revoke all on jarvis.v3_voor_jou, jarvis.v3_actueel, jarvis.v3_actueel_werk, jarvis.v3_werk, jarvis.v3_verzoeken_zicht from %I', r);
     execute format('revoke all on sequence jarvis.v3_gebeurtenissen_id_seq from %I', r);
-    execute format('grant usage on schema jarvis to %I', r);
+    -- Schemagebruik alleen voor wie V3 werkelijk gebruikt; anon en service_role krijgen er niets bij
+    -- (een nieuw schemarecht zou ook bestaande V2-objecten voor hen bereikbaar kunnen maken).
+    if r in ('jarvis_werker','jarvis_ci','authenticated') then
+      execute format('grant usage on schema jarvis to %I', r);
+    end if;
   end loop;
   for f in select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'jarvis' and p.proname like 'v3\_%' loop

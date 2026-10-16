@@ -434,6 +434,53 @@ draai("V3-database (PostgreSQL)", () => {
     }
   });
 
+  it("schemagebruik: alleen de drie rollen die V3 gebruiken krijgen USAGE op schema jarvis; anon en service_role niet", async () => {
+    const r = await sql`select r as rol, has_schema_privilege(r, 'jarvis', 'USAGE') as ja from unnest(array['anon','service_role','jarvis_werker','jarvis_ci','authenticated']) r`;
+    expect(Object.fromEntries(r.map((x) => [x.rol, x.ja]))).toEqual({ anon: false, service_role: false, jarvis_werker: true, jarvis_ci: true, authenticated: true });
+  });
+
+  it("NB-2: bin/ valt buiten ieder mandaat, ook in de database (verboden pad én altijd in paden_nee)", async () => {
+    expect((await sql`select jarvis.v3_verboden_pad('bin/jarvis.mjs') as ja, jarvis.v3_verboden_pad('bin') as ja2`)[0]).toEqual({ ja: true, ja2: true });
+    const id = nieuwId();
+    await werker(async (tx) => {
+      await tx`select jarvis.v3_nieuwe_taak(${id}, 'P', 'O', null)`;
+      await tx`select jarvis.v3_pak(${id}, 'c', 40)`;
+      await tx`select jarvis.v3_overgang(${id}, 'c', 'ANALYSE', '{}'::jsonb)`;
+    });
+    await expect(werker((tx) => tx`select jarvis.v3_vraag_akkoord(${id}, ${JSON.stringify({ ...MANDAAT, paden_ja: ["bin/**"] })}::text::jsonb)`)).rejects.toThrow(/veiligheidsgrens/);
+    const id2 = nieuwId();
+    await totAkkoord(id2);
+    await eigenaar((tx) => tx`select jarvis.v3_geef_mandaat(${id2})`);
+    expect((await sql`select paden_nee from jarvis.v3_mandaten where taak_id = ${id2}`)[0]!.paden_nee).toContain("bin/**");
+  });
+
+  it("R-1: de guard vergelijkt de repository hoofdletterongevoelig", async () => {
+    const SLUG_HL = "lodewijkmaassen/Tovas-Flow";
+    const id = nieuwId();
+    await totUitvoeren(id);
+    // een mandaat met beide spellingen, zoals GitHub ze beide accepteert
+    const id2 = nieuwId();
+    await totAkkoord(id2, { ...MANDAAT, repos: ["lodewijkmaassen/tovas-flow", SLUG_HL] });
+    await eigenaar((tx) => tx`select jarvis.v3_geef_mandaat(${id2})`);
+    await werker(async (tx) => {
+      await tx`select jarvis.v3_pak(${id2}, 'cloud-1', 40)`;
+      await tx`select jarvis.v3_overgang(${id2}, 'cloud-1', 'CONTROLE', ${JSON.stringify({ pr: { repo: "lodewijkmaassen/tovas-flow", nummer: 41, sha: "abc1234" } })}::text::jsonb)`;
+      await tx`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values ('lodewijkmaassen/tovas-flow', 41, 'abc1234', 'GO'), (${SLUG_HL}, 41, 'abc1234', 'GO')`;
+    });
+    await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id2}, 'lodewijkmaassen/tovas-flow', 41, 'abc1234', 'abcdef1234567')`);
+    await ci((tx) => tx`select jarvis.v3_ci_eindcontrole(${id2}, ${JSON.stringify([meet("A1", "mislukt")])}::text::jsonb)`).catch(() => {});
+    // vanuit UITROL: eerst naar EINDCONTROLE en terug, zodat een tweede vastlegging überhaupt kan
+    await werker(async (tx) => {
+      await tx`select jarvis.v3_pak(${id2}, 'cloud-2', 40)`;
+      await tx`select jarvis.v3_overgang(${id2}, 'cloud-2', 'EINDCONTROLE', '{"gedeployed": true}'::jsonb)`;
+    });
+    await ci((tx) => tx`select jarvis.v3_ci_eindcontrole(${id2}, ${JSON.stringify([meet("A1", "mislukt")])}::text::jsonb)`);
+    expect(await toestand(id2)).toBe("UITVOEREN");
+    await expect(ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id2}, ${SLUG_HL}, 41, 'abc1234', 'abcdef1234567')`)).rejects.toThrow(/al vastgelegd/);
+    expect(await toestand(id2)).toBe("UITVOEREN");
+    void id;
+  });
+
   // ---------------------------------------------------------------------------
   // BLK-1 tegen ECHTE PostgreSQL: eerst bewijzen dat de aanval werkelijk werkt (het effect treedt op), dan dat
   // de scanner hem weigert. Elke aanval draait in een transactie die altijd wordt teruggedraaid.
@@ -792,6 +839,8 @@ draai("V3-database (PostgreSQL)", () => {
         }
       }
       async function schoon() {
+        // Andere taken van eerdere tests mogen deze test niet beïnvloeden (de gewone migratieweg loopt over alle taken).
+        await sql.unsafe("update jarvis.v3_taken set toestand = 'MISLUKT' where toestand not in ('KLAAR', 'MISLUKT')");
         await sql.unsafe(`drop table if exists public.klanten, public.klanten2, public.t, public.nieuw_qa, public.t_trig cascade; drop function if exists public.f() cascade; delete from public.qa_ledger;
           create table public.klanten (id int); insert into public.klanten values (1), (2), (3); create table public.klanten2 (id int); create table public.t (n name);
           alter table public.klanten owner to qa_migrator; alter table public.klanten2 owner to qa_migrator; alter table public.t owner to qa_migrator;`);
@@ -840,6 +889,79 @@ draai("V3-database (PostgreSQL)", () => {
         }
         expect(await migreer()).toBe(0);
         expect(await bestaat("public.nieuw_qa")).toBe(true);
+      });
+
+      // ---- De gewone weg: uit de database, zonder push-event (een merge door de sweep start er geen)
+      async function migreerUitstaand(): Promise<number> {
+        const { voerV3Uit } = await import("@/jarvis/src/v3-cli");
+        const stil = vi.spyOn(console, "error").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          return await voerV3Uit(["migreer", "--repo", SLUG]);
+        } finally {
+          stil.mockRestore();
+          log.mockRestore();
+        }
+      }
+      const MIG_PAD = "supabase/migrations/0102_auto.sql";
+
+      it("AUTONOOM: een merge door de sweep (GITHUB_TOKEN, geen push-event) leidt tot toepassing van de migratie, zonder basis/kop of push", async () => {
+        await schoon();
+        const id = await taakKlaarVoorPr(MANDAAT_MIG);
+        // 1. de sweep beoordeelt, voegt samen en legt UITROL vast
+        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.nieuw_qa (id int primary key);" });
+        expect(await beoordeel(["--samenvoegen"])).toBe(0);
+        expect(schrijfacties().map((a) => `${a.methode} ${a.pad.split("/").slice(-1)[0]}`)).toEqual(["POST reviews", "PUT merge"]);
+        expect(await toestand(id)).toBe("UITROL");
+        expect(await bestaat("public.nieuw_qa")).toBe(false); // de merge zelf past niets toe
+        // 2. de volgende stap van dezelfde workflowrun (needs: sweep): migreer zonder argumenten
+        expect(await migreerUitstaand()).toBe(0);
+        expect(await bestaat("public.nieuw_qa")).toBe(true);
+        expect((await sql.unsafe("select name from public.qa_ledger"))[0]!.name).toBe("0102_auto");
+        // 3. idempotent: een volgende ronde doet niets dubbel
+        expect(await migreerUitstaand()).toBe(0);
+        expect((await sql.unsafe("select count(*)::int as n from public.qa_ledger"))[0]!.n).toBe(1);
+      });
+
+      it("AUTONOOM: ook de samenvoeging die de eigenaar zelf deed (herstelpad) leidt tot toepassing", async () => {
+        await schoon();
+        const id = await taakKlaarVoorPr(MANDAAT_MIG);
+        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { merged: true, migratieSql: "create table public.nieuw_qa (id int);" });
+        expect(await beoordeel()).toBe(0); // legt de samenvoeging vast
+        expect(await toestand(id)).toBe("UITROL");
+        expect(await migreerUitstaand()).toBe(0);
+        expect(await bestaat("public.nieuw_qa")).toBe(true);
+      });
+
+      it("AUTONOOM: de tweede laag houdt stand — een taak die (buiten beoordeelPr om) op UITROL staat met een aanval in de PR, wordt geweigerd en de data blijft heel", async () => {
+        for (const a of BLK1_AANVALLEN.filter((x) => x.effect !== undefined && !x.sql.includes("jarvis") && !x.sql.includes("anon"))) {
+          await schoon();
+          const id = await taakKlaarVoorPr(MANDAAT_MIG);
+          await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${SLUG}, 5, ${KOP}, ${MERGE})`);
+          stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: a.sql });
+          expect(await migreerUitstaand(), a.naam).toBe(3);
+          expect(await bestaat("public.klanten"), a.naam).toBe(true);
+          expect((await sql.unsafe("select count(*)::int as n from public.klanten"))[0]!.n, a.naam).toBe(3);
+          expect(await ledgerRijen(), a.naam).toBe(false);
+          await sql`update jarvis.v3_taken set toestand = 'MISLUKT' where id = ${id}`;
+        }
+      });
+
+      it("AUTONOOM: een mandaat zonder migraties of een gewijzigd bestand leidt tot niets of een weigering", async () => {
+        await schoon();
+        const id = await taakKlaarVoorPr(MANDAAT); // migraties: false
+        await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${SLUG}, 5, ${KOP}, ${MERGE})`);
+        stubGitHub(id, [{ filename: MIG_PAD, status: "added" }], { migratieSql: "create table public.nieuw_qa (id int);" });
+        expect(await migreerUitstaand()).toBe(0);
+        expect(await bestaat("public.nieuw_qa")).toBe(false);
+        await sql`update jarvis.v3_taken set toestand = 'MISLUKT' where id = ${id}`;
+        const id2 = await taakKlaarVoorPr(MANDAAT_MIG);
+        await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id2}, ${SLUG}, 5, ${KOP}, ${MERGE})`);
+        for (const status of ["modified", "renamed", "removed"]) {
+          stubGitHub(id2, [{ filename: MIG_PAD, status }], { migratieSql: "create table public.nieuw_qa (id int);" });
+          expect(await migreerUitstaand(), status).toBe(3);
+          expect(await bestaat("public.nieuw_qa"), status).toBe(false);
+        }
       });
 
       it("past alleen nieuwe bestanden toe: een gewijzigd of hernoemd migratiebestand wordt geweigerd", async () => {
