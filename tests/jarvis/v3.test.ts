@@ -530,3 +530,18 @@ describe("BLK-B: een bestandspad in een GitHub-URL wordt per segment gecodeerd",
   });
 });
 
+describe("BLK-C: een E-tekst met aaneengeschakelde vervolgstukken blijft een E-tekst", () => {
+  it("ziet de DROP die het vervolgstuk `'\\''` niet verbergt", () => {
+    const l = lexSql("select e'x'\n'\\''; drop table klanten; -- '");
+    expect(l.boven).toMatch(/drop table klanten/);
+  });
+  it("leest een gewone tekst-keten ongewijzigd (zonder escapes)", () => {
+    const l = lexSql("select 'x'\n'\\'; drop table klanten; select 'a'");
+    expect(l.boven).toMatch(/drop table klanten/); // standaardtekst: de backslash is een gewoon teken, de tekst sluit bij de tweede quote
+    expect(lexSql("select 'a' \n 'b'; select 1").fouten).toEqual([]);
+  });
+  it("een E-keten die niet wordt afgesloten is een fout", () => {
+    expect(lexSql("select e'x'\n'\\'").fouten.join()).toMatch(/niet wordt afgesloten/);
+  });
+});
+

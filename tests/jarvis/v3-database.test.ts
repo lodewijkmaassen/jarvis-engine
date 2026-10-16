@@ -10,6 +10,7 @@ import path from "node:path";
 import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { BLK1_AANVALLEN } from "./fixtures/v3-aanvallen";
+import { genereerTekstSoep } from "./fixtures/v3-tekstsoep";
 import { beoordeelSql } from "@/jarvis/src/v3";
 
 const BASIS = process.env.JARVIS_TEST_PG ?? "";
@@ -512,6 +513,37 @@ draai("V3-database (PostgreSQL)", () => {
       expect(beoordeelSql(a.sql, false).length, "zonder destructief-mandaat").toBeGreaterThan(0);
       if (a.altijd) expect(beoordeelSql(a.sql, true).length, "ook met destructief-mandaat").toBeGreaterThan(0);
     });
+
+    it("differentieel: geen enkele tekstketen die de scanner doorlaat heeft in PostgreSQL effect (24.000 gevallen)", async () => {
+      let doorgelaten = 0;
+      let uitgevoerd = 0;
+      const missers: string[] = [];
+      for (const q of [...genereerTekstSoep(11, 12000), ...genereerTekstSoep(12, 12000)]) {
+        const nd = beoordeelSql(q, false).length === 0;
+        const dd = beoordeelSql(q, true).length === 0;
+        if (!nd && !dd) continue;
+        doorgelaten += 1;
+        const effect = await opScratch(async (tx) => {
+          try {
+            await tx.savepoint(async (sp) => {
+              await sp.unsafe(q);
+              uitgevoerd += 1;
+              const weg = (await sp.unsafe("select to_regclass('public.klanten') is null as w"))[0]!.w === true;
+              const jarvis = ((await sp.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-soep'"))[0]!.n as number) > 0;
+              throw Object.assign(new Error("effect"), { weg, jarvis });
+            });
+          } catch (e) {
+            if (e instanceof Error && e.message === "effect") return e as Error & { weg: boolean; jarvis: boolean };
+            return null;
+          }
+          return null;
+        });
+        if (effect !== null && ((effect.weg && nd) || effect.jarvis)) missers.push(q);
+      }
+      expect(missers.slice(0, 3)).toEqual([]);
+      expect(doorgelaten).toBeGreaterThan(400);
+      expect(uitgevoerd, "controle op de test zelf: een deel van de doorgelaten gevallen wordt echt uitgevoerd").toBeGreaterThan(40);
+    }, 600_000);
 
     it("dezelfde lijst is verwerpelijk voor de scanner ook zonder effectcontrole (inclusief de gevallen zonder meetbaar effect)", () => {
       for (const a of BLK1_AANVALLEN) expect(beoordeelSql(a.sql, false).length, a.naam).toBeGreaterThan(0);

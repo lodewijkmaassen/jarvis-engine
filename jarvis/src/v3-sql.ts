@@ -109,20 +109,14 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
         // een quote (`as'…'`, `do'…'`, `name'…'`) is gewoon een woord: de quote wordt hieronder als tekst gelezen,
         // mét de controle of die tekst code is.
         const escape = w === "e";
-        const eind = leesTekst(sql, j + 1, escape);
-        if (eind === -1) {
+        const k = leesKetting(sql, j + 1, escape);
+        if (k === null) {
           fouten.push("een tekst die niet wordt afgesloten");
           i = n;
         } else {
-          if (escape) {
-            const inhoud = sql.slice(j + 1, eind - 1);
-            if (alsCode()) fouten.push("een E-tekst als functiebody of DO-code is niet toegestaan");
-            void inhoud;
-          } else if (alsCode()) {
-            fouten.push("een B-, X- of N-tekst als functiebody of DO-code is niet toegestaan");
-          }
+          if (alsCode()) fouten.push(escape ? "een E-tekst als functiebody of DO-code is niet toegestaan" : "een B-, X- of N-tekst als functiebody of DO-code is niet toegestaan");
           bij(w + " '' ", w + " '' ");
-          i = eind;
+          i = k.eind;
         }
         zetWoord("''");
         continue;
@@ -142,39 +136,23 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
       wisWoorden();
     } else if (c === "'") {
       let codeTekst = false;
-      const eind = leesTekst(sql, i + 1, false);
-      if (eind === -1) {
+      const k = leesKetting(sql, i + 1, false);
+      if (k === null) {
         fouten.push("een tekst die niet wordt afgesloten");
         i = n;
+      } else if (alsCode()) {
+        // `create function … as '<body>'`, `do '<code>'`: de tekst is code en wordt beoordeeld. Aaneengeschakelde
+        // stukken (een newline ertussen) vormen samen ÉÉN tekst, ook midden in een woord (`'delet'⏎'e from …'`).
+        const stuk = k.stukken.map((x) => x.replace(/''/g, "'")).join("");
+        const sub = lexSql(stuk, diepte + 1);
+        bij(" '' ", ` '' ${sub.alles} `);
+        bodies.push(sub.alles, ...sub.bodies);
+        fouten.push(...sub.fouten);
+        codeTekst = true;
+        i = k.eind;
       } else {
-        const inhoud = sql.slice(i + 1, eind - 1);
-        if (alsCode()) {
-          // `create function … as '<body>'`, `do '<code>'`: de tekst is code en wordt beoordeeld. Aaneengeschakelde
-          // teksten (een newline ertussen) vormen PostgreSQL samen ÉÉN tekst, ook midden in een woord (`'delet'⏎'e from …'`):
-          // ze worden eerst samengevoegd en dan pas gelezen.
-          let stuk = inhoud.replace(/''/g, "'");
-          let einde = eind;
-          for (;;) {
-            const volgende = volgendeAaneengeschakeldeTekst(sql, einde);
-            if (volgende === null) break;
-            if (volgende.eind === -1) {
-              fouten.push("een aaneengeschakelde tekst die niet wordt afgesloten");
-              einde = n;
-              break;
-            }
-            stuk += sql.slice(volgende.begin, volgende.eind - 1).replace(/''/g, "'");
-            einde = volgende.eind;
-          }
-          const sub = lexSql(stuk, diepte + 1);
-          bij(" '' ", ` '' ${sub.alles} `);
-          bodies.push(sub.alles, ...sub.bodies);
-          fouten.push(...sub.fouten);
-          codeTekst = true;
-          i = einde;
-        } else {
-          bij(" '' ");
-          i = eind;
-        }
+        bij(" '' ");
+        i = k.eind;
       }
       // Een volgende tekst direct erna (aaneengeschakelde teksten) is hetzelfde: na code blijft de context `code`.
       if (codeTekst) zetWoord("do");
@@ -243,7 +221,7 @@ export function lexSql(sql: string, diepte = 0): SqlLex {
  * witruimte en commentaar tussen staat, mét minstens één newline. Deze lezer is ruimer dan PostgreSQL (ook
  * blokcommentaar telt als tussenruimte): te ruim samenvoegen kan alleen een extra afwijzing opleveren, nooit een gemiste.
  */
-function volgendeAaneengeschakeldeTekst(sql: string, vanaf: number): { begin: number; eind: number } | null {
+function volgendeAaneengeschakeldeTekst(sql: string, vanaf: number, escape: boolean): { begin: number; eind: number } | null {
   let j = vanaf;
   let newline = false;
   for (;;) {
@@ -259,7 +237,28 @@ function volgendeAaneengeschakeldeTekst(sql: string, vanaf: number): { begin: nu
     } else break;
   }
   if (!newline || sql[j] !== "'") return null;
-  return { begin: j + 1, eind: leesTekst(sql, j + 1, false) };
+  return { begin: j + 1, eind: leesTekst(sql, j + 1, escape) };
+}
+
+/**
+ * Een tekst met al haar aaneengeschakelde vervolgstukken. Een vervolgstuk wordt gelezen in dezelfde modus als het
+ * eerste: bij een E-tekst blijven backslash-escapes ook in de vervolgstukken gelden (`E'x'⏎'\''` is bij PostgreSQL
+ * één tekst; wie het vervolg als gewone tekst leest, ziet een quote te vroeg en neemt code voor tekst aan).
+ * Geeft null als de tekst of een vervolgstuk niet wordt afgesloten.
+ */
+function leesKetting(sql: string, vanaf: number, escape: boolean): { eind: number; stukken: string[] } | null {
+  const eerste = leesTekst(sql, vanaf, escape);
+  if (eerste === -1) return null;
+  const stukken = [sql.slice(vanaf, eerste - 1)];
+  let eind = eerste;
+  for (;;) {
+    const v = volgendeAaneengeschakeldeTekst(sql, eind, escape);
+    if (v === null) break;
+    if (v.eind === -1) return null;
+    stukken.push(sql.slice(v.begin, v.eind - 1));
+    eind = v.eind;
+  }
+  return { eind, stukken };
 }
 
 /** Eerste teken NA de afsluitende quote, of -1. In een E-tekst is een backslash een escape. */

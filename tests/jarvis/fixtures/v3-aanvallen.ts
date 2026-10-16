@@ -90,4 +90,9 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
   { naam: "BLK-A: met commentaar tussen de teksten", sql: "create function public.f() returns int language plpgsql as 'begin delet' -- opmerking\n'e from public.klanten; return 1; end'; insert into public.t select f()::text;", altijd: false, effect: geleegd },
   { naam: "BLK-A: jarv|is.v|3_instellingen over drie teksten, met destructief", sql: "do 'begin insert into jarv'\n'is.v'\n'3_instellingen values (''qa-blka'', ''1''); end'", altijd: true,
     effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-blka'"))[0]?.["n"] === 1 },
+  // --- BLK-C (zesde review): een E-tekst met een aaneengeschakeld vervolgstuk; het vervolgstuk blijft een E-tekst
+  { naam: "BLK-C: E-keten met \\' in het vervolgstuk verbergt een DROP (commentaar sluit de tekst voor de lexer af)", sql: "insert into public.t select e'x'\n'\\''; drop table public.klanten; -- '", altijd: false, effect: weg("public.klanten") },
+  { naam: "BLK-C: dezelfde keten verbergt een verwijzing naar jarvis", sql: "insert into public.t select e'x'\n'\\''; insert into jarvis.v3_instellingen values ('qa-blkc', '1'); -- '", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-blkc'"))[0]?.["n"] === 1 },
+  { naam: "BLK-C: E-keten met drie stukken", sql: "insert into public.t select e'x'\n'y'\n'\\''; delete from public.klanten; -- '", altijd: false, effect: geleegd },
 ];
