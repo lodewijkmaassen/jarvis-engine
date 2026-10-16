@@ -80,6 +80,8 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Jarvis V3 — eindcontrole
         env:
+          # Alleen lezen: om te beoordelen of het bouwmerk op productie een nazaat is van de samenvoegcommit.
+          GITHUB_TOKEN: ${{ github.token }}
           JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
         run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 eindcontrole
 

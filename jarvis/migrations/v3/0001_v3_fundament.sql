@@ -24,6 +24,9 @@
 --   create role jarvis_ci login password '<...>';   -- alleen schema-rechten, geen eigenaar van jarvis
 -- Daarna draait deze migratie opnieuw (idempotent) zodat de rechten voor
 -- jarvis_ci worden toegekend.
+-- De rol voor productmigraties (JARVIS_MIGRATIE_DB_URL) is een ANDERE rol: hij mag de productietabellen
+-- wijzigen maar het schema jarvis niet kunnen gebruiken en geen lid zijn van zijn eigenaar.
+-- `jarvis v3 migreer` weigert te draaien met een rol die dat wel kan.
 --
 -- Idempotent: opnieuw uitvoeren verandert niets.
 
@@ -372,11 +375,18 @@ begin
    where pr_repo = p_repo and pr_nummer = p_nummer and commit_sha = p_kop and oordeel = 'GO';
   if n = 0 then raise exception 'v3: geen toetsing GO op de kop %', p_kop; end if;
   if coalesce(p_merge_sha, '') !~ '^[0-9a-f]{7,40}$' then raise exception 'v3: ongeldige merge-sha'; end if;
+  -- Dezelfde pull request wordt voor deze taak maar één keer vastgelegd. Zonder deze regel zet het herstel van de
+  -- sweep een oude, al gemelde PR opnieuw op UITROL nadat een eindcontrole is mislukt, en wist het de lease van de uitvoerder.
+  if exists (select 1 from jarvis.v3_gebeurtenissen g
+              where g.taak_id = p_taak and g.actor = 'ci' and g.soort = 'toestand'
+                and g.data->>'repo' = p_repo and g.data->>'pr' = p_nummer::text) then
+    raise exception 'v3: pull request %#% is voor % al vastgelegd', p_repo, p_nummer, p_taak;
+  end if;
   update jarvis.v3_taken set toestand = 'UITROL', toestand_sinds = now(), blokkade = null,
          pr = jsonb_build_object('repo', p_repo, 'nummer', p_nummer, 'sha', p_kop, 'merge_sha', p_merge_sha),
          lease_houder = null, lease_tot = null
    where id = p_taak;
-  perform jarvis.v3_log(p_taak, 'ci', 'toestand', jsonb_build_object('van', t.toestand, 'naar', 'UITROL', 'pr', p_nummer, 'merge_sha', p_merge_sha));
+  perform jarvis.v3_log(p_taak, 'ci', 'toestand', jsonb_build_object('van', t.toestand, 'naar', 'UITROL', 'repo', p_repo, 'pr', p_nummer, 'merge_sha', p_merge_sha));
   return 'UITROL';
 end $$;
 
@@ -545,19 +555,28 @@ alter table jarvis.v3_verzoeken enable row level security;
 alter table jarvis.v3_gebeurtenissen enable row level security;
 
 -- Alleen V3-objecten. Rechten op V2-tabellen blijven uitdrukkelijk ongemoeid.
+--
+-- Eerst ALLES intrekken bij elke rol die er niet bij hoort, ook bij rollen die via standaardrechten
+-- (ALTER DEFAULT PRIVILEGES) automatisch rechten op nieuwe objecten in dit schema krijgen -- bij
+-- Supabase-achtige inrichtingen zijn dat anon, authenticated en service_role. Daarna per rol alleen
+-- wat hij nodig heeft. Een functie die PUBLIC of een van deze rollen kan uitvoeren, is een deur.
 do $$
 declare r text; f text;
 begin
-  for r in select unnest(array['jarvis_werker','jarvis_ci','authenticated']) loop
+  for r in select unnest(array['jarvis_werker','jarvis_ci','authenticated','anon','service_role']) loop
     continue when not exists (select 1 from pg_roles where rolname = r);
     execute format('revoke all on jarvis.v3_instellingen, jarvis.v3_mandaten, jarvis.v3_taken, jarvis.v3_verzoeken, jarvis.v3_gebeurtenissen from %I', r);
     execute format('revoke all on jarvis.v3_voor_jou, jarvis.v3_actueel, jarvis.v3_actueel_werk, jarvis.v3_werk, jarvis.v3_verzoeken_zicht from %I', r);
+    execute format('revoke all on sequence jarvis.v3_gebeurtenissen_id_seq from %I', r);
     execute format('grant usage on schema jarvis to %I', r);
   end loop;
-  -- Functies: standaard voor niemand, daarna per rol.
   for f in select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'jarvis' and p.proname like 'v3\_%' loop
     execute format('revoke all on function %s from public', f);
+    for r in select unnest(array['jarvis_werker','jarvis_ci','authenticated','anon','service_role']) loop
+      continue when not exists (select 1 from pg_roles where rolname = r);
+      execute format('revoke all on function %s from %I', f, r);
+    end loop;
   end loop;
   if exists (select 1 from pg_roles where rolname = 'jarvis_werker') then
     grant select on jarvis.v3_actueel_werk, jarvis.v3_werk, jarvis.v3_verzoeken_zicht to jarvis_werker;

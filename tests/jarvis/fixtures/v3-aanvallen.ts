@@ -1,0 +1,55 @@
+// De omzeilingen van de migratiescanner uit de onafhankelijke review (BLK-1), plus de eerder gemelde.
+//
+// Eén lijst voor twee bewijzen:
+//   1. v3.test.ts: de scanner weigert elk geval;
+//   2. v3-database.test.ts: tegen ECHTE PostgreSQL. Eerst wordt aangetoond dat de SQL werkelijk doet wat de
+//      aanvaller wil (`effect`, binnen een transactie die wordt teruggedraaid) -- anders meet een test niets --
+//      en dan dat de scanner hem weigert.
+//
+// `altijd`: ook met `destructief: true` geweigerd (het raakt de beveiliging van Jarvis zelf).
+
+type Tx = { unsafe: (sql: string) => Promise<readonly Record<string, unknown>[]> };
+
+export type Aanval = {
+  readonly naam: string;
+  readonly sql: string;
+  readonly altijd: boolean;
+  /** Draait NA de aanval, in dezelfde (later teruggedraaide) transactie: is het beoogde effect er? */
+  readonly effect?: (tx: Tx) => Promise<boolean>;
+};
+
+const weg = (tabel: string) => async (tx: Tx) => (await tx.unsafe(`select to_regclass('${tabel}') is null as weg`))[0]?.["weg"] === true;
+const leeg = async (tx: Tx) => {
+  await tx.unsafe("insert into public.t (n) values ('x')");
+  return (await tx.unsafe("select count(*)::int as n from public.klanten"))[0]?.["n"] === 0;
+};
+
+export const BLK1_AANVALLEN: readonly Aanval[] = [
+  // --- (a) E-prefix midden in een naam: de e van `name` is geen begin van een escape-tekst
+  { naam: "a: name'\\' verbergt een DROP", sql: "insert into public.t select name'\\'; drop table public.klanten; select name'\\'", altijd: false, effect: weg("public.klanten") },
+  { naam: "a: dezelfde omzeiling verbergt een verwijzing naar jarvis", sql: "insert into public.t select name'\\'; insert into jarvis.v3_instellingen values ('qa-a','1'); select name'\\'", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-a'"))[0]?.["n"] === 1 },
+  // --- (b) een $tag$ binnen een naam is geen dollar-quote
+  { naam: "b: x$a$ verbergt een DROP", sql: "insert into public.t select 'x'::name as x$a$; drop table public.klanten2; select 'y'::name as y$a$", altijd: false, effect: weg("public.klanten2") },
+  // --- (c) unicode-escape in een naam
+  { naam: "c: U&\"\\006Aarvis\" is het schema jarvis", sql: 'insert into U&"\\006Aarvis".v3_instellingen (sleutel, waarde) values (\'qa-c\', \'1\')', altijd: true,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-c'"))[0]?.["n"] === 1 },
+  // --- (d) functiebody als gewone tekst of dollar-quote met schadelijke inhoud, via een trigger
+  { naam: "d: trigger met body als gewone tekst wist een tabel", sql: "create function public.f() returns trigger language plpgsql as 'begin delete from public.klanten; return new; end'; create trigger tr before insert on public.t for each row execute function public.f();", altijd: false, effect: leeg },
+  { naam: "d: trigger met dollar-body wist een tabel", sql: "create function public.f() returns trigger language plpgsql as $$begin delete from public.klanten; return new; end$$; create trigger tr before insert on public.t for each row execute function public.f();", altijd: false, effect: leeg },
+  // --- eerder gemeld
+  { naam: "tekstwaarde met -- verbergt een DROP", sql: "select '--'; drop table public.klanten;", altijd: false, effect: weg("public.klanten") },
+  { naam: "tekstwaarde met /* verbergt een DROP", sql: "select '/*'; drop table public.klanten; select '*/';", altijd: false, effect: weg("public.klanten") },
+  { naam: "dollar-quote met -- erin verbergt een DROP", sql: "select $x$ -- $x$; drop table public.klanten;", altijd: false, effect: weg("public.klanten") },
+  { naam: "DO met samengestelde EXECUTE", sql: "do $$ begin execute 'dr'||'op table public.klanten'; end $$", altijd: true, effect: weg("public.klanten") },
+  { naam: "delete met where true", sql: "delete from public.klanten where true", altijd: false, effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.klanten"))[0]?.["n"] === 0 },
+  { naam: "de eigenaarscheck van V3 herdefiniëren", sql: "create or replace function jarvis.v3_is_eigenaar() returns boolean language sql as $$ select true $$", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select jarvis.v3_is_eigenaar() as ja"))[0]?.["ja"] === true },
+  { naam: "de onveranderlijkheid van het mandaat uitzetten", sql: "alter table jarvis.v3_mandaten disable trigger all", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select tgenabled::text as s from pg_trigger where tgname = 'v3_mandaten_vast'"))[0]?.["s"] === "D" },
+  { naam: "aangehaalde schemanaam", sql: 'insert into "jarvis"."v3_instellingen" values (\'qa-q\', \'1\')', altijd: true,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-q'"))[0]?.["n"] === 1 },
+  { naam: "search_path naar jarvis en dan een kale naam", sql: "set search_path = jarvis, public; insert into v3_instellingen values ('qa-s', '1')", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-s'"))[0]?.["n"] === 1 },
+  { naam: "commit middenin laat een halve toestand achter", sql: "create table public.half (a int); commit; drop table public.klanten;", altijd: true },
+];

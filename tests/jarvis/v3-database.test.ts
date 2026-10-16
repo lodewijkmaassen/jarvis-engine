@@ -9,6 +9,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import postgres from "postgres";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { BLK1_AANVALLEN } from "./fixtures/v3-aanvallen";
+import { beoordeelSql } from "@/jarvis/src/v3";
 
 const BASIS = process.env.JARVIS_TEST_PG ?? "";
 const migratie = readFileSync(path.join(process.cwd(), "jarvis/migrations/v3/0001_v3_fundament.sql"), "utf8");
@@ -69,6 +71,8 @@ draai("V3-database (PostgreSQL)", () => {
     await admin.unsafe(`do $$ begin
       if not exists (select 1 from pg_roles where rolname='jarvis_werker') then create role jarvis_werker nologin; end if;
       if not exists (select 1 from pg_roles where rolname='jarvis_ci') then create role jarvis_ci nologin; end if;
+      if not exists (select 1 from pg_roles where rolname='anon') then create role anon nologin; end if;
+      if not exists (select 1 from pg_roles where rolname='service_role') then create role service_role nologin; end if;
       if not exists (select 1 from pg_roles where rolname='authenticated') then create role authenticated nologin; end if; end $$`);
     const url = new URL(BASIS);
     url.pathname = `/${dbNaam}`;
@@ -80,6 +84,11 @@ draai("V3-database (PostgreSQL)", () => {
       create table jarvis.toetsingen (id bigserial primary key, pr_repo text, pr_nummer int, commit_sha text, oordeel text, rapport text, door text, op timestamptz default now());
       create table jarvis.antwoorden (id text primary key, status text);
       grant usage on schema jarvis to jarvis_werker, jarvis_ci, authenticated;
+      -- Zoals bij een Supabase-achtige inrichting: nieuwe objecten in dit schema krijgen automatisch rechten voor
+      -- anon, authenticated en service_role (BLK-3). De migratie moet die weer intrekken.
+      alter default privileges in schema jarvis grant all on tables to anon, authenticated, service_role;
+      alter default privileges in schema jarvis grant all on sequences to anon, authenticated, service_role;
+      alter default privileges in schema jarvis grant execute on functions to anon, authenticated, service_role;
       grant select, update on jarvis.antwoorden to jarvis_werker;
       grant insert, select on jarvis.toetsingen to jarvis_werker; grant usage on sequence jarvis.toetsingen_id_seq to jarvis_werker;
     `);
@@ -357,6 +366,122 @@ draai("V3-database (PostgreSQL)", () => {
   });
 
   // ---------------------------------------------------------------------------
+  // BLK-3: wie mag welke V3-functie uitvoeren? De volledige matrix, ook voor PUBLIC en de rollen die via
+  // standaardrechten automatisch rechten krijgen (anon, authenticated, service_role).
+  const VERWACHT: Record<string, string[]> = {
+    jarvis_werker: ["v3_nieuwe_taak", "v3_pak", "v3_hartslag", "v3_blokkade", "v3_watchdog", "v3_dispatch_claim", "v3_vraag", "v3_vraag_akkoord", "v3_meet_verzoek", "v3_overgang"],
+    jarvis_ci: ["v3_watchdog", "v3_dispatch_claim", "v3_ci_samengevoegd", "v3_ci_eindcontrole"],
+    authenticated: ["v3_geef_mandaat", "v3_wijs_af", "v3_beantwoord", "v3_nieuwe_opdracht", "v3_is_eigenaar"],
+  };
+
+  async function uitvoerrechten(db: postgres.Sql): Promise<Record<string, string[]>> {
+    const rijen = await db`
+      select p.proname as functie, coalesce(r.rolname, 'PUBLIC') as rol
+        from pg_proc p
+        join pg_namespace n on n.oid = p.pronamespace and n.nspname = 'jarvis'
+        cross join lateral aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+        left join pg_roles r on r.oid = a.grantee
+       where p.proname like 'v3\_%' and a.privilege_type = 'EXECUTE' and coalesce(r.rolname, 'PUBLIC') <> current_user`;
+    const uit: Record<string, string[]> = {};
+    for (const r of rijen) (uit[String(r.rol)] ??= []).push(String(r.functie));
+    for (const k of Object.keys(uit)) uit[k]!.sort();
+    return uit;
+  }
+  const gesorteerd = (m: Record<string, string[]>) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, [...v].sort()]));
+
+  it("BLK-3: de EXECUTE-matrix van alle v3_*-functies is exact de bedoelde, ondanks standaardrechten voor anon/authenticated/service_role", async () => {
+    expect(await uitvoerrechten(sql)).toEqual(gesorteerd(VERWACHT));
+    // geen enkel recht op de V3-tabellen en -views voor anon of service_role, en geen schrijfrecht voor wie dan ook
+    const tabelRechten = await sql`
+      select grantee, table_name, privilege_type from information_schema.role_table_grants
+       where table_schema = 'jarvis' and table_name like 'v3\_%' and grantee in ('anon', 'service_role', 'PUBLIC', 'jarvis_werker', 'jarvis_ci', 'authenticated')
+         and not (grantee = 'authenticated' and table_name in ('v3_voor_jou', 'v3_actueel') and privilege_type = 'SELECT')
+         and not (grantee in ('jarvis_werker', 'jarvis_ci') and table_name in ('v3_actueel_werk', 'v3_werk', 'v3_verzoeken_zicht') and privilege_type = 'SELECT')`;
+    expect(tabelRechten).toEqual([]);
+    const reeks = await sql`select has_sequence_privilege(r, 'jarvis.v3_gebeurtenissen_id_seq', 'USAGE') as ja, r from unnest(array['anon','authenticated','service_role','jarvis_werker','jarvis_ci']) r`;
+    expect(reeks.filter((x) => x.ja)).toEqual([]);
+  });
+
+  it("BLK-3: een vreemde ingelogde gebruiker en anon kunnen niets aanroepen, ook niet met standaardrechten op het schema", async () => {
+    await expect(als("authenticated", "99999999-9999-9999-9999-999999999999", (tx) => tx`select jarvis.v3_nieuwe_taak('V3-20261015-vreemd', 't', 'o', null)`)).rejects.toThrow(/permission denied/);
+    await expect(als("authenticated", "99999999-9999-9999-9999-999999999999", (tx) => tx`select jarvis.v3_pak('V3-20261015-x', 'x', 40)`)).rejects.toThrow(/permission denied/);
+    await expect(als("authenticated", EIGENAAR, (tx) => tx`select jarvis.v3_ci_eindcontrole('V3-20261015-x', '[]'::text::jsonb)`)).rejects.toThrow(/permission denied/);
+    await sql.begin(async (tx) => {
+      await tx.unsafe("set local role anon");
+      await expect(tx`select jarvis.v3_watchdog()`).rejects.toThrow(/permission denied/);
+    }).catch((e) => { if (!/permission denied/.test(String(e))) throw e; });
+  });
+
+  it("BLK-3: dezelfde inrichting zonder de reparatie lekt wél (negatieve controle op de test zelf)", async () => {
+    // Een kopie van de migratie zonder de intrekking van anon/authenticated/service_role in de functielus.
+    const lek = migratie.replace("for r in select unnest(array['jarvis_werker','jarvis_ci','authenticated','anon','service_role']) loop\n      continue when not exists (select 1 from pg_roles where rolname = r);\n      execute format('revoke all on function %s from %I', f, r);", "for r in select unnest(array['jarvis_werker']) loop\n      continue when not exists (select 1 from pg_roles where rolname = r);\n      execute format('revoke all on function %s from %I', f, r);");
+    expect(lek).not.toBe(migratie);
+    const naam = `${dbNaam}_lek`;
+    await admin.unsafe(`create database ${naam}`);
+    const url = new URL(BASIS);
+    url.pathname = `/${naam}`;
+    const db = postgres(url.toString(), { max: 1 });
+    try {
+      await db.unsafe(`create schema auth; create function auth.uid() returns uuid language sql as $$ select null::uuid $$; create schema jarvis;
+        create table jarvis.toetsingen (id bigserial primary key, pr_repo text, pr_nummer int, commit_sha text, oordeel text);
+        alter default privileges in schema jarvis grant execute on functions to anon, authenticated, service_role;`);
+      await db.unsafe(lek);
+      const m = await uitvoerrechten(db);
+      expect(m["anon"] ?? []).toContain("v3_overgang");
+    } finally {
+      await db.end({ timeout: 2 });
+      await admin.unsafe(`drop database if exists ${naam} with (force)`);
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // BLK-1 tegen ECHTE PostgreSQL: eerst bewijzen dat de aanval werkelijk werkt (het effect treedt op), dan dat
+  // de scanner hem weigert. Elke aanval draait in een transactie die altijd wordt teruggedraaid.
+  describe("BLK-1: de omzeilingen van de migratiescanner, tegen echte PostgreSQL", () => {
+    class Terugdraaien extends Error {}
+    async function opScratch<T>(f: (tx: postgres.TransactionSql) => Promise<T>): Promise<T> {
+      let uit: T | undefined;
+      try {
+        await sql.begin(async (tx) => {
+          await tx.unsafe(`create table public.klanten (id int); insert into public.klanten values (1), (2), (3);
+            create table public.klanten2 (id int); create table public.t (n name);`);
+          uit = await f(tx);
+          throw new Terugdraaien();
+        });
+      } catch (e) {
+        if (!(e instanceof Terugdraaien)) throw e;
+      }
+      return uit as T;
+    }
+
+    const metEffect = BLK1_AANVALLEN.filter((a) => a.effect !== undefined);
+
+    it.each(metEffect.map((a) => [a.naam, a] as const))("de aanval werkt echt, en de scanner weigert hem: %s", async (_naam, a) => {
+      const gewerkt = await opScratch(async (tx) => {
+        await tx.unsafe(a.sql);
+        return await a.effect!(tx as unknown as { unsafe: (s: string) => Promise<readonly Record<string, unknown>[]> });
+      });
+      expect(gewerkt, "controle op de test zelf: de SQL doet in PostgreSQL werkelijk wat de aanvaller wil").toBe(true);
+      expect(beoordeelSql(a.sql, false).length, "zonder destructief-mandaat").toBeGreaterThan(0);
+      if (a.altijd) expect(beoordeelSql(a.sql, true).length, "ook met destructief-mandaat").toBeGreaterThan(0);
+    });
+
+    it("dezelfde lijst is verwerpelijk voor de scanner ook zonder effectcontrole (inclusief de gevallen zonder meetbaar effect)", () => {
+      for (const a of BLK1_AANVALLEN) expect(beoordeelSql(a.sql, false).length, a.naam).toBeGreaterThan(0);
+    });
+
+    it("de scanner ziet dezelfde statements als PostgreSQL: een gewone, goedaardige migratie wordt wél doorgelaten en werkt", async () => {
+      const goed = "create table public.nieuw_qa (id int primary key, naam text default 'it''s -- /* niet echt'); create index nieuw_qa_idx on public.nieuw_qa (naam);";
+      expect(beoordeelSql(goed, false)).toEqual([]);
+      const aanwezig = await opScratch(async (tx) => {
+        await tx.unsafe(goed);
+        return (await tx.unsafe("select to_regclass('public.nieuw_qa') is not null as ja"))[0]?.["ja"] === true;
+      });
+      expect(aanwezig).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // De poort end-to-end: de echte CLI-code (`jarvis v3 beoordeel-pr`) tegen de echte
   // database, met alleen GitHub gestubd. De stub volgt de vorm van de GitHub-API
   // (inclusief `previous_filename` bij een hernoeming); echt GitHub-gedrag is hier niet gemeten.
@@ -368,7 +493,7 @@ draai("V3-database (PostgreSQL)", () => {
     let aanroepen: { methode: string; pad: string }[] = [];
     let oud: Record<string, string | undefined> = {};
 
-    function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string } = {}) {
+    function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string; gesloten?: unknown[]; basis?: string } = {}) {
       aanroepen = [];
       vi.stubGlobal("fetch", async (invoer: string | URL, init?: { method?: string; body?: string }) => {
         const url = new URL(String(invoer));
@@ -376,8 +501,9 @@ draai("V3-database (PostgreSQL)", () => {
         const pad = url.pathname;
         aanroepen.push({ methode, pad });
         const antwoord = (lading: unknown, status = 200) => new Response(JSON.stringify(lading), { status, headers: { "content-type": "application/json" } });
+        if (methode === "GET" && pad === `/repos/${SLUG}/pulls`) return antwoord(url.searchParams.get("state") === "closed" ? (opties.gesloten ?? []) : []);
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5`)
-          return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: "main" }, state: opties.merged ? "closed" : "open", draft: false, mergeable: true, mergeable_state: "clean", body: "Uitzonderingen: geen", merged: opties.merged === true, merge_commit_sha: opties.merged ? MERGE : null });
+          return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: opties.basis ?? "main" }, state: opties.merged ? "closed" : "open", draft: false, mergeable: true, mergeable_state: "clean", body: "Uitzonderingen: geen", merged: opties.merged === true, merge_commit_sha: opties.merged ? MERGE : null });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/reviews`) return antwoord([]);
         if (methode === "GET" && pad === `/repos/${SLUG}/commits/${KOP}/check-runs`) return antwoord({ check_runs: [{ name: "poort", status: "completed", conclusion: "success" }] });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/commits`)
@@ -499,6 +625,232 @@ draai("V3-database (PostgreSQL)", () => {
       stubGitHub(id2, [{ filename: ".github/workflows/x.yml", status: "modified" }], { merged: true });
       expect(await beoordeel()).toBe(3); // ook een al gemerged PR die buiten het mandaat valt, wordt niet vastgelegd
       expect(await toestand(id2)).toBe("CONTROLE");
+    });
+
+    it("R-2: een pull request naar een andere branch dan main wordt niet goedgekeurd en niet samengevoegd", async () => {
+      const id = await taakKlaarVoorPr(MANDAAT);
+      stubGitHub(id, [{ filename: "app/v3-proef/page.tsx", status: "added" }], { basis: "jarvis/andere" });
+      expect(await beoordeel(["--samenvoegen"])).toBe(3);
+      expect(schrijfacties()).toEqual([]);
+      expect(await toestand(id)).toBe("CONTROLE");
+    });
+
+    async function totUitrol(id: string) {
+      stubGitHub(id, [{ filename: "app/v3-proef/page.tsx", status: "added" }]);
+      expect(await beoordeel(["--samenvoegen"])).toBe(0);
+      expect(await toestand(id)).toBe("UITROL");
+    }
+    async function sweepRonde(id: string, extra: Parameters<typeof stubGitHub>[2] = {}): Promise<number> {
+      stubGitHub(id, [{ filename: "app/v3-proef/page.tsx", status: "added" }], {
+        merged: true,
+        gesloten: [{ number: 5, merged_at: new Date().toISOString(), user: { login: "tovas-jarvis-bot" }, head: { ref: "jarvis/x" }, base: { ref: "main" } }],
+        ...extra,
+      });
+      const { voerV3Uit } = await import("@/jarvis/src/v3-cli");
+      const stil = vi.spyOn(console, "error").mockImplementation(() => {});
+      const log = vi.spyOn(console, "log").mockImplementation(() => {});
+      try {
+        return await voerV3Uit(["sweep", "--repo", SLUG]);
+      } finally {
+        stil.mockRestore();
+        log.mockRestore();
+      }
+    }
+
+    it("R-1: na een mislukte eindcontrole zet het herstel van de sweep een al vastgelegde PR niet opnieuw op UITROL en wist de lease niet", async () => {
+      const id = await taakKlaarVoorPr(MANDAAT);
+      await totUitrol(id);
+      await werker(async (tx) => {
+        await tx`select jarvis.v3_pak(${id}, 'cloud-1', 40)`;
+        await tx`select jarvis.v3_overgang(${id}, 'cloud-1', 'EINDCONTROLE', '{"gedeployed": true}'::jsonb)`;
+      });
+      await ci((tx) => tx`select jarvis.v3_ci_eindcontrole(${id}, ${JSON.stringify([meet("A1", "mislukt")])}::text::jsonb)`);
+      expect(await toestand(id)).toBe("UITVOEREN");
+      await werker((tx) => tx`select jarvis.v3_pak(${id}, 'cloud-3', 40)`);
+      expect(await sweepRonde(id)).toBe(0);
+      expect(await toestand(id)).toBe("UITVOEREN");
+      expect((await sql`select lease_houder from jarvis.v3_taken where id = ${id}`)[0]!.lease_houder).toBe("cloud-3");
+    });
+
+    it("R-1 (database): dezelfde pull request wordt voor een taak maar één keer vastgelegd, ook als de uitvoerder opnieuw naar CONTROLE gaat", async () => {
+      const id = await taakKlaarVoorPr(MANDAAT);
+      await totUitrol(id);
+      await werker(async (tx) => {
+        await tx`select jarvis.v3_pak(${id}, 'cloud-1', 40)`;
+        await tx`select jarvis.v3_overgang(${id}, 'cloud-1', 'EINDCONTROLE', '{"gedeployed": true}'::jsonb)`;
+      });
+      await ci((tx) => tx`select jarvis.v3_ci_eindcontrole(${id}, ${JSON.stringify([meet("A1", "mislukt")])}::text::jsonb)`);
+      // de uitvoerder meldt dezelfde (al samengevoegde) PR opnieuw; dat wist merge_sha uit de taak, dus de sweep-controle ziet het niet meer
+      await werker(async (tx) => {
+        await tx`select jarvis.v3_pak(${id}, 'cloud-3', 40)`;
+        await tx`select jarvis.v3_overgang(${id}, 'cloud-3', 'CONTROLE', ${JSON.stringify({ pr: { repo: SLUG, nummer: 5, sha: KOP } })}::text::jsonb)`;
+      });
+      await expect(ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${SLUG}, 5, ${KOP}, ${MERGE})`)).rejects.toThrow(/al vastgelegd/);
+      expect(await sweepRonde(id)).toBe(0);
+      expect(await toestand(id)).toBe("CONTROLE");
+      // een ANDERE pull request voor dezelfde taak mag wel
+      await werker((tx) => tx`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values (${SLUG}, 6, ${KOP}, 'GO')`);
+      await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${SLUG}, 6, ${KOP}, ${MERGE})`);
+      expect(await toestand(id)).toBe("UITROL");
+    });
+
+    describe("R-3: het bouwmerk op productie mag een nazaat van de samenvoegcommit zijn", () => {
+      const PROD = "https://prod.invalid/v3-proef";
+      const mandaatBouwmerk = { ...MANDAAT, acceptatie: [{ id: "A1", omschrijving: "pagina met bouwmerk", meting: { soort: "http", url: PROD, bevat: "V3 werkt", bouwmerk: true } }] };
+
+      async function inEindcontrole() {
+        const id = await taakKlaarVoorPr(mandaatBouwmerk);
+        await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${SLUG}, 5, ${KOP}, ${MERGE})`);
+        await werker(async (tx) => {
+          await tx`select jarvis.v3_pak(${id}, 'cloud-1', 40)`;
+          await tx`select jarvis.v3_overgang(${id}, 'cloud-1', 'EINDCONTROLE', '{"gedeployed": true}'::jsonb)`;
+        });
+        return id;
+      }
+      async function meetOp(merk: string, vergelijkStatus: string): Promise<number> {
+        const aanroepen: string[] = [];
+        vi.stubGlobal("fetch", async (invoer: string | URL) => {
+          const url = new URL(String(invoer));
+          aanroepen.push(url.pathname);
+          if (url.host === "prod.invalid") return new Response(`<meta name="jarvis-bouwmerk" content="${merk}"><p>V3 werkt</p>`, { status: 200 });
+          if (url.pathname.startsWith(`/repos/${SLUG}/compare/`)) return new Response(JSON.stringify({ status: vergelijkStatus }), { status: 200 });
+          return new Response("{}", { status: 404 });
+        });
+        const { voerV3Uit } = await import("@/jarvis/src/v3-cli");
+        const stil = vi.spyOn(console, "error").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          return await voerV3Uit(["eindcontrole"]);
+        } finally {
+          stil.mockRestore();
+          log.mockRestore();
+        }
+      }
+
+      it("slaagt bij het bouwmerk van de samenvoegcommit zelf (zonder compare-aanroep)", async () => {
+        const id = await inEindcontrole();
+        expect(await meetOp(MERGE.slice(0, 7), "diverged")).toBe(0);
+        expect(await toestand(id)).toBe("KLAAR");
+      });
+      it("slaagt bij een nazaat (main is intussen verder), en faalt bij een commit die er geen nazaat van is", async () => {
+        const id = await inEindcontrole();
+        expect(await meetOp("9999999", "ahead")).toBe(0);
+        expect(await toestand(id)).toBe("KLAAR");
+        const id2 = await inEindcontrole();
+        expect(await meetOp("9999999", "diverged")).toBe(0);
+        expect(await toestand(id2)).toBe("UITVOEREN");
+        const id3 = await inEindcontrole();
+        expect(await meetOp("9999999", "behind")).toBe(0);
+        expect(await toestand(id3)).toBe("UITVOEREN");
+      });
+    });
+
+    describe("de migratieroute end-to-end (echte PostgreSQL voor de migratie, GitHub gestubd)", () => {
+      const BASIS_SHA = "a".repeat(40);
+      const MIGRATIE = "supabase/migrations/0101_qa.sql";
+      const MANDAAT_MIG = { ...MANDAAT, paden_ja: ["app/**", "supabase/migrations/*.sql"], migraties: true, destructief: false };
+      let oudEnv: Record<string, string | undefined> = {};
+
+      beforeAll(async () => {
+        await admin.unsafe(`do $$ begin if not exists (select 1 from pg_roles where rolname = 'qa_migrator') then create role qa_migrator login; end if; end $$`);
+        await sql.unsafe(`grant usage, create on schema public to qa_migrator;
+          create table if not exists public.qa_ledger (version text, name text, statements text[]);
+          grant all on public.qa_ledger to qa_migrator;`);
+        const url = new URL(BASIS);
+        url.pathname = `/${dbNaam}`;
+        url.username = "qa_migrator";
+        oudEnv = { JARVIS_MIGRATIE_DB_URL: process.env.JARVIS_MIGRATIE_DB_URL, JARVIS_MIGRATIE_LEDGER: process.env.JARVIS_MIGRATIE_LEDGER };
+        process.env.JARVIS_MIGRATIE_DB_URL = url.toString();
+        process.env.JARVIS_MIGRATIE_LEDGER = "public.qa_ledger";
+      });
+      afterAll(async () => {
+        for (const [k, v] of Object.entries(oudEnv)) {
+          if (v === undefined) delete process.env[k];
+          else process.env[k] = v;
+        }
+      });
+
+      function stubMigreer(id: string, sqlTekst: string, status = "added") {
+        vi.stubGlobal("fetch", async (invoer: string | URL) => {
+          const url = new URL(String(invoer));
+          const antwoord = (lading: unknown) => new Response(JSON.stringify(lading), { status: 200 });
+          if (url.pathname === `/repos/${SLUG}/compare/${BASIS_SHA}...${KOP}`)
+            return antwoord({ files: [{ filename: MIGRATIE, status }], commits: [{ commit: { message: `m\n\nJarvis-Role: developer\nJarvis-Task: ${id}` }, parents: [{}] }] });
+          if (url.pathname === `/repos/${SLUG}/contents/${MIGRATIE}`) return antwoord({ encoding: "base64", content: Buffer.from(sqlTekst).toString("base64") });
+          return new Response("{}", { status: 404 });
+        });
+      }
+      async function migreer(): Promise<number> {
+        const { voerV3Uit } = await import("@/jarvis/src/v3-cli");
+        const stil = vi.spyOn(console, "error").mockImplementation(() => {});
+        const log = vi.spyOn(console, "log").mockImplementation(() => {});
+        try {
+          return await voerV3Uit(["migreer", "--repo", SLUG, "--basis", BASIS_SHA, "--kop", KOP]);
+        } finally {
+          stil.mockRestore();
+          log.mockRestore();
+        }
+      }
+      async function schoon() {
+        await sql.unsafe(`drop table if exists public.klanten, public.klanten2, public.t, public.nieuw_qa, public.t_trig cascade; drop function if exists public.f() cascade; delete from public.qa_ledger;
+          create table public.klanten (id int); insert into public.klanten values (1), (2), (3); create table public.klanten2 (id int); create table public.t (n name);
+          alter table public.klanten owner to qa_migrator; alter table public.klanten2 owner to qa_migrator; alter table public.t owner to qa_migrator;`);
+      }
+      const bestaat = async (t: string) => (await sql.unsafe(`select to_regclass('${t}') is not null as ja`))[0]!.ja === true;
+      const ledgerRijen = async () => (await sql.unsafe("select name from public.qa_ledger"))[0] !== undefined;
+
+      it("past een goedaardige additieve migratie toe, in één transactie met de ledgerregel", async () => {
+        await schoon();
+        const id = await taakKlaarVoorPr(MANDAAT_MIG);
+        stubMigreer(id, "begin;\ncreate table public.nieuw_qa (id int primary key);\ncommit;");
+        expect(await migreer()).toBe(0);
+        expect(await bestaat("public.nieuw_qa")).toBe(true);
+        expect(await ledgerRijen()).toBe(true);
+        expect(await migreer()).toBe(0); // opnieuw: staat al in het ledger, niets dubbel
+        expect((await sql.unsafe("select count(*)::int as n from public.qa_ledger"))[0]!.n).toBe(1);
+      });
+
+      it.each(BLK1_AANVALLEN.filter((a) => a.effect !== undefined && !a.sql.includes("jarvis")).map((a) => [a.naam, a] as const))("BLK-1: de aanval wordt geweigerd en de productiedata blijft heel: %s", async (_naam, a) => {
+        await schoon();
+        const id = await taakKlaarVoorPr(MANDAAT_MIG);
+        stubMigreer(id, a.sql);
+        expect(await migreer()).toBe(3);
+        expect(await bestaat("public.klanten")).toBe(true);
+        expect(await bestaat("public.klanten2")).toBe(true);
+        expect((await sql.unsafe("select count(*)::int as n from public.klanten"))[0]!.n).toBe(3);
+        expect(await ledgerRijen()).toBe(false);
+      });
+
+      it("weigert een migratie die het schema van Jarvis zou raken, en past niets toe als de migratierol dat schema kan gebruiken", async () => {
+        await schoon();
+        const id = await taakKlaarVoorPr(MANDAAT_MIG);
+        stubMigreer(id, 'insert into U&"\\006Aarvis".v3_instellingen (sleutel, waarde) values (\'qa-c\', \'1\')');
+        expect(await migreer()).toBe(3);
+        expect((await sql.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-c'"))[0]!.n).toBe(0);
+        // de rolcontrole: een goedaardige migratie wordt NIET toegepast zodra de rol het schema jarvis kan gebruiken
+        const id2 = await taakKlaarVoorPr(MANDAAT_MIG);
+        stubMigreer(id2, "create table public.nieuw_qa (id int);");
+        await sql.unsafe("grant usage on schema jarvis to qa_migrator");
+        try {
+          expect(await migreer()).toBe(1);
+          expect(await bestaat("public.nieuw_qa")).toBe(false);
+          expect(await ledgerRijen()).toBe(false);
+        } finally {
+          await sql.unsafe("revoke usage on schema jarvis from qa_migrator");
+        }
+        expect(await migreer()).toBe(0);
+        expect(await bestaat("public.nieuw_qa")).toBe(true);
+      });
+
+      it("past alleen nieuwe bestanden toe: een gewijzigd of hernoemd migratiebestand wordt geweigerd", async () => {
+        await schoon();
+        const id = await taakKlaarVoorPr(MANDAAT_MIG);
+        for (const status of ["modified", "renamed", "removed"]) {
+          stubMigreer(id, "create table public.nieuw_qa (id int);", status);
+          expect(await migreer(), status).toBe(3);
+          expect(await bestaat("public.nieuw_qa"), status).toBe(false);
+        }
+      });
     });
   });
 });

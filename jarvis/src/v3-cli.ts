@@ -43,6 +43,7 @@ import { laatstePerNaam, SAMENVOEGMETHODE, VERPLICHTE_CHECK } from "./pr";
 import {
   geraaktePaden,
   beoordeelHttpMeting,
+  leesBouwmerkUitPagina,
   beoordeelV3Pr,
   dispatchBesluit,
   magUitrollen,
@@ -164,6 +165,7 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     repo: slug,
     nummer,
     kop: pr.kop,
+    basis: pr.basis,
     auteur: pr.auteur,
     botLogin: bot,
     taken: t.taken,
@@ -246,6 +248,16 @@ async function leggSamengevoegdVast(taak: string, slug: string, nummer: number, 
 
 // ------------------------------------------------------------ eindcontrole
 
+/** Staat `kandidaat` op of voor `main` na `basis`? Via de compare-API van GitHub; zonder token of bij een fout: nee. */
+async function isNazaatVan(slug: string, basis: string, kandidaat: string): Promise<boolean> {
+  const token = (process.env.GITHUB_TOKEN ?? "").trim();
+  if (!token) return false;
+  const a = await github(token, "GET", `/repos/${slug}/compare/${basis}...${kandidaat}`);
+  if (a.status !== 200) return false;
+  const status = (a.lading as { status?: string } | null)?.status;
+  return status === "ahead" || status === "identical";
+}
+
 /**
  * De eindcontrole draait in de CI (rol jarvis_ci), niet in de sessie van de uitvoerder: alleen die rol kan
  * KLAAR vastleggen (v3_ci_eindcontrole). Elk criterium van het mandaat wordt hier gemeten op de echte
@@ -266,7 +278,7 @@ async function eindcontrole(): Promise<number> {
         code = 1;
         continue;
       }
-      const pr = (werk?.["pr"] ?? null) as { merge_sha?: string } | null;
+      const pr = (werk?.["pr"] ?? null) as { merge_sha?: string; repo?: string } | null;
       const verwacht = pr?.merge_sha ?? null;
       const meting: { criterium: string; uitkomst: string; bewijs: string; gemeten_op: string }[] = [];
       for (const c of m.acceptatie) {
@@ -274,7 +286,14 @@ async function eindcontrole(): Promise<number> {
         if (c.meting.soort === "http") {
           try {
             const a = await fetch(c.meting.url, { redirect: "follow", headers: { "User-Agent": "jarvis-v3-eindcontrole", "Cache-Control": "no-cache" } });
-            uit = beoordeelHttpMeting(c.meting, { status: a.status, tekst: await a.text() }, verwacht);
+            const tekst = await a.text();
+            // Draait productie op een latere commit dan de samenvoeging, dan is het bouwmerk een nazaat daarvan.
+            const gevonden = c.meting.bouwmerk ? leesBouwmerkUitPagina(tekst) : null;
+            let nazaat = false;
+            if (gevonden !== null && verwacht !== null && !(verwacht.startsWith(gevonden) || gevonden.startsWith(verwacht)) && pr?.repo) {
+              nazaat = await isNazaatVan(pr.repo, verwacht, gevonden);
+            }
+            uit = beoordeelHttpMeting(c.meting, { status: a.status, tekst }, verwacht, () => nazaat);
           } catch (fout) {
             uit = { geslaagd: false, bewijs: `niet bereikbaar: ${fout instanceof Error ? fout.message : String(fout)}` };
           }
@@ -372,6 +391,9 @@ async function sweep(slug: string): Promise<number> {
     if (taak === undefined || !/^V3-\d{8}-/.test(taak)) continue;
     const rij = await met(async (sql) => (await sql.unsafe(V3_WERK_SQL, [taak]))[0]);
     if (!["UITVOEREN", "CONTROLE"].includes(String(rij?.["toestand"]))) continue;
+    // Al vastgelegd voor deze taak (bijvoorbeeld voor een eindcontrole die daarna mislukte): niet opnieuw.
+    const vast = (rij?.["pr"] ?? null) as { nummer?: number; repo?: string; merge_sha?: string } | null;
+    if (vast?.merge_sha && vast.nummer === p.number && String(vast.repo).toLowerCase() === slug.toLowerCase()) continue;
     const code = await beoordeelPr(p.number, slug, false);
     console.log(`jarvis v3 sweep: samengevoegde #${p.number} vastleggen → ${code === 0 ? "gedaan" : "niet gelukt"}`);
   }
@@ -471,6 +493,17 @@ async function migreer(slug: string, basis: string, kop: string, droog: boolean)
   const { default: postgres } = await import("postgres");
   const db = postgres(dbUrl, { max: 1, prepare: false, connect_timeout: 15 });
   try {
+    // Least privilege, afgedwongen: de migratierol mag het schema van Jarvis niet kunnen gebruiken en geen
+    // lid zijn van zijn eigenaar. De SQL-controle is een tweede laag; deze laag houdt stand als die een gat heeft.
+    const rechten = await db.unsafe(
+      "select exists (select 1 from pg_namespace where nspname = 'jarvis') as bestaat, " +
+        "coalesce(has_schema_privilege(current_user, 'jarvis', 'USAGE'), false) as gebruik, " +
+        "coalesce(pg_has_role(current_user, (select nspowner from pg_namespace where nspname = 'jarvis'), 'MEMBER'), false) as lid",
+    );
+    if (rechten[0]?.["bestaat"] === true && (rechten[0]?.["gebruik"] === true || rechten[0]?.["lid"] === true)) {
+      console.error("jarvis v3 migreer: de migratierol kan het schema jarvis gebruiken of is lid van zijn eigenaar; niets toegepast. Gebruik een rol die alleen de productietabellen mag wijzigen.");
+      return 1;
+    }
     for (const b of bestanden) {
       const naam = b.pad.split("/").pop()!.replace(/\.sql$/, "");
       const bestaat = await db.unsafe(`select 1 from ${ledger} where name = $1`, [naam]);

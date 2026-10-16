@@ -1,11 +1,12 @@
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { V3_AANROEP_PATROON, v3Aanroep } from "@/jarvis/src/db";
+import { BLK1_AANVALLEN } from "./fixtures/v3-aanvallen";
 import {
+  lexSql,
   beoordeelHttpMeting,
   beoordeelV3Pr,
   destructieveSql,
@@ -37,6 +38,7 @@ const basis: V3PrFeiten = {
   repo: "lodewijkmaassen/tovas-flow",
   nummer: 7,
   kop: "deadbeefcafe",
+  basis: "main",
   auteur: "tovas-jarvis-bot",
   botLogin: "tovas-jarvis-bot",
   taken: ["V3-20261015-proef"],
@@ -93,6 +95,7 @@ describe("B4: de poortcode en haar pin zijn voor ieder mandaat gesloten", () => 
   it("weigert jarvis/src, edge, migrations, canonical, roles, package.json, het lockfile, .npmrc en elke jarvis.config.yml", () => {
     const dicht = [
       "jarvis/src/v3.ts", "jarvis/edge/jarvis-db/index.ts", "jarvis/migrations/v3/0002_x.sql", "jarvis/migrations/0002_x.sql", "jarvis/canonical/jarvis-v3.yml", "jarvis/roles/qa.md",
+      "tsconfig.json", "tsconfig.build.json", "sub/tsconfig.base.json",
       "package.json", "package-lock.json", "npm-shrinkwrap.json", ".npmrc", "sub/package.json", "sub/package-lock.json", "sub/.npmrc", "jarvis.config.yml", "sub/jarvis.config.yml",
       ".github/workflows/x.yml", "CODEOWNERS", "docs/CODEOWNERS", ".claude/settings.json", "jarvis/allowlist.yml", ".env.local",
     ];
@@ -171,9 +174,13 @@ describe("B5: de migratiecontrole is een scanner met whitelist, geen regex-strip
     expect(beoordeelSql("create table a (id int); commit; drop table b;", true).join()).toMatch(/transactiebesturing/);
     expect(beoordeelSql("begin; create table a (id int);", true).join()).toMatch(/transactiebesturing/);
   });
-  it("een plpgsql-begin in een functiebody is geen transactiebesturing; update/delete in een functiebody vragen geen destructief-mandaat, maar een DO-blok wel", () => {
-    expect(beoordeelSql("create function f() returns void language plpgsql as $$ begin update t set a = 1 where id = 2; delete from u where id = 3; end $$;", false)).toEqual([]);
-    expect(beoordeelSql("do $$ begin update t set a = 1; end $$;", false).length).toBeGreaterThan(0);
+  it("een plpgsql-begin in een functiebody is geen transactiebesturing, maar wat de body DOET telt wel: update/delete/drop erin vraagt een destructief-mandaat", () => {
+    const veilig = "create function f() returns trigger language plpgsql as $$ begin new.b := 1; return new; end $$;";
+    expect(beoordeelSql(veilig, false)).toEqual([]);
+    const schadelijk = "create function f() returns void language plpgsql as $$ begin update t set a = 1 where id = 2; delete from u where id = 3; end $$;";
+    expect(beoordeelSql(schadelijk, false).join()).toMatch(/UPDATE|DELETE/);
+    expect(beoordeelSql(schadelijk, true)).toEqual([]);
+    expect(beoordeelSql("do $$ begin perform 1; end $$;", false).length).toBeGreaterThan(0);
   });
   it("auth.uid() in een beleidsregel is geen verwijzing naar het schema; auth.users wel", () => {
     expect(beoordeelSql("create policy p on t using (user_id = auth.uid())", true)).toEqual([]);
@@ -348,5 +355,96 @@ describe("B3: de noodstop (enabled: false) stopt ook elke V3-opdracht", () => {
     const r = draai(config, ["status"]);
     expect(r.uit).not.toMatch(/noodstop/);
     expect(r.uit).toMatch(/geen weg naar de database|jarvis v3 status/);
+  });
+});
+
+describe("BLK-2/R-2: tsconfig is poortcode; alleen samenvoegen in main; geen onnormale paden", () => {
+  it("tsconfig.json (en varianten) is voor ieder mandaat gesloten", () => {
+    const breed: Mandaat = { ...mandaat, paden_ja: ["**"], paden_nee: [] };
+    for (const pad of ["tsconfig.json", "tsconfig.build.json", "packages/x/tsconfig.base.json"]) {
+      expect(beoordeelV3Pr({ ...basis, mandaat: breed, bestanden: [pad] }).join(), pad).toMatch(/veiligheidsgrens/);
+    }
+  });
+  it("R-2: een pull request naar een andere branch dan main wordt niet gedekt", () => {
+    for (const b of ["jarvis/andere", "develop", ""]) expect(beoordeelV3Pr({ ...basis, basis: b }).join(), b).toMatch(/niet naar main/);
+    expect(beoordeelV3Pr(basis)).toEqual([]);
+  });
+  it("een pad met .., ., een leeg segment of een stuurteken wordt geweigerd, ook binnen paden_ja", () => {
+    for (const pad of ["app/../.github/x.yml", "app/./x.ts", "app//x.ts", "./app/x.ts", "app/v3-proef/x\u0001.ts"]) {
+      expect(beoordeelV3Pr({ ...basis, bestanden: [pad] }).join(), pad).toMatch(/geen normaal pad/);
+    }
+  });
+});
+
+describe("R-3: het bouwmerk mag een nazaat van de samenvoegcommit zijn", () => {
+  const m = { soort: "http", url: "https://x.invalid", bevat: "V3 werkt", bouwmerk: true } as const;
+  const pagina = (merk: string) => `<meta name="jarvis-bouwmerk" content="${merk}"><p>V3 werkt</p>`;
+  it("slaagt bij gelijk merk, bij een nazaat, en faalt bij een vreemd merk", () => {
+    expect(beoordeelHttpMeting(m, { status: 200, tekst: pagina("abcdef1") }, "abcdef1234567").geslaagd).toBe(true);
+    expect(beoordeelHttpMeting(m, { status: 200, tekst: pagina("9999999") }, "abcdef1234567").geslaagd).toBe(false);
+    const nazaat = beoordeelHttpMeting(m, { status: 200, tekst: pagina("9999999") }, "abcdef1234567", (g) => g === "9999999");
+    expect(nazaat.geslaagd).toBe(true);
+    expect(nazaat.bewijs).toMatch(/volgt op de samenvoegcommit/);
+    expect(beoordeelHttpMeting(m, { status: 200, tekst: pagina("9999999") }, null, () => true).geslaagd).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------
+// BLK-1: de omzeilingen uit de onafhankelijke review. Elk geval wordt hier geweigerd door de scanner;
+// dat PostgreSQL de SQL werkelijk zo uitvoert, bewijzen de tests tegen echte PostgreSQL in
+// v3-database.test.ts (dezelfde lijst, `BLK1_AANVALLEN`).
+describe("BLK-1: de lexer leest SQL zoals PostgreSQL en faalt gesloten", () => {
+  it.each(BLK1_AANVALLEN.map((a) => [a.naam, a.sql] as const))("weigert zonder destructief-mandaat: %s", (_naam, sql) => {
+    expect(beoordeelSql(sql, false).length, "zonder destructief").toBeGreaterThan(0);
+  });
+  it("weigert ook met destructief: true alles wat de beveiliging of de lexer zelf raakt", () => {
+    for (const a of BLK1_AANVALLEN.filter((x) => x.altijd)) expect(beoordeelSql(a.sql, true).length, a.naam).toBeGreaterThan(0);
+  });
+  it("een e/E aan het einde van een naam is geen E-prefix (variant a)", () => {
+    const l = lexSql("select name'\\'; drop table klanten; select name'\\'");
+    expect(l.boven).toMatch(/drop table klanten/);
+    expect(l.fouten).toEqual([]);
+  });
+  it("een $ in een naam of getal en een U&-escape zijn lexer-fouten (varianten b en c)", () => {
+    expect(lexSql("select 1 as x$a$").fouten.join()).toMatch(/dollarteken/);
+    expect(lexSql("select 1$a$").fouten.join()).toMatch(/dollarteken/);
+    expect(lexSql('select * from U&"\\006Aarvis".t').fouten.join()).toMatch(/unicode-escape/);
+    expect(lexSql("select U&'\\0041'").fouten.join()).toMatch(/unicode-escape/);
+  });
+  it("een functiebody als gewone tekst of dollar-quote wordt als code beoordeeld (variant d)", () => {
+    const l = lexSql("create function f() returns trigger language plpgsql as 'begin delete from klanten; return new; end'");
+    expect(l.bodies.join(" ")).toMatch(/delete from klanten/);
+    const l2 = lexSql("create function f() returns trigger language plpgsql as $q$begin delete from klanten; return new; end$q$");
+    expect(l2.bodies.join(" ")).toMatch(/delete from klanten/);
+  });
+  it("niet afgesloten tekst, commentaar, quotes en dollar-quotes zijn fouten", () => {
+    for (const sql of ["select 'abc", "select /* x", 'select "abc', "select $$abc", "select e'abc\\'"]) {
+      expect(lexSql(sql).fouten.length, sql).toBeGreaterThan(0);
+      expect(beoordeelSql(sql, true).length, sql).toBeGreaterThan(0);
+    }
+  });
+  it("laat gewone, additieve SQL met lastige maar geldige tekens door", () => {
+    const ok = [
+      "create table t (a text default 'it''s', b text default E'a\\'b', c int);",
+      "create table t2 (a int); -- opmerking met 'quote en $$ erin\ncreate index i on t2 (a);",
+      "create table t3 (naam text default $q$a 'b' -- c$q$);",
+      "create function f() returns trigger language plpgsql as $$ begin new.a := 1; return new; end $$;",
+      "create table t4 (a int);\r\ncreate index i4 on t4 (a);",
+    ];
+    for (const sql of ok) expect(beoordeelSql(sql, false), sql).toEqual([]);
+  });
+  it("is lineair: een groot bestand zonder puntkomma kost geen minuten (geen kwadratische regex)", () => {
+    const groot = "alter table t add column a int ".repeat(40000);
+    const t = Date.now();
+    beoordeelSql(groot, false);
+    expect(Date.now() - t).toBeLessThan(3000);
+  });
+  it("search_path naar een beschermd schema, een andere functietaal en V3/Jarvis-namen zijn altijd verboden", () => {
+    for (const sql of [
+      "set search_path = auth, public", "set local search_path to pg_catalog",
+      "create function f() returns int language c as '$libdir/x', 'f'", "create function f() returns int language 'c' as 'x'",
+      "select * from v3_taken", "select 1 from jarvis", "set standard_conforming_strings = off", "set backslash_quote = on",
+    ]) expect(beoordeelSql(sql, true).length, sql).toBeGreaterThan(0);
+    expect(beoordeelSql("set search_path = public, extensions_pg;", true).length).toBe(0);
   });
 });
