@@ -95,4 +95,18 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
   { naam: "BLK-C: dezelfde keten verbergt een verwijzing naar jarvis", sql: "insert into public.t select e'x'\n'\\''; insert into jarvis.v3_instellingen values ('qa-blkc', '1'); -- '", altijd: true,
     effect: async (tx) => (await tx.unsafe("select count(*)::int as n from jarvis.v3_instellingen where sleutel = 'qa-blkc'"))[0]?.["n"] === 1 },
   { naam: "BLK-C: E-keten met drie stukken", sql: "insert into public.t select e'x'\n'y'\n'\\''; delete from public.klanten; -- '", altijd: false, effect: geleegd },
+  // --- BLK-D (achtste review): sequentie- en large-object-functies, bodies, en de alter-whitelist
+  { naam: "D1: setval op een sequentie via een tekstnaam", sql: "create sequence public.qaseq; insert into public.t select setval('public.qaseq', 500)::text;", altijd: false,
+    effect: async (tx) => Number((await tx.unsafe("select last_value::int as n from public.qaseq"))[0]?.["n"]) === 500 },
+  { naam: "D1: nextval op een sequentie via een tekstnaam", sql: "create sequence public.qaseq; insert into public.t select nextval('public.qaseq')::text;", altijd: false,
+    effect: async (tx) => Number((await tx.unsafe("select last_value::int as n from public.qaseq"))[0]?.["n"]) === 1 },
+  { naam: "D2: alter sequence … restart in een triggerbody", sql: "create sequence public.qaseq; create function public.f() returns trigger language plpgsql as $$ begin alter sequence public.qaseq restart with 900; return new; end $$; create trigger tr before insert on public.t for each row execute function public.f(); insert into public.t values ('x');", altijd: false,
+    effect: async (tx) => Number((await tx.unsafe("select last_value::int as n from public.qaseq"))[0]?.["n"]) === 900 },
+  { naam: "D2: lo_unlink van een large object", sql: "insert into public.t select lo_create(4242)::text; insert into public.t select lo_unlink(4242)::text;", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from pg_largeobject_metadata where oid = 4242"))[0]?.["n"] === 0 },
+  { naam: "D2: merge in een triggerbody wist rijen", sql: "create function public.f() returns trigger language plpgsql as $$ begin merge into public.klanten k using (select 1) x on true when matched then delete; return new; end $$; create trigger tr before insert on public.t for each row execute function public.f(); insert into public.t values ('x');", altijd: false, effect: geleegd },
+  { naam: "D3: detach partition met een partitie die \"add\" heet", sql: 'create table public.pp(a int) partition by list(a); create table public."add" partition of public.pp for values in (1); insert into public.pp values (1); alter table public.pp detach partition public."add";', altijd: false,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.pp"))[0]?.["n"] === 0 },
+  { naam: "D3: set default naast enable row level security", sql: "create table public.pr(c int default 1); alter table public.pr alter column c set default 7, enable row level security;", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select column_default as d from information_schema.columns where table_schema = 'public' and table_name = 'pr'"))[0]?.["d"] === "7" },
 ];

@@ -342,7 +342,7 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
   [/\b(session_replication_role|standard_conforming_strings|backslash_quote|escape_string_warning)\b/, "sessie-instellingen die het lezen van SQL of triggers veranderen"],
   [/\bdisable\b/, "DISABLE (triggers of beveiliging uitzetten)"],
   [/\blanguage\s+(?!(sql|plpgsql)\b)/, "een andere functietaal dan sql of plpgsql"],
-  [/\b(lo_import|lo_export|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|pg_sleep)\b/, "bestands-, netwerk- of sessiefuncties"],
+  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|pg_sleep)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
 ];
 
 /** Per statement (bovenste niveau) verboden beginwoorden: eigen transactiebesturing en sessie-instellingen. */
@@ -368,7 +368,10 @@ const DESTRUCTIEF_OVERAL: readonly Regel[] = [
   [/\bdelete\b/, "DELETE"],
   [/\bupdate\b/, "UPDATE"],
   [/\b(vacuum|reindex|cluster|refresh\s+materialized)\b/, "onderhoudsopdracht"],
+  [/\bmerge\b/, "MERGE (kan wijzigen en verwijderen)"],
 ];
+/** Alleen in bodies (functie, trigger, DO): statements die bestaande objecten wijzigen horen daar niet. */
+const BODY_WIJZIGT_BESTAAND = /\b(alter|lock\s+table|reassign|import\s+foreign|security\s+label)\b/;
 /** Alleen op het bovenste niveau (wat nu wordt uitgevoerd). */
 const DESTRUCTIEF_BOVEN: readonly Regel[] = [
   [/\bcreate\s+or\s+replace\b/, "CREATE OR REPLACE (overschrijft bestaand gedrag)"],
@@ -376,7 +379,7 @@ const DESTRUCTIEF_BOVEN: readonly Regel[] = [
   [/\bsecurity\s+definer\b/, "SECURITY DEFINER"],
 ];
 /** Per statement: een ALTER die laat vallen, hernoemt, van eigenaar of type verandert, of triggers aanzet. */
-const ALTER_DESTRUCTIEF = /\b(drop|rename|owner|type|force|enable\s+(trigger|rule|replica|always))\b/;
+const ALTER_DESTRUCTIEF = /\b(drop|rename|owner|type|force|detach|attach|inherit|replica|reset|validate|cluster|schema|alter\s+column|set\s+(default|not|data|without|with|logged|unlogged|tablespace|access|statistics|storage|compression|\()|enable\s+(trigger|rule|replica|always))\b/;
 
 const TOEGESTAAN: readonly RegExp[] = [
   /^create (unlogged )?table\b/,
@@ -386,8 +389,9 @@ const TOEGESTAAN: readonly RegExp[] = [
   /^create (temp(orary)? )?view\b/,
   /^create (constraint )?trigger\b/,
   /^create function\b/,
-  /^alter table\b.*\badd\b/,
-  /^alter table\b.*\benable row level security$/,
+  // `add` moet het commando zijn, direct na de tabelnaam; een naam of kolom die "add" heet telt niet.
+  /^alter table (if exists )?(only )?[^\s,.]+( ?\. ?[^\s,.]+)? add\b/,
+  /^alter table (if exists )?(only )?[^\s,.]+( ?\. ?[^\s,.]+)? enable row level security$/,
   /^insert into\b/,
   /^comment on\b/,
   /^set\s+(local\s+)?(statement_timeout|lock_timeout|idle_in_transaction_session_timeout|client_min_messages|check_function_bodies|search_path)\b/,
@@ -431,6 +435,7 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
   }
 
   if (!destructief) {
+    for (const b of bodyTeksten) if (BODY_WIJZIGT_BESTAAND.test(b)) redenen.push("ALTER, LOCK of vergelijkbaar in een body vraagt destructief: true in het mandaat");
     const codeTekst = [boven, ...bodyTeksten];
     for (const t of codeTekst) {
       for (const [r, naam] of DESTRUCTIEF_OVERAL) if (r.test(t)) redenen.push(`${naam} vraagt destructief: true in het mandaat`);

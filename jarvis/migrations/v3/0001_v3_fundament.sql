@@ -198,6 +198,7 @@ create or replace function jarvis.v3_pak(p_taak text, p_houder text, p_minuten i
 returns boolean language plpgsql security definer set search_path = jarvis, pg_temp as $$
 declare n int;
 begin
+  if lower(p_houder) in ('ci','eigenaar','jarvis','dispatcher') then raise exception 'v3: houder % is gereserveerd', p_houder; end if;
   update jarvis.v3_taken
      set lease_houder = p_houder, lease_tot = now() + make_interval(mins => least(greatest(p_minuten, 1), 120)),
          poging = case when lease_houder is distinct from p_houder then poging + 1 else poging end
@@ -376,6 +377,11 @@ begin
   select count(*) into n from jarvis.toetsingen
    where pr_repo = p_repo and pr_nummer = p_nummer and commit_sha = p_kop and oordeel = 'GO';
   if n = 0 then raise exception 'v3: geen toetsing GO op de kop %', p_kop; end if;
+  -- Eén NO-GO op dezelfde kop weegt zwaarder dan elke GO.
+  if exists (select 1 from jarvis.toetsingen
+              where pr_repo = p_repo and pr_nummer = p_nummer and commit_sha = p_kop and oordeel <> 'GO') then
+    raise exception 'v3: op de kop % staat ook een NO-GO', p_kop;
+  end if;
   if coalesce(p_merge_sha, '') !~ '^[0-9a-f]{7,40}$' then raise exception 'v3: ongeldige merge-sha'; end if;
   -- Dezelfde pull request wordt voor deze taak maar één keer vastgelegd. Zonder deze regel zet het herstel van de
   -- sweep een oude, al gemelde PR opnieuw op UITROL nadat een eindcontrole is mislukt, en wist het de lease van de uitvoerder.

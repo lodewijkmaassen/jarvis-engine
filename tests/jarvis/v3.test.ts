@@ -546,3 +546,16 @@ describe("BLK-C: een E-tekst met aaneengeschakelde vervolgstukken blijft een E-t
   });
 });
 
+
+describe("BLK-D: een goedaardige additieve migratie blijft doorgelaten; secrets alleen in een omgeving", () => {
+  it("laat gewone additieve migraties door", () => {
+    expect(beoordeelSql("create table public.a (id serial primary key, n int default 5); alter table public.a add column b text default 'x'; alter table only public.a enable row level security;", false)).toEqual([]);
+  });
+  it("de CI-jobs die het CI-geheim gebruiken draaien in de omgeving jarvis-ci", () => {
+    const yml = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-v3.yml"), "utf8");
+    for (const j of ["sweep", "eindcontrole", "dispatch"]) {
+      const i = yml.indexOf(`\n  ${j}:`);
+      expect(yml.slice(i, i + 300), j).toMatch(/environment: jarvis-ci/);
+    }
+  });
+});

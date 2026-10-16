@@ -228,6 +228,23 @@ draai("V3-database (PostgreSQL)", () => {
     await werker((tx) => tx`select jarvis.v3_overgang(${id}, 'cloud-1', 'EINDCONTROLE', '{"gedeployed": true}'::jsonb)`);
   }
 
+  it("BLK-E: de sweep ziet een NO-GO op de kop als geen GO (zodat hij niet eerst samenvoegt)", async () => {
+    const { V3_TOETSING_GO_SQL } = await import("@/jarvis/src/v3-cli");
+    const q = async (kop: string) => (await sql.unsafe(V3_TOETSING_GO_SQL, ["o/r", 77, kop])).length;
+    await sql`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values ('o/r', 77, 'aaa1111', 'GO'), ('o/r', 77, 'bbb2222', 'GO')`;
+    expect(await q("aaa1111")).toBe(1);
+    await sql`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values ('o/r', 77, 'bbb2222', 'NO-GO')`;
+    expect(await q("bbb2222")).toBe(0);
+  });
+
+  it("BLK-E: de uitvoerder kan geen lease nemen onder de naam van de CI, de eigenaar of de dispatcher", async () => {
+    const id = nieuwId();
+    await totUitvoeren(id);
+    for (const h of ["ci", "CI", "eigenaar", "jarvis", "dispatcher"]) {
+      await expect(werker((tx) => tx`select jarvis.v3_pak(${id}, ${h}, 40)`), h).rejects.toThrow(/gereserveerd/);
+    }
+  });
+
   it("test 6/9: de volledige keten; UITROL en KLAAR alleen door de CI-identiteit, KLAAR alleen na gemeten bewijs per criterium", async () => {
     const id = nieuwId();
     await totUitvoeren(id);
@@ -239,6 +256,10 @@ draai("V3-database (PostgreSQL)", () => {
     await werker((tx) => tx`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values (${PR.repo}, ${PR.nummer}, 'andere-kop', 'GO')`);
     await expect(ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${PR.repo}, ${PR.nummer}, ${PR.sha}, 'abcdef1234567')`)).rejects.toThrow(/geen toetsing GO/);
     await werker((tx) => tx`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values (${PR.repo}, ${PR.nummer}, ${PR.sha}, 'GO')`);
+    // BLK-E: een NO-GO op dezelfde kop weegt zwaarder dan de GO, ook als hij later komt
+    await werker((tx) => tx`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values (${PR.repo}, ${PR.nummer}, 'nogo0000abc', 'GO')`);
+    await werker((tx) => tx`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values (${PR.repo}, ${PR.nummer}, 'nogo0000abc', 'NO-GO')`);
+    await expect(ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${PR.repo}, ${PR.nummer}, 'nogo0000abc', 'abcdef1234567')`)).rejects.toThrow(/NO-GO/);
     await expect(ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, 'andere/repo', ${PR.nummer}, ${PR.sha}, 'abcdef1234567')`)).rejects.toThrow(/buiten het mandaat/);
     await ci((tx) => tx`select jarvis.v3_ci_samengevoegd(${id}, ${PR.repo}, ${PR.nummer}, ${PR.sha}, 'abcdef1234567')`);
     expect(await toestand(id)).toBe("UITROL");

@@ -25,7 +25,6 @@ import { laadConfig, vindWortel } from "./config";
 import { leesArgumenten } from "./args";
 import { takenUitCommits } from "./attestatie";
 import {
-  TOETSING_KOP_SQL,
   V3_ACTUEEL_SQL,
   V3_VERZOEKEN_SQL,
   V3_WERK_SQL,
@@ -61,6 +60,11 @@ import {
 export function padNaarUrl(pad: string): string {
   return pad.split("/").map(encodeURIComponent).join("/");
 }
+
+/** Is er een GO op precies deze kop, en géén NO-GO? (Eén NO-GO weegt zwaarder dan elke GO; V2 blijft ongemoeid.) */
+export const V3_TOETSING_GO_SQL =
+  "select 1 as go from jarvis.toetsingen where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and oordeel = 'GO' " +
+  "and not exists (select 1 from jarvis.toetsingen where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and oordeel <> 'GO') limit 1";
 
 const TOESTANDEN = ["ANALYSE", "UITVOEREN", "CONTROLE", "UITROL", "EINDCONTROLE", "KLAAR", "MISLUKT"] as const;
 
@@ -163,7 +167,7 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
   const { mandaat, toestand, go } = await met(async (sql) => {
     const taak = t.taken[0];
     const werk = taak === undefined ? [] : await sql.unsafe(V3_WERK_SQL, [taak]);
-    const toets = await sql.unsafe(TOETSING_KOP_SQL, [slug, nummer, pr.kop]);
+    const toets = await sql.unsafe(V3_TOETSING_GO_SQL, [slug, nummer, pr.kop]);
     return { mandaat: mandaatUitRij(werk[0]), toestand: (werk[0]?.["toestand"] as string | undefined) ?? null, go: toets.length > 0 };
   });
   const poort = laatstePerNaam(pr.checks).filter((c) => c.naam === VERPLICHTE_CHECK);
