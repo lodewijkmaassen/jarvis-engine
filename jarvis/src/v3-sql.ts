@@ -348,11 +348,15 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
   [/\balter\s+(system|database|role|user|group|default\s+privileges)\b/, "ALTER SYSTEM, DATABASE, ROLE of DEFAULT PRIVILEGES"],
   [/\bcreate\s+(role|user|group|extension|event\s+trigger|server|foreign|publication|subscription|language|operator|cast|rule|database|schema|tablespace|collation|text\s+search|transform|access\s+method)\b/, "CREATE ROLE, EXTENSION, SCHEMA of vergelijkbaar"],
   [/\bset\s+schema\b/, "SET SCHEMA"],
+  [/\bschema\s+(if\s+exists\s+)?(auth|vault|storage|extensions|pg_catalog|information_schema|pg_temp|jarvis\w*)\b/, "een beschermd schema als doel (DROP/ALTER/GRANT/COMMENT … SCHEMA auth, vault, …)"],
+  [/\b(drop|alter)\s+(role|user|group|owned|publication|extension|event\s+trigger|tablespace|server|foreign|subscription|database)\b/, "DROP/ALTER van rollen, extensies, publicaties of andere systeemobjecten"],
+  [/\b(reassign\s+owned|security\s+label)\b/, "REASSIGN OWNED of SECURITY LABEL"],
+  [/\b(pg_authid|pg_shadow|pg_auth_members|pg_user_mappings|pg_roles)\b/, "de catalogus met rollen en wachtwoorden"],
   [/\b(set|reset)\s+(local\s+|session\s+)?(role|session\s+authorization)\b/, "rol wisselen"],
   [/\b(session_replication_role|standard_conforming_strings|backslash_quote|escape_string_warning)\b/, "sessie-instellingen die het lezen van SQL of triggers veranderen"],
   [/\bdisable\b/, "DISABLE (triggers of beveiliging uitzetten)"],
   [/\blanguage\s+(?!(sql|plpgsql)\b)/, "een andere functietaal dan sql of plpgsql"],
-  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|ts_rewrite|pg_sleep\w*|pg_(try_)?advisory\w*|pg_logical_emit_message|brin_\w+|gin_clean_pending_list|pg_stat_file|pg_ls_\w+|pg_notify|pg_stat_reset\w*|pg_reload_conf|pg_rotate_logfile|pg_switch_wal|pg_drop_\w+|pg_create_\w+|pg_promote|pg_wal_replay\w*|pg_truncate\w*|pg_import\w*|pg_export\w*)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
+  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink\w*|pg_terminate_backend|pg_cancel_backend|set_config|ts_rewrite|pg_sleep\w*|pg_(try_)?advisory\w*|pg_logical_emit_message|brin_\w+|gin_clean_pending_list|pg_stat_file|pg_ls_\w+|pg_notify|pg_stat_reset\w*|pg_reload_conf|pg_rotate_logfile|pg_switch_wal|pg_drop_\w+|pg_create_\w+|pg_promote|pg_wal_replay\w*|pg_truncate\w*|pg_import\w*|pg_export\w*)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
 ];
 
 /** Per statement (bovenste niveau) verboden beginwoorden: eigen transactiebesturing en sessie-instellingen. */
@@ -424,6 +428,11 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
   const zonderExtensie = alles.replace(TOEGESTANE_EXTENSIE, " ");
 
   for (const [r, naam] of ALTIJD_VERBODEN) if (r.test(zonderExtensie)) redenen.push(naam);
+  // Zonder de vrijstelling voor auth.uid() & co: een functie in een beschermd schema mag nooit het DOEL van een statement zijn.
+  const ruw = lex.alles.toLowerCase();
+  if (/\b(function|procedure|routine|aggregate)\s+(if\s+exists\s+)?(auth|vault|storage|extensions)\s*\./.test(ruw)) redenen.push("een functie in een beschermd schema (auth.uid() herdefiniëren, laten vallen of van rechten voorzien)");
+  // GRANT/REVOKE zonder ON is lidmaatschap van een rol (grant service_role to …): rechten escaleren.
+  for (const stuk of ruw.split(";")) if (/^\s*(grant|revoke)\b/.test(stuk) && !/\bon\b/.test(stuk)) redenen.push("GRANT/REVOKE van rollidmaatschap");
 
   const statements = boven.split(";").map((x) => x.trim()).filter((x) => x.length > 0);
   for (const st of statements) {
@@ -439,6 +448,7 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
   const bodyTeksten = lex.bodies.map((b) => b.toLowerCase().replace(TOEGESTANE_AANROEPEN, " auth_aanroep "));
   for (const b of bodyTeksten) {
     if (/\bexecute\b/.test(b)) redenen.push("dynamische SQL (EXECUTE) in een body");
+    if (/\bcreate\s+extension\b/.test(b)) redenen.push("CREATE EXTENSION in een body");
     if (b.includes("search_path") && SEARCH_PATH_BESCHERMD.test(b)) redenen.push("search_path naar een beschermd schema");
   }
 
@@ -528,7 +538,7 @@ function additieveGrammatica(statements: readonly string[]): string[] {
     if ((m = st.match(new RegExp(`^create (?:unlogged )?table (?:if not exists )?(${NAAM})`)))) {
       if (/\blike\b/.test(st) && /\bincluding\b/.test(st)) redenen.push("CREATE TABLE … LIKE … INCLUDING kopieert standaardwaarden (zoals nextval) van een bestaande tabel en vraagt destructief: true in het mandaat");
       if (/\bpartition of\b|\binherits\b/.test(st)) redenen.push("CREATE TABLE … PARTITION OF of INHERITS verandert een bestaande tabel en vraagt destructief: true in het mandaat");
-      if (/\bas\s+(select|with|table|values)\b/.test(st)) redenen.push("CREATE TABLE … AS leest bestaande gegevens en voert functies uit en vraagt destructief: true in het mandaat");
+      if (/\bas\s*\(*\s*(select|with|table|values)\b/.test(st)) redenen.push("CREATE TABLE … AS leest bestaande gegevens en voert functies uit en vraagt destructief: true in het mandaat");
       const naam = naamCheck(m[1]!);
       if (!/^create (?:unlogged )?table if not exists\b/.test(st)) {
         relaties.add(naam);

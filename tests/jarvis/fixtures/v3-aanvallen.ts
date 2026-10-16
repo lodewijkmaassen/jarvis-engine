@@ -182,4 +182,15 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
     effect: async (tx) => (await tx.unsafe("select attnotnull as nn from pg_attribute where attrelid = 'public.t'::regclass and attname = 'n'"))[0]?.["nn"] === true },
   { naam: "N6: pg_try_advisory_xact_lock", sql: "create table public.qtry (x text); insert into public.qtry select pg_try_advisory_xact_lock(42)::text;", altijd: false,
     effect: async (tx) => ((await tx.unsafe("select count(*)::int as n from pg_locks where locktype = 'advisory'"))[0]?.["n"] as number) >= 1 },
+  // --- BLK-O (zestiende review): de ALTIJD_VERBODEN-grens (ook met destructief: true) voor auth, beschermde schema's, rollen, extensies in bodies
+  { naam: "O1: auth.uid() herdefiniëren (eigenaarsidentiteit vervalsen)", sql: "create or replace function auth.uid() returns uuid language sql as $$ select '11111111-1111-1111-1111-111111111111'::uuid $$;", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select auth.uid()::text as u"))[0]?.["u"] === "11111111-1111-1111-1111-111111111111" },
+  { naam: "O2: drop schema auth cascade", sql: "drop schema auth cascade;", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select to_regnamespace('auth') is null as weg"))[0]?.["weg"] === true },
+  { naam: "O2: rollidmaatschap via grant … to …", sql: "grant authenticated to anon;", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select pg_has_role('anon', 'authenticated', 'MEMBER') as lid"))[0]?.["lid"] === true },
+  { naam: "O3: create extension … schema auth verstopt in een DO-blok", sql: "do $$ begin create extension citext schema auth; end $$;", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select to_regtype('auth.citext') is not null as ja"))[0]?.["ja"] === true },
+  { naam: "O4: create table … as (select …) tussen haakjes", sql: "create table public.kopie as (select * from public.klanten);", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select to_regclass('public.kopie') is not null as ja"))[0]?.["ja"] === true },
 ];

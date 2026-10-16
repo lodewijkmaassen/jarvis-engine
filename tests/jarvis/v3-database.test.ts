@@ -1042,6 +1042,21 @@ draai("V3-database (PostgreSQL)", () => {
         expect(await bestaat("public.nieuw_qa")).toBe(true);
       });
 
+      it("BLK-O: de migratierol met standaardrechten die nieuwe tabellen aan een andere rol geven, past niets toe", async () => {
+        await schoon();
+        const id = await taakKlaarVoorPr(MANDAAT_MIG);
+        stubMigreer(id, "create table public.nieuw_acl (id int);");
+        await sql.unsafe("alter default privileges for role qa_migrator in schema public grant select on tables to anon");
+        try {
+          expect(await migreer()).toBe(1);
+          expect(await bestaat("public.nieuw_acl")).toBe(false);
+        } finally {
+          await sql.unsafe("alter default privileges for role qa_migrator in schema public revoke select on tables from anon");
+        }
+        expect(await migreer()).toBe(0);
+        expect(await bestaat("public.nieuw_acl")).toBe(true);
+      });
+
       // ---- De gewone weg: uit de database, zonder push-event (een merge door de sweep start er geen)
       async function migreerUitstaand(): Promise<number> {
         const { voerV3Uit } = await import("@/jarvis/src/v3-cli");

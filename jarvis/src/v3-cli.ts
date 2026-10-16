@@ -560,8 +560,16 @@ async function migreerBestanden(o: {
     const rechten = await db.unsafe(
       "select exists (select 1 from pg_namespace where nspname = 'jarvis') as bestaat, " +
         "coalesce(has_schema_privilege(current_user, 'jarvis', 'USAGE'), false) as gebruik, " +
-        "coalesce(pg_has_role(current_user, (select nspowner from pg_namespace where nspname = 'jarvis'), 'MEMBER'), false) as lid",
+        "coalesce(pg_has_role(current_user, (select nspowner from pg_namespace where nspname = 'jarvis'), 'MEMBER'), false) as lid, " +
+        // Standaardrechten van de migratierol zelf die nieuwe tabellen/sequenties aan een andere rol (of PUBLIC) geven:
+        // dan wordt elk nieuw object (ook een kopie van bestaande rijen) direct leesbaar voor die rol.
+        "exists (select 1 from pg_default_acl d where d.defaclrole = (select oid from pg_roles where rolname = current_user) " +
+        "and d.defaclobjtype in ('r', 'S') and exists (select 1 from aclexplode(d.defaclacl) a where a.grantee <> d.defaclrole)) as standaardrechten",
     );
+    if (rechten[0]?.["standaardrechten"] === true) {
+      console.error("jarvis v3 migreer: de migratierol heeft standaardrechten die nieuwe tabellen aan andere rollen geven; niets toegepast. Haal die ALTER DEFAULT PRIVILEGES weg.");
+      return 1;
+    }
     if (rechten[0]?.["bestaat"] === true && (rechten[0]?.["gebruik"] === true || rechten[0]?.["lid"] === true)) {
       console.error("jarvis v3 migreer: de migratierol kan het schema jarvis gebruiken of is lid van zijn eigenaar; niets toegepast. Gebruik een rol die alleen de productietabellen mag wijzigen.");
       return 1;
