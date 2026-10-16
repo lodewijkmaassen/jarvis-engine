@@ -346,13 +346,23 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
   [/\b(query_to_xml\w*|cursor_to_xml\w*|table_to_xml\w*|schema_to_xml\w*|database_to_xml\w*|ts_stat)\b/, "functies die zelf SQL uitvoeren (query_to_xml, ts_stat, …)"],
   [/\bcopy\b/, "COPY"],
   [/\balter\s+(system|database|role|user|group|default\s+privileges)\b/, "ALTER SYSTEM, DATABASE, ROLE of DEFAULT PRIVILEGES"],
-  [/\bcreate\s+(role|user|group|extension|event\s+trigger|server|foreign|publication|subscription|language|operator|cast|rule|database|schema|tablespace|collation|text\s+search|transform|access\s+method)\b/, "CREATE ROLE, EXTENSION, SCHEMA of vergelijkbaar"],
+  [/\bcreate\s+(or\s+replace\s+)?(role|user|group|extension|event\s+trigger|server|foreign|publication|subscription|language|operator|cast|rule|database|schema|tablespace|collation|text\s+search|transform|access\s+method)\b/, "CREATE ROLE, EXTENSION, SCHEMA of vergelijkbaar"],
   [/\bset\s+schema\b/, "SET SCHEMA"],
   [/\bschema\s+(if\s+exists\s+)?(auth|vault|storage|extensions|pg_catalog|information_schema|pg_temp|jarvis\w*)\b/, "een beschermd schema als doel (DROP/ALTER/GRANT/COMMENT … SCHEMA auth, vault, …)"],
   [/\b(drop|alter)\s+(role|user|group|owned|publication|extension|event\s+trigger|tablespace|server|foreign|subscription|database)\b/, "DROP/ALTER van rollen, extensies, publicaties of andere systeemobjecten"],
   [/\b(reassign\s+owned|security\s+label)\b/, "REASSIGN OWNED of SECURITY LABEL"],
   [/\b(pg_authid|pg_shadow|pg_auth_members|pg_user_mappings|pg_roles)\b/, "de catalogus met rollen en wachtwoorden"],
   [/\b(set|reset)\s+(local\s+|session\s+)?(role|session\s+authorization)\b/, "rol wisselen"],
+  // Een zoekpad waarvan de waarde een tekst is (door de lexer geblankt): niet te toetsen, dus geweigerd.
+  [/\bsearch_path\s*(=|to)\s*''/, "search_path met een tekstwaarde (niet te toetsen op beschermde schema's)"],
+  [/\b(cron|net|pgsodium|pgsodium_masks|realtime|graphql|graphql_public|supa(?:base)\w*|pgbouncer|_realtime|pgmq)\s*\./, "verwijst naar een schema van een voorgeïnstalleerde platformextensie"],
+  [/\b(crosstab\w*|connectby|xpath_table)\b/, "functies van extensies die een tekst als SQL uitvoeren"],
+  // Gebruikersinstellingen met een punt in de naam (request.jwt.claim.sub, …) bepalen wie auth.uid() is; row_security en reset hoeven niet.
+  [/\bset\s+(local\s+|session\s+)?[a-z_][a-z0-9_]* ?\. ?[a-z_][a-z0-9_]*( ?\. ?[a-z_][a-z0-9_]*)* ?(?:=|to\b)/, "een gebruikersinstelling met een punt in de naam (bepaalt bijvoorbeeld auth.uid())"],
+  [/\bset\s+(local\s+|session\s+)?row_security\b/, "row_security uitzetten"],
+  [/\b(reset|listen|unlisten)\s+[a-z_"']/, "RESET, LISTEN of UNLISTEN"],
+  [/\bnotify\s+[a-z_"']/, "NOTIFY"],
+  [/\bimport\s+foreign\b/, "IMPORT FOREIGN SCHEMA"],
   [/\b(session_replication_role|standard_conforming_strings|backslash_quote|escape_string_warning)\b/, "sessie-instellingen die het lezen van SQL of triggers veranderen"],
   [/\bdisable\b/, "DISABLE (triggers of beveiliging uitzetten)"],
   [/\blanguage\s+(?!(sql|plpgsql)\b)/, "een andere functietaal dan sql of plpgsql"],
@@ -428,11 +438,22 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
   const zonderExtensie = alles.replace(TOEGESTANE_EXTENSIE, " ");
 
   for (const [r, naam] of ALTIJD_VERBODEN) if (r.test(zonderExtensie)) redenen.push(naam);
-  // Zonder de vrijstelling voor auth.uid() & co: een functie in een beschermd schema mag nooit het DOEL van een statement zijn.
+  // Zonder de vrijstelling voor auth.uid() & co. Elk DDL-/rechtenstatement (ook in een body) dat een beschermd schema of een
+  // auth-functie NOEMT, waar dan ook in de lijst (drop function a(), auth.uid(); drop schema public, auth), wordt geweigerd.
   const ruw = lex.alles.toLowerCase();
-  if (/\b(function|procedure|routine|aggregate)\s+(if\s+exists\s+)?(auth|vault|storage|extensions)\s*\./.test(ruw)) redenen.push("een functie in een beschermd schema (auth.uid() herdefiniëren, laten vallen of van rechten voorzien)");
-  // GRANT/REVOKE zonder ON is lidmaatschap van een rol (grant service_role to …): rechten escaleren.
-  for (const stuk of ruw.split(";")) if (/^\s*(grant|revoke)\b/.test(stuk) && !/\bon\b/.test(stuk)) redenen.push("GRANT/REVOKE van rollidmaatschap");
+  if (/\b(function|procedure|routine|aggregate)\s+(if\s+exists\s+)?(auth|vault|storage|extensions)\s*\./.test(ruw)) redenen.push("een functie in een beschermd schema (auth.uid() herdefiniëren)");
+  const BESCHERMD_WOORD = /\b(auth|vault|storage|extensions|pg_catalog|information_schema|pg_temp|jarvis\w*)\b/;
+  const DDL_BEGIN = /\b(drop|alter|grant|revoke|comment|reassign|import|security)\b/g;
+  for (let tref = DDL_BEGIN.exec(ruw); tref !== null; tref = DDL_BEGIN.exec(ruw)) {
+    const rest = ruw.slice(tref.index, tref.index + 400);
+    const stuk = rest.indexOf(";") >= 0 ? rest.slice(0, rest.indexOf(";")) : rest;
+    // `alter table … add column auth text` en `grant … to authenticated` zijn geen bezwaar; de losse woorden wel.
+    if (BESCHERMD_WOORD.test(stuk)) { redenen.push("een DDL- of rechtenstatement dat een beschermd schema of auth noemt (ook in een lijst of in een body)"); break; }
+    // GRANT/REVOKE zonder ON is lidmaatschap van een rol (grant service_role to …): rechten escaleren.
+    if ((tref[1] === "grant" || tref[1] === "revoke") && !/\bon\b/.test(stuk)) { redenen.push("GRANT/REVOKE van rollidmaatschap"); break; }
+    // GRANT … ON DATABASE / FOREIGN SERVER / TABLESPACE / LANGUAGE / LARGE OBJECT
+    if ((tref[1] === "grant" || tref[1] === "revoke") && /\bon\s+(database|foreign|tablespace|language|large|parameter)\b/.test(stuk)) { redenen.push("rechten op een database, server, tablespace of taal"); break; }
+  }
 
   const statements = boven.split(";").map((x) => x.trim()).filter((x) => x.length > 0);
   for (const st of statements) {
@@ -538,15 +559,14 @@ function additieveGrammatica(statements: readonly string[]): string[] {
     if ((m = st.match(new RegExp(`^create (?:unlogged )?table (?:if not exists )?(${NAAM})`)))) {
       if (/\blike\b/.test(st) && /\bincluding\b/.test(st)) redenen.push("CREATE TABLE … LIKE … INCLUDING kopieert standaardwaarden (zoals nextval) van een bestaande tabel en vraagt destructief: true in het mandaat");
       if (/\bpartition of\b|\binherits\b/.test(st)) redenen.push("CREATE TABLE … PARTITION OF of INHERITS verandert een bestaande tabel en vraagt destructief: true in het mandaat");
-      if (/\bas\s*\(*\s*(select|with|table|values)\b/.test(st)) redenen.push("CREATE TABLE … AS leest bestaande gegevens en voert functies uit en vraagt destructief: true in het mandaat");
+      if (/\bas[\s(]*(select|with|table|values)\b/.test(st)) redenen.push("CREATE TABLE … AS leest bestaande gegevens en voert functies uit en vraagt destructief: true in het mandaat");
       const naam = naamCheck(m[1]!);
       if (!/^create (?:unlogged )?table if not exists\b/.test(st)) {
         relaties.add(naam);
         typen.add(naam);
       }
     } else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) {
-      const naam = naamCheck(m[1]!);
-      if (!/^create (?:unique )?index (?:concurrently )?if not exists\b/.test(st)) relaties.add(naam);
+      naamCheck(m[1]!); // een index woont in het schema van zijn tabel: niet als 'eigen relatie' volgen
     } else if ((m = st.match(new RegExp(`^create sequence (?:if not exists )?(${NAAM})`)))) {
       if (/\bowned by\b/.test(st)) {
         // OWNED BY hangt de nieuwe sequentie aan een kolom; alleen aan een tabel uit deze migratie.
@@ -572,7 +592,7 @@ function additieveGrammatica(statements: readonly string[]): string[] {
           if (!relaties.has(tabel)) redenen.push("row level security aanzetten op een bestaande tabel kan lezen blokkeren en vraagt destructief: true in het mandaat");
         } else redenen.push(`ALTER TABLE-actie buiten ADD: "${a.slice(0, 40)}"`);
       }
-    } else if ((m = st.match(/^comment on (table|index|sequence|type|column) (.+?) is\b/))) {
+    } else if ((m = st.match(/^comment on (table|sequence|type|column) (.+?) is\b/))) {
       const x = canoniek(m[2]!);
       const doel = m[1] === "column" ? x.replace(/\.[^.]*$/, "") : x;
       const bekend = m[1] === "type" ? typen : relaties;

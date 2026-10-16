@@ -560,6 +560,18 @@ describe("BLK-D: een goedaardige additieve migratie blijft doorgelaten; secrets 
     ];
     for (const g of goed) expect(beoordeelSql(g, false), g).toEqual([]);
   });
+  it("BLK-P: een index woont in het schema van zijn tabel en maakt een gelijknamige tabel niet 'eigen'; platformextensies; crosstab", () => {
+    for (const q of [
+      "create table extra.et (a int); create index klanten on extra.et (a); alter table klanten enable row level security;",
+      "create table extra.et (a int); create index klanten on extra.et (a); comment on table klanten is 'x';",
+      "create table extra.et (a int); create index klanten on extra.et (a); alter table klanten add primary key (id);",
+    ]) expect(beoordeelSql(q, false).length, q).toBeGreaterThan(0);
+    for (const q of [
+      "create view public.leak as select * from crosstab('select 1') as ct(a int);",
+      "select cron.schedule('x', '* * * * *', 'select 1');",
+      "select net.http_get('http://x');",
+    ]) expect(beoordeelSql(q, true).length, q).toBeGreaterThan(0);
+  });
   it("BLK-N: een type is geen relatie; _naam; extensie met beschermd schema; try-locks en logische berichten", () => {
     expect(beoordeelSql("create type klanten as enum ('a'); comment on table klanten is 'x';", false).length).toBeGreaterThan(0);
     expect(beoordeelSql("create type klanten as enum ('a'); alter table klanten enable row level security;", false).length).toBeGreaterThan(0);
