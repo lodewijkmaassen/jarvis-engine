@@ -474,7 +474,7 @@ describe("lineaire patronen: grote invoer kost geen minuten", () => {
     expect(normaliseerMigratie("begin; create table recommit (id int); recommit;")).toMatch(/begin/);
   });
   it("elk patroon van de scanner blijft snel op 1 MB aan lastige tekens", () => {
-    for (const stuk of ["'", "$", "/*", '"', "e'", "$a$", " alter ", " do ", " execute ", " create trigger "]) {
+    for (const stuk of ["'", "$", "/*", '"', "e'", "$a$", " alter ", " do ", " execute ", " create trigger ", " drop ", " grant ", " comment "]) {
       expect(meet(() => beoordeelSql(stuk.repeat(Math.ceil(1_000_000 / stuk.length)), false)), JSON.stringify(stuk)).toBeLessThan(4000);
     }
   }, 60_000);

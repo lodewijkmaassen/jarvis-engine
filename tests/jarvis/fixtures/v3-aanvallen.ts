@@ -208,4 +208,13 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
     effect: async (tx) => (await tx.unsafe("select count(*)::int as n from pg_rules where rulename = 'r1'"))[0]?.["n"] === 1 },
   { naam: "P7: create table … as ( ( select … ) )", sql: "create table public.cp as ( ( select * from public.klanten ) );", altijd: false,
     effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.cp"))[0]?.["n"] === 3 },
+  // --- BLK-Q (achttiende review): lange lijsten, pg_settings, aangehaalde gebruikersinstellingen
+  { naam: "Q1: auth.uid() verstopt achter een lange lijst (meer dan 400 tekens)", sql: `drop function if exists ${Array.from({ length: 60 }, (_, i) => `public.zzzzz${i}()`).join(", ")}, auth.uid();`, altijd: true,
+    effect: async (tx) => (await tx.unsafe("select to_regprocedure('auth.uid()') is null as weg"))[0]?.["weg"] === true },
+  { naam: "Q1: schema auth verstopt achter een lange lijst", sql: `drop schema if exists ${Array.from({ length: 60 }, (_, i) => `zzzzzs${i}`).join(", ")}, auth cascade;`, altijd: true,
+    effect: async (tx) => (await tx.unsafe("select to_regnamespace('auth') is null as weg"))[0]?.["weg"] === true },
+  { naam: "Q2: update pg_settings zet het zoekpad (een set_config-alias)", sql: "update pg_settings set setting = 'jarvis' where name = 'search_path';", altijd: true,
+    effect: async (tx) => (await tx.unsafe("select current_setting('search_path') as p"))[0]?.["p"] === "jarvis" },
+  { naam: "Q3: set local \"request.jwt.claim.sub\" (aangehaald) in een DO-blok", sql: `do $$ begin set local "request.jwt.claim.sub" = '3333'; end $$;`, altijd: true,
+    effect: async (tx) => (await tx.unsafe("select current_setting('request.jwt.claim.sub') as g"))[0]?.["g"] === "3333" },
 ];

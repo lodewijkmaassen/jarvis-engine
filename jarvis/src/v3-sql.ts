@@ -46,7 +46,8 @@ function schoonNaam(naam: string): string {
  */
 function aangehaaldeNaam(naam: string): string {
   if (/^[a-z_][a-z0-9_]*$/.test(naam)) return naam;
-  return `${schoonNaam(naam)}_q${Buffer.from(naam, "utf8").toString("hex")}`;
+  // Een punt in de naam krijgt een eigen merk: `set "request.jwt.claim.sub" = …` is een gebruikersinstelling, geen kolom.
+  return `${schoonNaam(naam)}_q${naam.includes(".") ? "dot" : ""}${Buffer.from(naam, "utf8").toString("hex")}`;
 }
 
 export function lexSql(sql: string, diepte = 0): SqlLex {
@@ -359,6 +360,8 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
   [/\b(crosstab\w*|connectby|xpath_table)\b/, "functies van extensies die een tekst als SQL uitvoeren"],
   // Gebruikersinstellingen met een punt in de naam (request.jwt.claim.sub, …) bepalen wie auth.uid() is; row_security en reset hoeven niet.
   [/\bset\s+(local\s+|session\s+)?[a-z_][a-z0-9_]* ?\. ?[a-z_][a-z0-9_]*( ?\. ?[a-z_][a-z0-9_]*)* ?(?:=|to\b)/, "een gebruikersinstelling met een punt in de naam (bepaalt bijvoorbeeld auth.uid())"],
+  [/\bset\s+(local\s+|session\s+)?\w*_qdot\w*/, "een aangehaalde gebruikersinstelling met een punt (\"request.jwt.claim.sub\")"],
+  [/\b(pg_settings|pg_file_settings|pg_hba_file_rules)\b/, "pg_settings (zet instellingen via UPDATE)"],
   [/\bset\s+(local\s+|session\s+)?row_security\b/, "row_security uitzetten"],
   [/\b(reset|listen|unlisten)\s+[a-z_"']/, "RESET, LISTEN of UNLISTEN"],
   [/\bnotify\s+[a-z_"']/, "NOTIFY"],
@@ -383,7 +386,7 @@ function triggerExecute(st: string): boolean {
   );
 }
 /** `search_path` mag niet naar een beschermd schema wijzen, in welke vorm dan ook. */
-const SEARCH_PATH_BESCHERMD = /\b(auth|vault|extensions|storage|pg_catalog|information_schema|pg_temp)\b/;
+const SEARCH_PATH_BESCHERMD = /\b(auth|vault|extensions|storage|pg_catalog|information_schema|pg_temp|cron|net|pgsodium|realtime|graphql|graphql_public|supa(?:base)\w*|pgbouncer|pgmq)\b/;
 
 /** Alleen met `destructief: true`: onomkeerbaar of toegangsrechten. Toegepast op het bovenste niveau én op de bodies. */
 const DESTRUCTIEF_OVERAL: readonly Regel[] = [
@@ -443,16 +446,24 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
   const ruw = lex.alles.toLowerCase();
   if (/\b(function|procedure|routine|aggregate)\s+(if\s+exists\s+)?(auth|vault|storage|extensions)\s*\./.test(ruw)) redenen.push("een functie in een beschermd schema (auth.uid() herdefiniëren)");
   const BESCHERMD_WOORD = /\b(auth|vault|storage|extensions|pg_catalog|information_schema|pg_temp|jarvis\w*)\b/;
-  const DDL_BEGIN = /\b(drop|alter|grant|revoke|comment|reassign|import|security)\b/g;
+  const DDL_BEGIN = /\b(drop|alter|grant|revoke|comment|reassign|import)\b/g;
+  // Per `;`-segment het eerste DDL-woord, tot het einde van het segment (geen venster: een lange lijst verbergt niets).
+  // De vrijstelling voor auth.uid()-AANROEPEN geldt alleen voor `alter table …` en dergelijke, nooit voor drop/grant/revoke/comment
+  // of `alter function|schema`: daar is een auth-functie het doel.
+  let segmentEinde = -1;
   for (let tref = DDL_BEGIN.exec(ruw); tref !== null; tref = DDL_BEGIN.exec(ruw)) {
-    const rest = ruw.slice(tref.index, tref.index + 400);
-    const stuk = rest.indexOf(";") >= 0 ? rest.slice(0, rest.indexOf(";")) : rest;
-    // `alter table … add column auth text` en `grant … to authenticated` zijn geen bezwaar; de losse woorden wel.
-    if (BESCHERMD_WOORD.test(stuk)) { redenen.push("een DDL- of rechtenstatement dat een beschermd schema of auth noemt (ook in een lijst of in een body)"); break; }
+    if (tref.index < segmentEinde) continue;
+    const puntkomma = ruw.indexOf(";", tref.index);
+    segmentEinde = puntkomma < 0 ? ruw.length : puntkomma;
+    const stuk = ruw.slice(tref.index, segmentEinde);
+    const kop = tref[1]!;
+    const doelIsFunctie = kop !== "alter" || /^alter\s+(function|routine|procedure|aggregate|schema)\b/.test(stuk);
+    const gezien = doelIsFunctie ? stuk : stuk.replace(/\bauth\s*\.\s*(uid|jwt|role|email)\s*\(\s*\)/g, " ");
+    if (BESCHERMD_WOORD.test(gezien)) { redenen.push("een DDL- of rechtenstatement dat een beschermd schema of auth noemt (ook in een lijst of in een body)"); break; }
     // GRANT/REVOKE zonder ON is lidmaatschap van een rol (grant service_role to …): rechten escaleren.
-    if ((tref[1] === "grant" || tref[1] === "revoke") && !/\bon\b/.test(stuk)) { redenen.push("GRANT/REVOKE van rollidmaatschap"); break; }
+    if ((kop === "grant" || kop === "revoke") && !/\bon\b/.test(stuk)) { redenen.push("GRANT/REVOKE van rollidmaatschap"); break; }
     // GRANT … ON DATABASE / FOREIGN SERVER / TABLESPACE / LANGUAGE / LARGE OBJECT
-    if ((tref[1] === "grant" || tref[1] === "revoke") && /\bon\s+(database|foreign|tablespace|language|large|parameter)\b/.test(stuk)) { redenen.push("rechten op een database, server, tablespace of taal"); break; }
+    if ((kop === "grant" || kop === "revoke") && /\bon\s+(database|foreign|tablespace|language|large|parameter)\b/.test(stuk)) { redenen.push("rechten op een database, server, tablespace of taal"); break; }
   }
 
   const statements = boven.split(";").map((x) => x.trim()).filter((x) => x.length > 0);
