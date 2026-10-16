@@ -352,7 +352,7 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
   [/\b(session_replication_role|standard_conforming_strings|backslash_quote|escape_string_warning)\b/, "sessie-instellingen die het lezen van SQL of triggers veranderen"],
   [/\bdisable\b/, "DISABLE (triggers of beveiliging uitzetten)"],
   [/\blanguage\s+(?!(sql|plpgsql)\b)/, "een andere functietaal dan sql of plpgsql"],
-  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|ts_rewrite|pg_sleep\w*|pg_advisory\w*|pg_notify|pg_stat_reset\w*|pg_reload_conf|pg_rotate_logfile|pg_switch_wal|pg_drop_\w+|pg_create_\w+|pg_promote|pg_wal_replay\w*|pg_truncate\w*|pg_import\w*|pg_export\w*)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
+  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|ts_rewrite|pg_sleep\w*|pg_(try_)?advisory\w*|pg_logical_emit_message|brin_\w+|gin_clean_pending_list|pg_stat_file|pg_ls_\w+|pg_notify|pg_stat_reset\w*|pg_reload_conf|pg_rotate_logfile|pg_switch_wal|pg_drop_\w+|pg_create_\w+|pg_promote|pg_wal_replay\w*|pg_truncate\w*|pg_import\w*|pg_export\w*)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
 ];
 
 /** Per statement (bovenste niveau) verboden beginwoorden: eigen transactiebesturing en sessie-instellingen. */
@@ -396,9 +396,6 @@ const TOEGESTAAN: readonly RegExp[] = [
   /^create (unique )?index\b/,
   /^create type\b/,
   /^create sequence\b/,
-  /^create view\b/,
-  /^create (constraint )?trigger\b/,
-  /^create function\b/,
   // `add` moet het commando zijn, direct na de tabelnaam; een naam of kolom die "add" heet telt niet.
   /^alter table (if exists )?(only )?[^\s,.]+( ?\. ?[^\s,.]+)? add\b/,
   /^alter table (if exists )?(only )?[^\s,.]+( ?\. ?[^\s,.]+)? enable row level security$/,
@@ -431,6 +428,7 @@ export function beoordeelSql(invoer: string, destructief: boolean): readonly str
   const statements = boven.split(";").map((x) => x.trim()).filter((x) => x.length > 0);
   for (const st of statements) {
     if (STATEMENT_BEGIN_VERBODEN.test(st)) redenen.push("eigen transactiebesturing of sessiecommando");
+    if (/^create extension\b/.test(st) && !TOEGESTAAN.some((r) => r.test(st))) redenen.push("alleen onschadelijke extensies, zonder schema of in public/extensions");
     if (/^set\b/.test(st) && !SET_TOEGESTAAN.test(st)) redenen.push("een SET-instelling buiten de kleine toegestane lijst");
     if (st.includes("search_path") && SEARCH_PATH_BESCHERMD.test(st)) redenen.push("search_path naar een beschermd schema");
     // EXECUTE: dynamische SQL is nergens toegestaan. Op het bovenste niveau bestaat alleen de triggervorm
@@ -506,75 +504,69 @@ function splitsOpKomma(tekst: string): string[] {
   return delen;
 }
 
-/** Positieve regels per soort statement (bovenste niveau, in volgorde). Lineair: elke regex is verankerd of heeft één vaste scheiding. */
+/**
+ * Positieve regels per soort statement (bovenste niveau, in volgorde). Lineair: elke regex is verankerd of heeft één vaste scheiding.
+ * Zonder `destructief` bestaat het additieve repertoire uit: nieuwe tabellen (zonder LIKE … INCLUDING, PARTITION OF, INHERITS, AS SELECT),
+ * indexen, enum- en samengestelde typen, sequenties, `alter table … add …`, rijen invoegen, commentaar/RLS op objecten uit DEZE migratie.
+ * Functies, triggers en views vragen `destructief: true`: een nieuwe functie of view kan een bestaande aanroep of naam overnemen
+ * of rijen blootleggen onder standaardrechten, en dat is niet vooraf te toetsen.
+ */
 function additieveGrammatica(statements: readonly string[]): string[] {
   const redenen: string[] = [];
-  const nieuw = new Set<string>();
-  const nieuweFuncties = new Set<string>();
-  const handtekeningen = new Set<string>();
+  const relaties = new Set<string>();
+  const typen = new Set<string>();
   // Een naam met meer dan twee delen (db.schema.object) wordt niet gevolgd: fail-closed.
   const naamCheck = (n: string): string => {
     const c = canoniek(n);
     if (c.split(".").length > 2) redenen.push("een naam met meer dan twee delen (database.schema.object) wordt niet gevolgd");
+    if (/(^|\.)_/.test(c)) redenen.push("een naam die met een underscore begint botst met de arraytypen van bestaande objecten");
     return c;
   };
-  const alsNaam = (m: RegExpMatchArray | null, groep = 1): string | null => (m?.[groep] === undefined ? null : naamCheck(m[groep]!));
   for (const st of statements) {
     if (/^set\b/.test(st) && /\bsearch_path\b/.test(st)) redenen.push("SET search_path verandert hoe namen worden gelezen en vraagt destructief: true in het mandaat");
     let m: RegExpMatchArray | null;
     if ((m = st.match(new RegExp(`^create (?:unlogged )?table (?:if not exists )?(${NAAM})`)))) {
-      if (/\blike\b[^,)]*\bincluding\b/.test(st)) redenen.push("CREATE TABLE … LIKE … INCLUDING kopieert standaardwaarden (zoals nextval) van een bestaande tabel en vraagt destructief: true in het mandaat");
+      if (/\blike\b/.test(st) && /\bincluding\b/.test(st)) redenen.push("CREATE TABLE … LIKE … INCLUDING kopieert standaardwaarden (zoals nextval) van een bestaande tabel en vraagt destructief: true in het mandaat");
       if (/\bpartition of\b|\binherits\b/.test(st)) redenen.push("CREATE TABLE … PARTITION OF of INHERITS verandert een bestaande tabel en vraagt destructief: true in het mandaat");
-      if (!/^create (?:unlogged )?table if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!));
-    } else if ((m = st.match(new RegExp(`^create (?:recursive )?view (${NAAM})`)))) nieuw.add(naamCheck(m[1]!));
-    else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) { if (!/^create (?:unique )?index (?:concurrently )?if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!)); }
-    else if ((m = st.match(new RegExp(`^create sequence (?:if not exists )?(${NAAM})`))) && /\bowned by\b/.test(st)) {
-      // OWNED BY hangt de nieuwe sequentie aan een kolom; alleen aan een tabel uit deze migratie.
-      const eigenaar = st.match(new RegExp(`\\bowned by (${NAAM})`));
-      const tabelDeel = eigenaar === null ? null : canoniek(eigenaar[1]!).replace(/\.[^.]*$/, "");
-      if (!(eigenaar !== null && canoniek(eigenaar[1]!) === "none") && (tabelDeel === null || !nieuw.has(tabelDeel))) redenen.push("OWNED BY een kolom van een bestaande tabel verandert die tabel en vraagt destructief: true in het mandaat");
-      if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(naamCheck(m[1]!));
-    } else if (/^create type\b/.test(st) && !/^create type \S+( ?\. ?\S+)? as (enum|\()/.test(st)) {
-      // Een bereiktype (as range) of basistype maakt functies aan met de naam van het type en overschrijft zo bestaande aanroepen.
-      redenen.push("alleen CREATE TYPE … AS ENUM of AS (samengesteld) is additief; een bereiks- of basistype maakt verborgen functies");
-    } else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) { if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(naamCheck(m[1]!)); }
-    else if ((m = st.match(new RegExp(`^create function (${NAAM})`)))) {
-      // Een nieuwe functie met dezelfde naam en een passender argumenttype overschrijft bij PostgreSQL elke bestaande
-      // aanroep (create function public.lower(varchar) …). Alleen een triggerfunctie is niet aanroepbaar vanuit SQL.
-      if (!/\breturns trigger\b/.test(st)) redenen.push("een functie die vanuit SQL aanroepbaar is kan een bestaande aanroep overschrijven en vraagt destructief: true in het mandaat");
-      // Functies hebben in PostgreSQL een eigen naamruimte: een functie `x` maakt `x` als tabel niet nieuw.
+      if (/\bas\s+(select|with|table|values)\b/.test(st)) redenen.push("CREATE TABLE … AS leest bestaande gegevens en voert functies uit en vraagt destructief: true in het mandaat");
       const naam = naamCheck(m[1]!);
-      nieuweFuncties.add(naam);
-      const args = st.match(new RegExp(`^create function ${NAAM} ?\\(([^)]*)\\)`));
-      if (args !== null) handtekeningen.add(`${naam}(${canoniek(args[1]!)})`);
-    } else if (/^create (constraint )?trigger\b/.test(st)) {
-      // Vaste vorm: create [constraint] trigger NAAM before|after|instead of GEBEURTENISSEN on DOEL … — nooit "het eerste on".
-      const gebeurtenis = "(?:insert|delete|truncate|update(?: of [^\\s,]+(?: ?, ?[^\\s,]+)*)?)";
-      const t = st.match(new RegExp(`^create (?:constraint )?trigger ${NAAM} (?:before|after|instead of) ${gebeurtenis}(?: or ${gebeurtenis})* on (${NAAM})\\b`));
-      const doel = t === null ? null : naamCheck(t[1]!);
-      const fn = alsNaam(st.match(new RegExp(`\\bexecute (?:function|procedure) (${NAAM}) ?\\(`)));
-      if (doel === null || !nieuw.has(doel)) redenen.push("een trigger op een bestaande tabel (of in een vorm die niet te lezen is) vraagt destructief: true in het mandaat");
-      if (fn === null || !nieuweFuncties.has(fn)) redenen.push("een trigger met een functie die niet in deze migratie is aangemaakt vraagt destructief: true in het mandaat");
+      if (!/^create (?:unlogged )?table if not exists\b/.test(st)) {
+        relaties.add(naam);
+        typen.add(naam);
+      }
+    } else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) {
+      const naam = naamCheck(m[1]!);
+      if (!/^create (?:unique )?index (?:concurrently )?if not exists\b/.test(st)) relaties.add(naam);
+    } else if ((m = st.match(new RegExp(`^create sequence (?:if not exists )?(${NAAM})`)))) {
+      if (/\bowned by\b/.test(st)) {
+        // OWNED BY hangt de nieuwe sequentie aan een kolom; alleen aan een tabel uit deze migratie.
+        const eigenaar = st.match(new RegExp(`\\bowned by (${NAAM})`));
+        const tabelDeel = eigenaar === null ? null : canoniek(eigenaar[1]!).replace(/\.[^.]*$/, "");
+        if (!(eigenaar !== null && canoniek(eigenaar[1]!) === "none") && (tabelDeel === null || !relaties.has(tabelDeel))) redenen.push("OWNED BY een kolom van een bestaande tabel verandert die tabel en vraagt destructief: true in het mandaat");
+      }
+      const naam = naamCheck(m[1]!);
+      if (!/ if not exists\b/.test(st.slice(0, 40))) relaties.add(naam);
+    } else if (/^create type\b/.test(st)) {
+      // Een bereiktype (as range) of basistype maakt functies aan met de naam van het type en overschrijft zo bestaande aanroepen.
+      const t = st.match(new RegExp(`^create type (${NAAM}) as (?:enum|\\()`));
+      if (t === null) redenen.push("alleen CREATE TYPE … AS ENUM of AS (samengesteld) is additief; een bereiks- of basistype maakt verborgen functies");
+      else typen.add(naamCheck(t[1]!));
     } else if ((m = st.match(new RegExp(`^alter table (?:if exists )?(?:only )?(${NAAM}) (.*)$`)))) {
       const tabel = naamCheck(m[1]!);
       const acties = splitsOpKomma(m[2]!);
       for (const a of acties) {
         if (/^add\b/.test(a)) {
           if (/\busing\s+index\b/.test(a)) redenen.push("ADD CONSTRAINT … USING INDEX hernoemt een bestaande index");
+          if (/\bprimary key\b/.test(a) && !relaties.has(tabel)) redenen.push("een primaire sleutel op een bestaande tabel maakt bestaande kolommen NOT NULL en vraagt destructief: true in het mandaat");
         } else if (a === "enable row level security") {
-          if (!nieuw.has(tabel)) redenen.push("row level security aanzetten op een bestaande tabel kan lezen blokkeren en vraagt destructief: true in het mandaat");
+          if (!relaties.has(tabel)) redenen.push("row level security aanzetten op een bestaande tabel kan lezen blokkeren en vraagt destructief: true in het mandaat");
         } else redenen.push(`ALTER TABLE-actie buiten ADD: "${a.slice(0, 40)}"`);
       }
-    } else if ((m = st.match(/^comment on (table|view|index|sequence|type|function|column) (.+?) is\b/))) {
-      const volledig = canoniek(m[2]!);
-      if (m[1] === "function") {
-        // Naam én argumenten moeten die van een functie uit deze migratie zijn: `mijn(int)` is niet `mijn()`.
-        if (!handtekeningen.has(volledig)) redenen.push("commentaar op een functie die niet (met deze argumenten) in deze migratie is aangemaakt vraagt destructief: true in het mandaat");
-      } else {
-        const x = volledig.replace(/\(.*$/, "");
-        const doel = m[1] === "column" ? x.replace(/\.[^.]*$/, "") : x;
-        if (!nieuw.has(doel)) redenen.push("commentaar op een bestaand object vraagt destructief: true in het mandaat");
-      }
+    } else if ((m = st.match(/^comment on (table|index|sequence|type|column) (.+?) is\b/))) {
+      const x = canoniek(m[2]!);
+      const doel = m[1] === "column" ? x.replace(/\.[^.]*$/, "") : x;
+      const bekend = m[1] === "type" ? typen : relaties;
+      if (!bekend.has(doel)) redenen.push("commentaar op een bestaand object vraagt destructief: true in het mandaat");
     } else if (/^comment on\b/.test(st)) redenen.push("commentaar op dit soort object is alleen met destructief: true toegestaan");
   }
   return redenen;

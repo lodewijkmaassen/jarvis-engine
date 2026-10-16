@@ -173,4 +173,13 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
     effect: async (tx) => {
       try { await tx.unsafe("savepoint s"); await tx.unsafe("select lower('A'::varchar)"); return false; } catch { await tx.unsafe("rollback to savepoint s"); return true; }
     } },
+  // --- BLK-N (vijftiende review): views en CTAS onder standaardrechten, primaire sleutel op een bestaande tabel, try-advisory-locks
+  { naam: "N3: een view over een bestaande tabel (rijen onder standaardrechten bloot)", sql: "create view public.openbaar as select * from public.t;", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select to_regclass('public.openbaar') is not null as ja"))[0]?.["ja"] === true },
+  { naam: "N3: create table … as select over een bestaande tabel", sql: "create table public.kopie as select * from public.t;", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select to_regclass('public.kopie') is not null as ja"))[0]?.["ja"] === true },
+  { naam: "N5: een primaire sleutel op een bestaande tabel maakt de kolom NOT NULL", sql: "alter table public.t add primary key (n);", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select attnotnull as nn from pg_attribute where attrelid = 'public.t'::regclass and attname = 'n'"))[0]?.["nn"] === true },
+  { naam: "N6: pg_try_advisory_xact_lock", sql: "create table public.qtry (x text); insert into public.qtry select pg_try_advisory_xact_lock(42)::text;", altijd: false,
+    effect: async (tx) => ((await tx.unsafe("select count(*)::int as n from pg_locks where locktype = 'advisory'"))[0]?.["n"] as number) >= 1 },
 ];

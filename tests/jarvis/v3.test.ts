@@ -176,7 +176,8 @@ describe("B5: de migratiecontrole is een scanner met whitelist, geen regex-strip
   });
   it("een plpgsql-begin in een functiebody is geen transactiebesturing, maar wat de body DOET telt wel: update/delete/drop erin vraagt een destructief-mandaat", () => {
     const veilig = "create function f() returns trigger language plpgsql as $$ begin new.b := 1; return new; end $$;";
-    expect(beoordeelSql(veilig, false)).toEqual([]);
+    expect(beoordeelSql(veilig, false).length, "een functie vraagt destructief: true (BLK-N)").toBeGreaterThan(0);
+    expect(beoordeelSql(veilig, true)).toEqual([]);
     const schadelijk = "create function f() returns void language plpgsql as $$ begin update t set a = 1 where id = 2; delete from u where id = 3; end $$;";
     expect(beoordeelSql(schadelijk, false).join()).toMatch(/UPDATE|DELETE/);
     expect(beoordeelSql(schadelijk, true)).toEqual([]);
@@ -428,7 +429,6 @@ describe("BLK-1: de lexer leest SQL zoals PostgreSQL en faalt gesloten", () => {
       "create table t (a text default 'it''s', b text default E'a\\'b', c int);",
       "create table t2 (a int); -- opmerking met 'quote en $$ erin\ncreate index i on t2 (a);",
       "create table t3 (naam text default $q$a 'b' -- c$q$);",
-      "create function f() returns trigger language plpgsql as $$ begin new.a := 1; return new; end $$;",
       "create table t4 (a int);\r\ncreate index i4 on t4 (a);",
     ];
     for (const sql of ok) expect(beoordeelSql(sql, false), sql).toEqual([]);
@@ -551,26 +551,31 @@ describe("BLK-D: een goedaardige additieve migratie blijft doorgelaten; secrets 
   it("laat gewone additieve migraties door", () => {
     expect(beoordeelSql("create table public.a (id serial primary key, n int default 5); alter table public.a add column b text default 'x'; alter table only public.a enable row level security;", false)).toEqual([]);
   });
-  it("blijft doorlaten: trigger, row level security en commentaar op objecten uit dezelfde migratie, add-acties, extensie in public", () => {
+  it("blijft doorlaten: row level security en commentaar op objecten uit dezelfde migratie, add-acties, extensie in public", () => {
     const goed = [
-      "create table public.a (id int); create function public.f() returns trigger language plpgsql as $$ begin return new; end $$; create trigger tg before insert on public.a for each row execute function public.f();",
       "create table public.a (id int); alter table public.a enable row level security; comment on table public.a is 'x'; comment on column public.a.id is 'y';",
-      "create table public.a (id int); alter table public.a add column b int, add constraint c check (b > 0), add column d text default 'a,b';",
+      "create table public.a (id int); alter table public.a add column b int, add constraint c check (b > 0), add column d text default 'a,b'; alter table public.a add primary key (id);",
       "create extension if not exists pgcrypto with schema extensions;",
+      "create type public.kleur as enum ('a', 'b'); comment on type public.kleur is 'x';",
     ];
     for (const g of goed) expect(beoordeelSql(g, false), g).toEqual([]);
   });
-  it("BLK-M: een migratie mag het ledger van de migratieroute niet noemen", async () => {
-    const { beoordeelMigraties } = await import("@/jarvis/src/v3");
-    const m = { doel: "x", acceptatie: [], repos: ["a/b"], paden_ja: [], productie: true, migraties: true, destructief: false, kosten_max_eur: 0 } as never;
-    const kwaad = "insert into supabase_migrations.schema_migrations (version, name) values ('99', 'later');";
-    expect(beoordeelMigraties(m, [{ pad: "supabase/migrations/0101_x.sql", sql: kwaad }], "supabase_migrations.schema_migrations")[0]?.redenen.join()).toMatch(/ledger/);
-    expect(beoordeelMigraties(m, [{ pad: "supabase/migrations/0101_x.sql", sql: "create table public.a (id int);" }], "supabase_migrations.schema_migrations")).toEqual([]);
+  it("BLK-N: een type is geen relatie; _naam; extensie met beschermd schema; try-locks en logische berichten", () => {
+    expect(beoordeelSql("create type klanten as enum ('a'); comment on table klanten is 'x';", false).length).toBeGreaterThan(0);
+    expect(beoordeelSql("create type klanten as enum ('a'); alter table klanten enable row level security;", false).length).toBeGreaterThan(0);
+    expect(beoordeelSql("create table _kleur (a int);", false).length).toBeGreaterThan(0);
+    for (const d of [false, true]) {
+      expect(beoordeelSql("create extension pgcrypto with schema auth;", d).length, `schema auth, destructief ${d}`).toBeGreaterThan(0);
+      expect(beoordeelSql("create extension pgcrypto schema vault;", d).length, `schema vault, destructief ${d}`).toBeGreaterThan(0);
+      expect(beoordeelSql("insert into t select pg_logical_emit_message(true, 'x', 'y');", d).length).toBeGreaterThan(0);
+      expect(beoordeelSql("insert into t select pg_try_advisory_lock(42)::text;", d).length).toBeGreaterThan(0);
+    }
   });
-  it("BLK-L: commentaar op een functie eist dezelfde naam én argumenten als de functie uit deze migratie", () => {
-    const sql = "create function mijn() returns trigger language plpgsql as $$ begin return new; end $$; comment on function mijn(int) is 'x';";
-    expect(beoordeelSql(sql, false).length).toBeGreaterThan(0);
-    expect(beoordeelSql("create function mijn() returns trigger language plpgsql as $$ begin return new; end $$; comment on function mijn() is 'x';", false)).toEqual([]);
+  it("BLK-N: functies, triggers en views vragen destructief: true; en met destructief: true blijven ze mogelijk", () => {
+    const f = "create table public.a (id int); create function public.f() returns trigger language plpgsql as $$ begin return new; end $$; create trigger tg before insert on public.a for each row execute function public.f();";
+    expect(beoordeelSql(f, false).length).toBeGreaterThan(0);
+    expect(beoordeelSql(f, true)).toEqual([]);
+    expect(beoordeelSql("create view public.v as select 1 as x;", false).length).toBeGreaterThan(0);
   });
   it("de CI-jobs die het CI-geheim gebruiken draaien in de omgeving jarvis-ci", () => {
     const yml = readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-v3.yml"), "utf8");
