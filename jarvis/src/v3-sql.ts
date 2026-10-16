@@ -526,8 +526,17 @@ function additieveGrammatica(statements: readonly string[]): string[] {
       if (!/^create (?:unlogged )?table if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!));
     } else if ((m = st.match(new RegExp(`^create (?:(?:temp|temporary) )?(?:recursive )?view (${NAAM})`)))) nieuw.add(naamCheck(m[1]!));
     else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) { if (!/^create (?:unique )?index (?:concurrently )?if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!)); }
-    else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) { if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(naamCheck(m[1]!)); }
+    else if ((m = st.match(new RegExp(`^create sequence (?:if not exists )?(${NAAM})`))) && /\bowned by\b/.test(st)) {
+      // OWNED BY hangt de nieuwe sequentie aan een kolom; alleen aan een tabel uit deze migratie.
+      const eigenaar = st.match(new RegExp(`\\bowned by (${NAAM})`));
+      const tabelDeel = eigenaar === null ? null : canoniek(eigenaar[1]!).replace(/\.[^.]*$/, "");
+      if (!(eigenaar !== null && canoniek(eigenaar[1]!) === "none") && (tabelDeel === null || !nieuw.has(tabelDeel))) redenen.push("OWNED BY een kolom van een bestaande tabel verandert die tabel en vraagt destructief: true in het mandaat");
+      if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(naamCheck(m[1]!));
+    } else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) { if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(naamCheck(m[1]!)); }
     else if ((m = st.match(new RegExp(`^create function (${NAAM})`)))) {
+      // Een nieuwe functie met dezelfde naam en een passender argumenttype overschrijft bij PostgreSQL elke bestaande
+      // aanroep (create function public.lower(varchar) …). Alleen een triggerfunctie is niet aanroepbaar vanuit SQL.
+      if (!/\breturns trigger\b/.test(st)) redenen.push("een functie die vanuit SQL aanroepbaar is kan een bestaande aanroep overschrijven en vraagt destructief: true in het mandaat");
       nieuw.add(naamCheck(m[1]!));
       nieuweFuncties.add(naamCheck(m[1]!));
     } else if (/^create (constraint )?trigger\b/.test(st)) {

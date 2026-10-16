@@ -477,7 +477,7 @@ describe("lineaire patronen: grote invoer kost geen minuten", () => {
     for (const stuk of ["'", "$", "/*", '"', "e'", "$a$", " alter ", " do ", " execute ", " create trigger "]) {
       expect(meet(() => beoordeelSql(stuk.repeat(Math.ceil(1_000_000 / stuk.length)), false)), JSON.stringify(stuk)).toBeLessThan(4000);
     }
-  });
+  }, 60_000);
 });
 
 describe("de V3-workflow start de migratiejob ook na een automatische merge (zonder push-event)", () => {

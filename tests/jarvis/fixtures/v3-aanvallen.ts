@@ -140,4 +140,9 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
   // --- BLK-J (elfde review): een naam met drie delen (database.schema.object)
   { naam: "J: trigger op public.t via de naam met drie delen", sql: "create table qa_dbnaam.public.zz(i int); create function public.fj() returns trigger language plpgsql as $$ begin return null; end $$; create trigger j before insert on qa_dbnaam.public.t for each row execute function public.fj(); insert into public.t values ('qa-j');", altijd: false,
     effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.t where n = 'qa-j'"))[0]?.["n"] === 0 },
+  // --- BLK-K (twaalfde review): een nieuwe functie die een bestaande aanroep overschrijft; OWNED BY een bestaande kolom
+  { naam: "K1: create function public.lower(varchar) overschrijft de aanroep lower(...)", sql: "create function public.lower(varchar) returns text language sql as $$select 'pwned'::text$$;", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select lower('X'::varchar) as l"))[0]?.["l"] === "pwned" },
+  { naam: "K2: create sequence … owned by een bestaande kolom", sql: "create sequence public.qsk owned by public.t.n;", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from pg_depend where refobjid = 'public.t'::regclass and objid = 'public.qsk'::regclass and deptype = 'a'"))[0]?.["n"] === 1 },
 ];
