@@ -527,7 +527,7 @@ draai("V3-database (PostgreSQL)", () => {
 
     it.each(metEffect.map((a) => [a.naam, a] as const))("de aanval werkt echt, en de scanner weigert hem: %s", async (_naam, a) => {
       const gewerkt = await opScratch(async (tx) => {
-        await tx.unsafe(a.sql);
+        await tx.unsafe(a.sql.replaceAll("qa_dbnaam", dbNaam));
         return await a.effect!(tx as unknown as { unsafe: (s: string) => Promise<readonly Record<string, unknown>[]> });
       });
       expect(gewerkt, "controle op de test zelf: de SQL doet in PostgreSQL werkelijk wat de aanvaller wil").toBe(true);
@@ -609,7 +609,7 @@ draai("V3-database (PostgreSQL)", () => {
           if (leesbeurten === 3) await opties.bijVerseLeesbeurt?.();
         }
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5`)
-          return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: opties.basis ?? "main" }, state: gemerged ? "closed" : "open", draft: opties.concept === true, mergeable: (opties.samenvoegStaat ?? "clean") === "clean", mergeable_state: opties.samenvoegStaat ?? "clean", body: "Uitzonderingen: geen", merged: gemerged, merge_commit_sha: gemerged ? MERGE : null });
+          return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: opties.basis ?? "main" }, state: gemerged ? "closed" : "open", draft: opties.concept === true, mergeable: !["behind", "dirty"].includes(opties.samenvoegStaat ?? "clean"), mergeable_state: opties.samenvoegStaat ?? "clean", body: "Uitzonderingen: geen", merged: gemerged, merge_commit_sha: gemerged ? MERGE : null });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/reviews`) return antwoord(opties.reviews ?? []);
         if (methode === "PUT" && pad.startsWith(`/repos/${SLUG}/pulls/5/reviews/`) && pad.endsWith("/dismissals")) return antwoord({});
         if (methode === "GET" && pad === `/repos/${SLUG}/commits/${KOP}/check-runs`) return antwoord({ check_runs: [{ name: "poort", status: "completed", conclusion: "success" }] });
@@ -713,6 +713,13 @@ draai("V3-database (PostgreSQL)", () => {
       expect(aanroepen.some((a) => a.methode === "POST" && a.pad.endsWith("/reviews"))).toBe(false);
       expect(aanroepen.some((a) => a.pad === `/repos/${SLUG}/pulls/5/reviews/903/dismissals`)).toBe(true);
       expect(aanroepen.some((a) => a.pad.endsWith("/merge"))).toBe(false);
+    });
+
+    it("BLK-F: bij 'blocked' (verplichte goedkeuring ontbreekt) is het juist de beurt van de poort: goedkeuren en samenvoegen", async () => {
+      const id = await taakKlaarVoorPr(MANDAAT);
+      stubGitHub(id, [{ filename: "app/v3-proef/page.tsx", status: "added" }], { samenvoegStaat: "blocked" });
+      expect(await beoordeel(["--samenvoegen"])).toBe(0);
+      expect(schrijfacties().map((a) => `${a.methode} ${a.pad.split("/").slice(-1)[0]}`)).toEqual(["POST reviews", "PUT merge"]);
     });
 
     it("BLK-F: de sweep trekt een staande goedkeuring in op een concept-PR, en beoordeelt dat PR niet", async () => {

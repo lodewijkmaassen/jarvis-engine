@@ -137,4 +137,7 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
     effect: async (tx) => (await tx.unsafe("select obj_description('public.t'::regclass) as c"))[0]?.["c"] === "hacked-h1" },
   { naam: "H2: public.\"T\" en public.t vallen niet samen (trigger op de bestaande t)", sql: 'create table public."T" (x int); create function public.fh() returns trigger language plpgsql as $$ begin return null; end $$; create trigger h before insert on public.t for each row execute function public.fh(); insert into public.t values (\'qa-h2\');', altijd: false,
     effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.t where n = 'qa-h2'"))[0]?.["n"] === 0 },
+  // --- BLK-J (elfde review): een naam met drie delen (database.schema.object)
+  { naam: "J: trigger op public.t via de naam met drie delen", sql: "create table qa_dbnaam.public.zz(i int); create function public.fj() returns trigger language plpgsql as $$ begin return null; end $$; create trigger j before insert on qa_dbnaam.public.t for each row execute function public.fj(); insert into public.t values ('qa-j');", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select count(*)::int as n from public.t where n = 'qa-j'"))[0]?.["n"] === 0 },
 ];

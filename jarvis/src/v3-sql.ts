@@ -485,7 +485,7 @@ export function destructieveSql(sql: string): readonly string[] {
 // bestaande objecten (trigger, row level security, commentaar) dat ze alleen mogen op objecten die DEZE migratie
 // zelf eerder heeft aangemaakt.
 
-const NAAM = "[^\\s(),.;]+(?: ?\\. ?[^\\s(),.;]+)?";
+const NAAM = "[^\\s(),.;]+(?: ?\\. ?[^\\s(),.;]+)*";
 const canoniek = (x: string): string => x.replace(/\s+/g, "");
 
 /** Splitst op komma's op het hoogste haakjesniveau. */
@@ -511,26 +511,32 @@ function additieveGrammatica(statements: readonly string[]): string[] {
   const redenen: string[] = [];
   const nieuw = new Set<string>();
   const nieuweFuncties = new Set<string>();
-  const alsNaam = (m: RegExpMatchArray | null, groep = 1): string | null => (m?.[groep] === undefined ? null : canoniek(m[groep]!));
+  // Een naam met meer dan twee delen (db.schema.object) wordt niet gevolgd: fail-closed.
+  const naamCheck = (n: string): string => {
+    const c = canoniek(n);
+    if (c.split(".").length > 2) redenen.push("een naam met meer dan twee delen (database.schema.object) wordt niet gevolgd");
+    return c;
+  };
+  const alsNaam = (m: RegExpMatchArray | null, groep = 1): string | null => (m?.[groep] === undefined ? null : naamCheck(m[groep]!));
   for (const st of statements) {
     if (/^set\b/.test(st) && /\bsearch_path\b/.test(st)) redenen.push("SET search_path verandert hoe namen worden gelezen en vraagt destructief: true in het mandaat");
     let m: RegExpMatchArray | null;
     if ((m = st.match(new RegExp(`^create (?:unlogged )?table (?:if not exists )?(${NAAM})`)))) {
       if (/\bpartition of\b|\binherits\b/.test(st)) redenen.push("CREATE TABLE … PARTITION OF of INHERITS verandert een bestaande tabel en vraagt destructief: true in het mandaat");
-      if (!/^create (?:unlogged )?table if not exists\b/.test(st)) nieuw.add(canoniek(m[1]!));
-    } else if ((m = st.match(new RegExp(`^create (?:(?:temp|temporary) )?(?:recursive )?view (${NAAM})`)))) nieuw.add(canoniek(m[1]!));
-    else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) { if (!/^create (?:unique )?index (?:concurrently )?if not exists\b/.test(st)) nieuw.add(canoniek(m[1]!)); }
-    else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) { if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(canoniek(m[1]!)); }
+      if (!/^create (?:unlogged )?table if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!));
+    } else if ((m = st.match(new RegExp(`^create (?:(?:temp|temporary) )?(?:recursive )?view (${NAAM})`)))) nieuw.add(naamCheck(m[1]!));
+    else if ((m = st.match(new RegExp(`^create (?:unique )?index (?:concurrently )?(?:if not exists )?(${NAAM}) on\\b`)))) { if (!/^create (?:unique )?index (?:concurrently )?if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!)); }
+    else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) { if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(naamCheck(m[1]!)); }
     else if ((m = st.match(new RegExp(`^create function (${NAAM})`)))) {
-      nieuw.add(canoniek(m[1]!));
-      nieuweFuncties.add(canoniek(m[1]!));
+      nieuw.add(naamCheck(m[1]!));
+      nieuweFuncties.add(naamCheck(m[1]!));
     } else if (/^create (constraint )?trigger\b/.test(st)) {
       const doel = alsNaam(st.match(new RegExp(`\\bon (${NAAM})`)));
       const fn = alsNaam(st.match(new RegExp(`\\bexecute (?:function|procedure) (${NAAM}) ?\\(`)));
       if (doel === null || !nieuw.has(doel)) redenen.push("een trigger op een bestaande tabel verandert wat schrijven doet en vraagt destructief: true in het mandaat");
       if (fn === null || !nieuweFuncties.has(fn)) redenen.push("een trigger met een functie die niet in deze migratie is aangemaakt vraagt destructief: true in het mandaat");
     } else if ((m = st.match(new RegExp(`^alter table (?:if exists )?(?:only )?(${NAAM}) (.*)$`)))) {
-      const tabel = canoniek(m[1]!);
+      const tabel = naamCheck(m[1]!);
       const acties = splitsOpKomma(m[2]!);
       for (const a of acties) {
         if (/^add\b/.test(a)) {

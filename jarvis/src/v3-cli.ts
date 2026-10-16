@@ -208,8 +208,7 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     // productie: false. De poort keurt NIET goed: een goedkeuring van de bot zou de samenvoegregel van de
     // repository vervullen, en dan kon de uitvoerder zelf samenvoegen. Samenvoegen is dan aan de eigenaar.
     console.log(`jarvis v3 beoordeel-pr: #${nummer} valt binnen het mandaat; niet goedgekeurd en niet samengevoegd: ${uitrol.reden}`);
-    await trekGoedkeuringIn(token, slug, nummer, pr.kop);
-    return 0;
+    return (await trekGoedkeuringIn(token, slug, nummer, pr.kop)) ? 0 : 1;
   }
   const tekst = `Attestatie V3: ${taak} — binnen het mandaat, toetsing GO en poort groen op ${pr.kop.slice(0, 7)}.`;
   // Eerst kijken of samenvoegen nu kan; pas dan goedkeuren. Een goedkeuring blijft zo niet staan op een pull request
@@ -224,10 +223,11 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
       console.error("jarvis v3 beoordeel-pr: de kop is veranderd na de beoordeling; niet samengevoegd.");
       return 1;
     }
-    if (!vers.open || vers.concept || vers.samenvoegbaar !== true || !["clean", "has_hooks"].includes(vers.samenvoegStaat)) {
+    if (!vers.open || vers.concept || vers.samenvoegbaar !== true || !["clean", "has_hooks", "blocked"].includes(vers.samenvoegStaat)) {
+      // `blocked`: GitHub meldt dat zo zolang de verplichte goedkeuring ontbreekt, dus dat is juist onze beurt. Is er nog iets
+      // anders mis, dan weigert het samenvoegen zelf en trekt de poort de goedkeuring in dezelfde ronde weer in.
       console.log(`jarvis v3 beoordeel-pr: nog niet samenvoegbaar (staat: ${vers.samenvoegStaat}); niet goedgekeurd; een volgende ronde probeert opnieuw.`);
-      await trekGoedkeuringIn(token, slug, nummer, pr.kop);
-      return 0;
+      return (await trekGoedkeuringIn(token, slug, nummer, pr.kop)) ? 0 : 1;
     }
   }
   const al = pr.reviews.some((r) => r.staat === "APPROVED" && r.commit === pr.kop && r.tekst === tekst);
