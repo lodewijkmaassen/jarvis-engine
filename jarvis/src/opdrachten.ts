@@ -2017,14 +2017,7 @@ function apiClient(url: string): DbClient {
       try {
         antwoord = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "User-Agent": "jarvis-db",
-            Connection: "close",
-            // Buiten de proxy van het platform (GitHub Actions) komt het token uit
-            // JARVIS_DB_TOKEN, een secret. Het gaat alleen in deze header.
-            ...((process.env.JARVIS_DB_TOKEN ?? "").trim() ? { Authorization: `Bearer ${(process.env.JARVIS_DB_TOKEN ?? "").trim()}` } : {}),
-          },
+          headers: { "Content-Type": "application/json", "User-Agent": "jarvis-db", Connection: "close" },
           body: JSON.stringify({ sql, params }),
         });
       } catch (fout) {

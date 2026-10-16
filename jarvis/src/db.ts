@@ -314,7 +314,7 @@ export const V3_AANROEP_PATROON =
 export const V3_WERK_SQL = "select * from jarvis.v3_werk where id = $1";
 export const V3_WERK_ALLE_SQL = "select * from jarvis.v3_werk order by toestand_sinds";
 export const V3_VERZOEKEN_SQL = "select * from jarvis.v3_verzoeken_zicht where taak_id = $1 order by geopend_op";
-export const V3_ACTUEEL_SQL = "select * from jarvis.v3_actueel order by toestand_sinds desc";
+export const V3_ACTUEEL_SQL = "select * from jarvis.v3_actueel_werk order by toestand_sinds desc";
 
 export function v3Aanroep(naam: string, typen: readonly ("text" | "int" | "uuid" | "json")[], als?: string): string {
   const args = typen.map((t, i) => `$${i + 1}${t === "text" ? "" : t === "json" ? "::text::jsonb" : `::${t}`}`).join(", ");

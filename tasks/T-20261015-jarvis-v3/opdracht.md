@@ -33,4 +33,5 @@ GitHub-secret als token.
 - [x] Fase 1 — databasefundament (`jarvis/migrations/v3`), getest op PostgreSQL
 - [x] Fase 2 — uitvoerderslaag: `jarvis v3`-CLI, mandaatbeoordeling, dispatcher, migratieroute, workflow `jarvis-v3`
 - [x] Fase 3 — interface /v3/ op de V3-views (productiemeting in de ToVas-app volgt bij de acceptatietest)
+- [x] Reparatieronde na onafhankelijke QA: B1 (eigenaarsidentiteit faalt gesloten, eigenaarsviews gefilterd), B2 (oud pad bij hernoemen getoetst), B3 (noodstop `enabled: false` geldt voor V3), B4 (poortcode, pin en npm-config voor elk mandaat gesloten; `extra_paden` toegepast), B5 (migratiecontrole als scanner met whitelist), B6 (UITROL en KLAAR alleen via de CI-identiteit `jarvis_ci`)
 - [ ] Fase 4 — acceptatietest H met alle negen tests

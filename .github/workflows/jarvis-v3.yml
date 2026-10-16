@@ -16,6 +16,9 @@ name: jarvis-v3
 #   dispatch    start de routine van de uitvoerder via de API als er werk is
 #               zonder levende uitvoerder (verlopen lease). Het token staat
 #               alleen als secret en gaat alleen in een header.
+#   eindcontrole  meet elk acceptatiecriterium van taken in EINDCONTROLE op de echte
+#               omgeving en legt KLAAR vast. Alleen deze identiteit (jarvis_ci) kan dat;
+#               de uitvoerder kan zijn eigen werk niet voltooid verklaren.
 #   migreren    na een push naar main: past NIEUWE migraties toe die binnen het
 #               mandaat van hun taak vallen, met een eigen database-rol in een
 #               GitHub-omgeving. De uitvoerder ziet die verbindingsreeks nooit.
@@ -40,6 +43,7 @@ jobs:
   sweep:
     if: github.event_name != 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: write
       pull-requests: write
@@ -56,13 +60,33 @@ jobs:
       - name: Jarvis V3 — poort en samenvoegen
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          JARVIS_DB_API: ${{ secrets.JARVIS_DB_API }}
-          JARVIS_DB_TOKEN: ${{ secrets.JARVIS_DB_TOKEN }}
+          JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
         run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 sweep
+
+  eindcontrole:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Jarvis V3 — eindcontrole
+        env:
+          JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
+        run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 eindcontrole
 
   dispatch:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
     steps:
@@ -76,8 +100,7 @@ jobs:
       - run: npm ci --ignore-scripts
       - name: Jarvis V3 — dispatcher
         env:
-          JARVIS_DB_API: ${{ secrets.JARVIS_DB_API }}
-          JARVIS_DB_TOKEN: ${{ secrets.JARVIS_DB_TOKEN }}
+          JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
           JARVIS_ROUTINE_FIRE_URL: ${{ secrets.JARVIS_ROUTINE_FIRE_URL }}
           JARVIS_ROUTINE_TOKEN: ${{ secrets.JARVIS_ROUTINE_TOKEN }}
         run: node node_modules/jarvis-engine/bin/jarvis.mjs v3 dispatch
@@ -86,6 +109,7 @@ jobs:
     if: github.event_name == 'push' && vars.JARVIS_MIGRATIES == 'aan'
     runs-on: ubuntu-latest
     environment: jarvis-migraties
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
@@ -101,8 +125,7 @@ jobs:
       - name: Jarvis V3 — migraties
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          JARVIS_DB_API: ${{ secrets.JARVIS_DB_API }}
-          JARVIS_DB_TOKEN: ${{ secrets.JARVIS_DB_TOKEN }}
+          JARVIS_DB_URL: ${{ secrets.JARVIS_CI_DB_URL }}
           JARVIS_MIGRATIE_DB_URL: ${{ secrets.JARVIS_MIGRATIE_DB_URL }}
           JARVIS_MIGRATIE_LEDGER: ${{ vars.JARVIS_MIGRATIE_LEDGER }}
           VOOR: ${{ github.event.before }}

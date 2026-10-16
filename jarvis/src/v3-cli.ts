@@ -18,7 +18,7 @@
 //   beoordeel-pr <nummer> --repo <slug> [--samenvoegen]   de poort: mandaat tegen PR, goedkeuren, samenvoegen
 //   sweep --repo <slug>                  loopt alle open Jarvis-PR's langs (poort, goedkeuren, samenvoegen)
 //   migreer --repo <slug> --basis <sha> --kop <sha> [--droog]   de gecontroleerde migratieroute (alleen CI)
-//   eindcontrole <taak> --door <naam> [--sha <commit>]    meet de acceptatiecriteria en sluit af
+//   eindcontrole                         (alleen CI, rol jarvis_ci) meet elk acceptatiecriterium en legt KLAAR of terug-naar-UITVOEREN vast
 import { readFile } from "node:fs/promises";
 import { laadConfig, vindWortel } from "./config";
 import { leesArgumenten } from "./args";
@@ -41,11 +41,13 @@ import {
 } from "./opdrachten";
 import { laatstePerNaam, SAMENVOEGMETHODE, VERPLICHTE_CHECK } from "./pr";
 import {
+  geraaktePaden,
   beoordeelHttpMeting,
   beoordeelV3Pr,
   dispatchBesluit,
   magUitrollen,
   beoordeelMigraties,
+  normaliseerMigratie,
   MIGRATIE_PAD,
   type Criterium,
   type Mandaat,
@@ -89,6 +91,18 @@ export function mandaatUitRij(rij: Record<string, unknown> | undefined): Mandaat
   };
 }
 
+/**
+ * De noodstop. `enabled: false` in jarvis.config.yml van de uitgecheckte main stopt
+ * ELKE V3-opdracht, net als bij V2: ook sweep, dispatch, migreren en de eindcontrole.
+ * Kan de configuratie niet worden gelezen, dan faalt dit gesloten.
+ */
+export async function v3Ingeschakeld(wortel: string): Promise<{ readonly aan: boolean; readonly reden: string }> {
+  const c = await laadConfig(wortel);
+  if (!c.ok) return { aan: false, reden: `jarvis.config.yml niet te lezen (${c.fouten.join("; ")}); V3 faalt gesloten` };
+  if (!c.config.enabled) return { aan: false, reden: "jarvis.config.yml staat op enabled: false (de noodstop); V3 doet niets" };
+  return { aan: true, reden: "" };
+}
+
 async function met<T>(f: (sql: DbClient) => Promise<T>): Promise<T> {
   const v = await verbindDb();
   if (v === null) throw new Error("geen weg naar de database (JARVIS_DB_URL of de Edge Function)");
@@ -121,13 +135,14 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     return 1;
   }
   const commits = await leesAllePaginas<{ sha: string; commit: { message: string }; parents: unknown[] }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 5);
-  const bestanden = await leesAllePaginas<{ filename: string; status: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10);
+  const bestanden = await leesAllePaginas<{ filename: string; previous_filename?: string | null; status: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10);
   if (typeof commits === "string" || typeof bestanden === "string") {
     console.error(`jarvis v3 beoordeel-pr: ${typeof commits === "string" ? commits : bestanden}`);
     return 1;
   }
   const t = takenUitCommits(commits.map((c) => ({ sha: c.sha, boodschap: c.commit.message, ouders: c.parents.length })));
-  const namen = bestanden.map((b) => b.filename);
+  // Ook het OUDE pad van een hernoeming of kopie: anders verplaatst een PR een beschermd bestand naar elders.
+  const namen = geraaktePaden(bestanden);
   // De inhoud van migraties wordt altijd van de kop gelezen, nooit aangenomen.
   const migratieBestanden: { pad: string; sql: string | null }[] = [];
   for (const b of bestanden) {
@@ -136,7 +151,7 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     const l = inhoud.lading as { content?: string; encoding?: string } | null;
     migratieBestanden.push({ pad: b.filename, sql: inhoud.status === 200 && l?.encoding === "base64" && typeof l.content === "string" ? Buffer.from(l.content, "base64").toString("utf8") : null });
   }
-  const prRaw = (await github(token, "GET", `/repos/${slug}/pulls/${nummer}`)).lading as { body?: string | null } | null;
+  const prRaw = (await github(token, "GET", `/repos/${slug}/pulls/${nummer}`)).lading as { body?: string | null; merged?: boolean; merge_commit_sha?: string | null } | null;
 
   const { mandaat, toestand, go } = await met(async (sql) => {
     const taak = t.taken[0];
@@ -154,6 +169,7 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     taken: t.taken,
     taakRedenen: t.redenen,
     bestanden: namen,
+    extraPaden: config.ok ? config.config.attestatie.extra_paden : [],
     migratieBestanden,
     mandaat,
     taakToestand: toestand,
@@ -167,7 +183,20 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     console.error(`jarvis v3 beoordeel-pr: #${nummer} op ${pr.kop.slice(0, 7)} valt niet binnen het mandaat.`);
     return 3;
   }
-  const tekst = `Attestatie V3: ${f.taken[0]} — binnen het mandaat, toetsing GO en poort groen op ${pr.kop.slice(0, 7)}.`;
+  const taak = f.taken[0]!;
+  // Een pull request die al is samengevoegd (door deze sweep in een eerdere ronde, of door de eigenaar):
+  // alleen nog vastleggen. De beoordeling hierboven (paden, repo, migraties, GO op de kop) is dan al gedaan.
+  if (prRaw?.merged === true && typeof prRaw.merge_commit_sha === "string") {
+    return await leggSamengevoegdVast(taak, slug, nummer, pr.kop, prRaw.merge_commit_sha);
+  }
+  const uitrol = magUitrollen(mandaat!, namen);
+  if (!uitrol.samenvoegen) {
+    // productie: false. De poort keurt NIET goed: een goedkeuring van de bot zou de samenvoegregel van de
+    // repository vervullen, en dan kon de uitvoerder zelf samenvoegen. Samenvoegen is dan aan de eigenaar.
+    console.log(`jarvis v3 beoordeel-pr: #${nummer} valt binnen het mandaat; niet goedgekeurd en niet samengevoegd: ${uitrol.reden}`);
+    return 0;
+  }
+  const tekst = `Attestatie V3: ${taak} — binnen het mandaat, toetsing GO en poort groen op ${pr.kop.slice(0, 7)}.`;
   const al = pr.reviews.some((r) => r.staat === "APPROVED" && r.commit === pr.kop && r.tekst === tekst);
   if (!al) {
     const review = await github(token, "POST", `/repos/${slug}/pulls/${nummer}/reviews`, { commit_id: pr.kop, event: "APPROVE", body: tekst });
@@ -178,11 +207,6 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
   }
   console.log(`jarvis v3 beoordeel-pr: ${tekst}`);
   if (!samenvoegen) return 0;
-  const uitrol = magUitrollen(mandaat!, namen);
-  if (!uitrol.samenvoegen) {
-    console.log(`jarvis v3 beoordeel-pr: niet samengevoegd: ${uitrol.reden}`);
-    return 0;
-  }
   const vers = await leesPullRequest(token, slug, nummer);
   if (typeof vers === "string") {
     console.error(`jarvis v3 beoordeel-pr: ${vers}`);
@@ -201,48 +225,69 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     console.error(`jarvis v3 beoordeel-pr: samenvoegen mislukte (${foutTekst(samen)}).`);
     return 1;
   }
+  const mergeSha = (samen.lading as { sha?: string } | null)?.sha ?? "";
   console.log(`jarvis v3 beoordeel-pr: #${nummer} samengevoegd binnen het mandaat (${uitrol.reden}).`);
-  return 0;
+  return await leggSamengevoegdVast(taak, slug, nummer, pr.kop, mergeSha);
+}
+
+/** Legt vast (als de CI-identiteit) dat de pull request is samengevoegd: de taak gaat naar UITROL. */
+async function leggSamengevoegdVast(taak: string, slug: string, nummer: number, kop: string, mergeSha: string): Promise<number> {
+  try {
+    await met(async (sql) => {
+      await sql.unsafe(v3Aanroep("ci_samengevoegd", ["text", "text", "int", "text", "text"], "naar"), [taak, slug, nummer, kop, mergeSha]);
+    });
+    console.log(`jarvis v3 beoordeel-pr: ${taak} → UITROL (samengevoegd #${nummer}).`);
+    return 0;
+  } catch (fout) {
+    console.error(`jarvis v3 beoordeel-pr: samenvoegen vastleggen mislukte: ${fout instanceof Error ? fout.message : String(fout)}`);
+    return 1;
+  }
 }
 
 // ------------------------------------------------------------ eindcontrole
 
-async function eindcontrole(taak: string, door: string, sha: string | null): Promise<number> {
+/**
+ * De eindcontrole draait in de CI (rol jarvis_ci), niet in de sessie van de uitvoerder: alleen die rol kan
+ * KLAAR vastleggen (v3_ci_eindcontrole). Elk criterium van het mandaat wordt hier gemeten op de echte
+ * omgeving. Het bouwmerk moet de samenvoegcommit zijn die de CI zelf heeft vastgelegd.
+ */
+async function eindcontrole(): Promise<number> {
   return await met(async (sql) => {
-    const werk = (await sql.unsafe(V3_WERK_SQL, [taak]))[0];
-    const m = mandaatUitRij(werk);
-    if (m === null) {
-      console.error("jarvis v3 eindcontrole: de taak heeft geen mandaat.");
-      return 1;
-    }
-    const pak = await sql.unsafe(v3Aanroep("pak", ["text", "text", "int"], "ok"), [taak, door, 40]);
-    if (pak[0]?.["ok"] !== true) {
-      console.error("jarvis v3 eindcontrole: lease niet gekregen.");
-      return 3;
-    }
-    const pr = (werk?.["pr"] ?? null) as { sha?: string } | null;
-    const verwacht = sha ?? pr?.sha ?? null;
-    const meting: { criterium: string; uitkomst: string; bewijs: string; gemeten_op: string }[] = [];
-    for (const c of m.acceptatie) {
-      let uit: { geslaagd: boolean; bewijs: string };
-      if (c.meting.soort === "http") {
-        try {
-          const a = await fetch(c.meting.url, { redirect: "follow", headers: { "User-Agent": "jarvis-v3-eindcontrole", "Cache-Control": "no-cache" } });
-          uit = beoordeelHttpMeting(c.meting, { status: a.status, tekst: await a.text() }, verwacht);
-        } catch (fout) {
-          uit = { geslaagd: false, bewijs: `niet bereikbaar: ${fout instanceof Error ? fout.message : String(fout)}` };
-        }
-      } else {
-        uit = { geslaagd: false, bewijs: `meting van soort ${c.meting.soort} is in deze versie nog niet gebouwd` };
+    const taken = await sql.unsafe(V3_ACTUEEL_SQL);
+    const aanDeBeurt = taken.filter((t) => t["toestand"] === "EINDCONTROLE");
+    console.log(`jarvis v3 eindcontrole: ${aanDeBeurt.length} taak/taken in EINDCONTROLE.`);
+    let code = 0;
+    for (const t of aanDeBeurt) {
+      const id = String(t["id"]);
+      const werk = (await sql.unsafe(V3_WERK_SQL, [id]))[0];
+      const m = mandaatUitRij(werk);
+      if (m === null) {
+        console.error(`jarvis v3 eindcontrole: ${id} heeft geen mandaat.`);
+        code = 1;
+        continue;
       }
-      meting.push({ criterium: c.id, uitkomst: uit.geslaagd ? "geslaagd" : "mislukt", bewijs: uit.bewijs, gemeten_op: new Date().toISOString() });
-      console.log(`jarvis v3 eindcontrole: ${c.id} ${uit.geslaagd ? "geslaagd" : "MISLUKT"} — ${uit.bewijs}`);
+      const pr = (werk?.["pr"] ?? null) as { merge_sha?: string } | null;
+      const verwacht = pr?.merge_sha ?? null;
+      const meting: { criterium: string; uitkomst: string; bewijs: string; gemeten_op: string }[] = [];
+      for (const c of m.acceptatie) {
+        let uit: { geslaagd: boolean; bewijs: string };
+        if (c.meting.soort === "http") {
+          try {
+            const a = await fetch(c.meting.url, { redirect: "follow", headers: { "User-Agent": "jarvis-v3-eindcontrole", "Cache-Control": "no-cache" } });
+            uit = beoordeelHttpMeting(c.meting, { status: a.status, tekst: await a.text() }, verwacht);
+          } catch (fout) {
+            uit = { geslaagd: false, bewijs: `niet bereikbaar: ${fout instanceof Error ? fout.message : String(fout)}` };
+          }
+        } else {
+          uit = { geslaagd: false, bewijs: `meting van soort ${c.meting.soort} is in deze versie nog niet gebouwd` };
+        }
+        meting.push({ criterium: c.id, uitkomst: uit.geslaagd ? "geslaagd" : "mislukt", bewijs: uit.bewijs, gemeten_op: new Date().toISOString() });
+        console.log(`jarvis v3 eindcontrole: ${id} ${c.id} ${uit.geslaagd ? "geslaagd" : "MISLUKT"} — ${uit.bewijs}`);
+      }
+      const r = await sql.unsafe(v3Aanroep("ci_eindcontrole", ["text", "json"], "naar"), [id, JSON.stringify(meting)]);
+      console.log(`jarvis v3 eindcontrole: ${id} → ${String(r[0]?.["naar"])}`);
     }
-    const alles = meting.every((x) => x.uitkomst === "geslaagd");
-    const naar = alles ? "KLAAR" : "UITVOEREN";
-    await sql.unsafe(v3Aanroep("overgang", ["text", "text", "text", "json"], "naar"), [taak, door, naar, JSON.stringify({ eindcontrole: meting })]);
-    console.log(`jarvis v3 eindcontrole: ${taak} → ${naar}`);
-    return alles ? 0 : 3;
+    return code;
   });
 }
 
@@ -313,6 +358,23 @@ async function sweep(slug: string): Promise<number> {
     return 1;
   }
   const mijn = lijst.filter((p) => !p.draft && p.user.login.toLowerCase() === bot.toLowerCase() && p.head.ref.startsWith("jarvis/"));
+  // Herstel: recent samengevoegde pull requests van de bot waarvan het vastleggen (nog) niet is gelukt,
+  // of die de eigenaar zelf heeft samengevoegd (productie: false).
+  const gesloten = await leesAllePaginas<{ number: number; merged_at: string | null; user: { login: string }; head: { ref: string }; base: { ref: string } }>(token, `/repos/${slug}/pulls?state=closed&sort=updated&direction=desc`, 1);
+  const drieDagen = Date.now() - 3 * 24 * 3600 * 1000;
+  const samengevoegd = typeof gesloten === "string" ? [] : gesloten.filter((p) =>
+    p.merged_at !== null && Date.parse(p.merged_at) > drieDagen && p.base.ref === "main" &&
+    p.user.login.toLowerCase() === bot.toLowerCase() && p.head.ref.startsWith("jarvis/"));
+  for (const p of samengevoegd) {
+    const commits = await leesAllePaginas<{ sha: string; commit: { message: string }; parents: unknown[] }>(token, `/repos/${slug}/pulls/${p.number}/commits`, 5);
+    if (typeof commits === "string") continue;
+    const taak = takenUitCommits(commits.map((c) => ({ sha: c.sha, boodschap: c.commit.message, ouders: c.parents.length }))).taken[0];
+    if (taak === undefined || !/^V3-\d{8}-/.test(taak)) continue;
+    const rij = await met(async (sql) => (await sql.unsafe(V3_WERK_SQL, [taak]))[0]);
+    if (!["UITVOEREN", "CONTROLE"].includes(String(rij?.["toestand"]))) continue;
+    const code = await beoordeelPr(p.number, slug, false);
+    console.log(`jarvis v3 sweep: samengevoegde #${p.number} vastleggen → ${code === 0 ? "gedaan" : "niet gelukt"}`);
+  }
   console.log(`jarvis v3 sweep: ${mijn.length} open pull request(s) van de bot in ${slug}.`);
   for (const p of mijn) {
     const code = await beoordeelPr(p.number, slug, true);
@@ -416,9 +478,11 @@ async function migreer(slug: string, basis: string, kop: string, droog: boolean)
         console.log(`jarvis v3 migreer: ${naam} staat al in het ledger; overgeslagen.`);
         continue;
       }
+      // Precies de SQL die is beoordeeld: zonder eigen begin/commit-omhulling, in één transactie met de ledgerregel.
+      const uit = normaliseerMigratie(b.sql);
       await db.begin(async (tx) => {
-        await tx.unsafe(b.sql);
-        await tx.unsafe(`insert into ${ledger} (version, name, statements) values ($1, $2, $3)`, [ledgerVersie(new Date()), naam, [b.sql]]);
+        await tx.unsafe(uit);
+        await tx.unsafe(`insert into ${ledger} (version, name, statements) values ($1, $2, $3)`, [ledgerVersie(new Date()), naam, [uit]]);
       });
       console.log(`jarvis v3 migreer: ${naam} toegepast voor ${taak}.`);
     }
@@ -437,6 +501,12 @@ export async function voerV3Uit(argv: readonly string[]): Promise<number> {
     return 2;
   }
   try {
+    const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+    const stand = await v3Ingeschakeld(wortel);
+    if (!stand.aan) {
+      console.error(`jarvis v3: ${stand.reden}.`);
+      return 1;
+    }
     const taak = losse[0] ?? "";
     switch (wat) {
       case "nieuw":
@@ -527,7 +597,7 @@ export async function voerV3Uit(argv: readonly string[]): Promise<number> {
       case "migreer":
         return await migreer(vlaggen.get("repo") || (process.env.GITHUB_REPOSITORY ?? "").trim(), vereist(vlaggen, "basis"), vereist(vlaggen, "kop"), vlaggen.has("droog"));
       case "eindcontrole":
-        return await eindcontrole(taak, vereist(vlaggen, "door"), vlaggen.get("sha") ?? null);
+        return await eindcontrole();
       default:
         console.error("jarvis v3: onbekende opdracht. Zie de kop van jarvis/src/v3-cli.ts.");
         return 2;

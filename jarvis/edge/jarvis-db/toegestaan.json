@@ -24,5 +24,5 @@
   "select * from jarvis.v3_werk where id = $1",
   "select * from jarvis.v3_werk order by toestand_sinds",
   "select * from jarvis.v3_verzoeken_zicht where taak_id = $1 order by geopend_op",
-  "select * from jarvis.v3_actueel order by toestand_sinds desc"
+  "select * from jarvis.v3_actueel_werk order by toestand_sinds desc"
 ]

@@ -5,12 +5,25 @@
 -- maken, ook niet door een vergissing. Geen verwijzing naar V2-tabellen,
 -- behalve het lezen van `jarvis.toetsingen` (onveranderbare QA-oordelen).
 --
--- Rechten:
+-- Rechten, drie identiteiten:
 --   jarvis_werker  (uitvoerder, via de Edge Function) mag uitsluitend de
---                  v3_*-functies voor de uitvoerder aanroepen en de views lezen;
---                  geen directe schrijfrechten op de tabellen.
+--                  v3_*-functies voor de uitvoerder aanroepen en de werkviews
+--                  lezen; geen directe schrijfrechten op de tabellen.
+--   jarvis_ci      (de V3-workflow, via een eigen verbindingsreeks die alleen
+--                  als GitHub-secret bestaat) is de ENIGE die kan vastleggen
+--                  dat een pull request is samengevoegd (v3_ci_samengevoegd)
+--                  en dat de eindcontrole is geslaagd (v3_ci_eindcontrole).
+--                  De uitvoerder kan dus nooit zelf UITROL of KLAAR bereiken.
 --   authenticated  (de ingelogde eigenaar in de app) mag uitsluitend de
---                  eigenaarsfuncties aanroepen en de views lezen.
+--                  eigenaarsfuncties aanroepen en de eigenaarsviews lezen --
+--                  en alleen als v3_is_eigenaar() waar is.
+--
+-- BOOTSTRAP (eenmalig, door een rol met rechten; zonder deze stap is NIEMAND
+-- eigenaar en weigert elke eigenaarsfunctie -- de veilige standaard):
+--   insert into jarvis.v3_instellingen (sleutel, waarde) values ('eigenaar_uid', '<auth.users.id van de eigenaar>');
+--   create role jarvis_ci login password '<...>';   -- alleen schema-rechten, geen eigenaar van jarvis
+-- Daarna draait deze migratie opnieuw (idempotent) zodat de rechten voor
+-- jarvis_ci worden toegekend.
 --
 -- Idempotent: opnieuw uitvoeren verandert niets.
 
@@ -154,13 +167,13 @@ language plpgsql immutable as $$
 declare a jsonb; p text;
 begin
   if coalesce(m->>'doel','') = '' then return 'doel ontbreekt'; end if;
-  if jsonb_typeof(m->'acceptatie') <> 'array' or jsonb_array_length(m->'acceptatie') = 0 then return 'acceptatie ontbreekt'; end if;
+  if coalesce(jsonb_typeof(m->'acceptatie'), '') <> 'array' or jsonb_array_length(m->'acceptatie') = 0 then return 'acceptatie ontbreekt'; end if;
   for a in select * from jsonb_array_elements(m->'acceptatie') loop
     if coalesce(a->>'id','') = '' or coalesce(a->>'omschrijving','') = '' then return 'elk acceptatiecriterium heeft id en omschrijving'; end if;
     if coalesce(a#>>'{meting,soort}','') not in ('http','ci','sql') then return 'elk criterium heeft een meting (http, ci of sql)'; end if;
   end loop;
-  if jsonb_typeof(m->'repos') <> 'array' or jsonb_array_length(m->'repos') = 0 then return 'repos ontbreekt'; end if;
-  if jsonb_typeof(m->'paden_ja') <> 'array' or jsonb_array_length(m->'paden_ja') = 0 then return 'paden_ja ontbreekt'; end if;
+  if coalesce(jsonb_typeof(m->'repos'), '') <> 'array' or jsonb_array_length(m->'repos') = 0 then return 'repos ontbreekt'; end if;
+  if coalesce(jsonb_typeof(m->'paden_ja'), '') <> 'array' or jsonb_array_length(m->'paden_ja') = 0 then return 'paden_ja ontbreekt'; end if;
   for p in select jsonb_array_elements_text(m->'paden_ja') loop
     if jarvis.v3_verboden_pad(p) then return format('pad %s hoort niet in een mandaat (veiligheidsgrens)', p); end if;
   end loop;
@@ -245,6 +258,7 @@ declare r jarvis.v3_verzoeken%rowtype;
 begin
   if not exists (select 1 from jarvis.v3_taken where jarvis.v3_taken.id = p_taak) then raise exception 'v3: onbekende taak %', p_taak; end if;
   if p_type = 'akkoord' then raise exception 'v3: een akkoord opent alleen v3_vraag_akkoord'; end if;
+  if p_sleutel like 'mandaat-%' then raise exception 'v3: de sleutel % is gereserveerd voor het mandaat', p_sleutel; end if;
   insert into jarvis.v3_verzoeken (taak_id, type, sleutel, vraag, opties, verificatie)
     values (p_taak, p_type, p_sleutel, p_vraag, p_opties, p_verificatie)
     on conflict (taak_id, sleutel) do nothing;
@@ -297,7 +311,7 @@ end $$;
 -- Toegestane overgangen die de uitvoerder zelf mag maken, met hun voorwaarden.
 create or replace function jarvis.v3_overgang(p_taak text, p_houder text, p_naar text, p_bewijs jsonb default '{}'::jsonb)
 returns text language plpgsql security definer set search_path = jarvis, pg_temp as $$
-declare t jarvis.v3_taken%rowtype; m jarvis.v3_mandaten%rowtype; ok boolean := false; n int; krit jsonb; uit jsonb; gevonden boolean;
+declare t jarvis.v3_taken%rowtype; m jarvis.v3_mandaten%rowtype; ok boolean := false;
 begin
   select * into t from jarvis.v3_taken where id = p_taak for update;
   if not found then raise exception 'v3: onbekende taak %', p_taak; end if;
@@ -314,11 +328,6 @@ begin
     if not (m.repos @> array[p_bewijs#>>'{pr,repo}']) then raise exception 'v3: repo valt buiten het mandaat'; end if;
     update jarvis.v3_taken set pr = p_bewijs->'pr' where id = p_taak;
     ok := true;
-  elsif t.toestand = 'CONTROLE' and p_naar = 'UITROL' then
-    select count(*) into n from jarvis.toetsingen
-     where pr_repo = t.pr->>'repo' and pr_nummer = (t.pr->>'nummer')::int and commit_sha = t.pr->>'sha' and oordeel = 'GO';
-    if n = 0 then raise exception 'v3: geen toetsing GO op de kop %', t.pr->>'sha'; end if;
-    ok := true;
   elsif t.toestand = 'CONTROLE' and p_naar = 'UITVOEREN' then ok := true;
   elsif t.toestand = 'UITROL' and p_naar = 'EINDCONTROLE' then
     if m.productie and coalesce((p_bewijs->>'gedeployed')::boolean, false) is not true then
@@ -326,17 +335,6 @@ begin
     end if;
     ok := true;
   elsif t.toestand = 'EINDCONTROLE' and p_naar = 'UITVOEREN' then ok := true;
-  elsif t.toestand = 'EINDCONTROLE' and p_naar = 'KLAAR' then
-    uit := p_bewijs->'eindcontrole';
-    if jsonb_typeof(uit) <> 'array' then raise exception 'v3: KLAAR vraagt bewijs.eindcontrole als lijst'; end if;
-    for krit in select * from jsonb_array_elements(m.acceptatie) loop
-      select exists (select 1 from jsonb_array_elements(uit) e
-                      where e->>'criterium' = krit->>'id' and e->>'uitkomst' = 'geslaagd'
-                        and coalesce(e->>'bewijs','') <> '' and coalesce(e->>'gemeten_op','') <> '') into gevonden;
-      if not gevonden then raise exception 'v3: criterium % is niet gemeten geslaagd', krit->>'id'; end if;
-    end loop;
-    update jarvis.v3_taken set eindcontrole = uit, afgerond_op = now() where id = p_taak;
-    ok := true;
   elsif p_naar = 'MISLUKT' and t.toestand not in ('KLAAR','MISLUKT') then
     if coalesce(p_bewijs->>'reden','') = '' then raise exception 'v3: MISLUKT vraagt bewijs.reden'; end if;
     update jarvis.v3_taken set afgerond_op = now() where id = p_taak;
@@ -352,6 +350,62 @@ begin
   return p_naar;
 end $$;
 
+-- ----------------------------------------------------------------- CI-identiteit
+-- Alleen jarvis_ci krijgt EXECUTE op deze functies. De uitvoerder (jarvis_werker)
+-- kan "samengevoegd" en "geslaagd" dus niet zelf vastleggen: die twee feiten
+-- komen uit de workflow, die GitHub en de productie zelf raadpleegt.
+
+-- Een pull request is samengevoegd: de taak gaat naar UITROL. De pull request
+-- wordt hier door de CI vastgelegd (niet door de uitvoerder), op grond van
+-- trailer, mandaat en GO-toetsing die de CI zelf heeft gecontroleerd.
+create or replace function jarvis.v3_ci_samengevoegd(p_taak text, p_repo text, p_nummer int, p_kop text, p_merge_sha text)
+returns text language plpgsql security definer set search_path = jarvis, pg_temp as $$
+declare t jarvis.v3_taken%rowtype; m jarvis.v3_mandaten%rowtype; n int;
+begin
+  select * into t from jarvis.v3_taken where id = p_taak for update;
+  if not found then raise exception 'v3: onbekende taak %', p_taak; end if;
+  if t.toestand not in ('UITVOEREN','CONTROLE') then raise exception 'v3: % staat in %, niet in UITVOEREN of CONTROLE', p_taak, t.toestand; end if;
+  select * into m from jarvis.v3_mandaten where id = t.mandaat_id;
+  if not found then raise exception 'v3: % heeft geen mandaat', p_taak; end if;
+  if not (m.repos @> array[p_repo]) then raise exception 'v3: repo % valt buiten het mandaat', p_repo; end if;
+  select count(*) into n from jarvis.toetsingen
+   where pr_repo = p_repo and pr_nummer = p_nummer and commit_sha = p_kop and oordeel = 'GO';
+  if n = 0 then raise exception 'v3: geen toetsing GO op de kop %', p_kop; end if;
+  if coalesce(p_merge_sha, '') !~ '^[0-9a-f]{7,40}$' then raise exception 'v3: ongeldige merge-sha'; end if;
+  update jarvis.v3_taken set toestand = 'UITROL', toestand_sinds = now(), blokkade = null,
+         pr = jsonb_build_object('repo', p_repo, 'nummer', p_nummer, 'sha', p_kop, 'merge_sha', p_merge_sha),
+         lease_houder = null, lease_tot = null
+   where id = p_taak;
+  perform jarvis.v3_log(p_taak, 'ci', 'toestand', jsonb_build_object('van', t.toestand, 'naar', 'UITROL', 'pr', p_nummer, 'merge_sha', p_merge_sha));
+  return 'UITROL';
+end $$;
+
+-- De eindcontrole: KLAAR alleen als elk criterium van het mandaat door de CI
+-- gemeten geslaagd is; anders terug naar UITVOEREN.
+create or replace function jarvis.v3_ci_eindcontrole(p_taak text, p_meting jsonb)
+returns text language plpgsql security definer set search_path = jarvis, pg_temp as $$
+declare t jarvis.v3_taken%rowtype; m jarvis.v3_mandaten%rowtype; krit jsonb; gevonden boolean; alles boolean := true; naar text;
+begin
+  select * into t from jarvis.v3_taken where id = p_taak for update;
+  if not found then raise exception 'v3: onbekende taak %', p_taak; end if;
+  if t.toestand <> 'EINDCONTROLE' then raise exception 'v3: % staat in %, niet in EINDCONTROLE', p_taak, t.toestand; end if;
+  if coalesce(jsonb_typeof(p_meting), '') <> 'array' then raise exception 'v3: de meting moet een lijst zijn'; end if;
+  select * into m from jarvis.v3_mandaten where id = t.mandaat_id;
+  for krit in select e from jarvis.v3_mandaten x, jsonb_array_elements(x.acceptatie) e where x.id = m.id loop
+    select exists (select 1 from jsonb_array_elements(p_meting) e2
+                    where e2->>'criterium' = krit->>'id' and e2->>'uitkomst' = 'geslaagd'
+                      and coalesce(e2->>'bewijs','') <> '' and coalesce(e2->>'gemeten_op','') <> '') into gevonden;
+    if not gevonden then alles := false; end if;
+  end loop;
+  naar := case when alles then 'KLAAR' else 'UITVOEREN' end;
+  update jarvis.v3_taken set toestand = naar, toestand_sinds = now(), eindcontrole = p_meting,
+         afgerond_op = case when alles then now() else null end,
+         lease_houder = null, lease_tot = null
+   where id = p_taak;
+  perform jarvis.v3_log(p_taak, 'ci', 'eindcontrole', jsonb_build_object('naar', naar));
+  return naar;
+end $$;
+
 -- --------------------------------------------------------------------- eigenaar
 create or replace function jarvis.v3_is_eigenaar() returns boolean
 language plpgsql stable security definer set search_path = jarvis, pg_temp as $$
@@ -359,11 +413,8 @@ declare uid text;
 begin
   begin uid := (select auth.uid())::text; exception when others then uid := null; end;
   if uid is null then return false; end if;
-  -- Staat de eigenaar vastgelegd, dan moet het exact die zijn; anders volstaat een ingelogde gebruiker.
-  if exists (select 1 from jarvis.v3_instellingen where sleutel = 'eigenaar_uid') then
-    return exists (select 1 from jarvis.v3_instellingen where sleutel = 'eigenaar_uid' and waarde = uid);
-  end if;
-  return true;
+  -- Faalt gesloten: zonder vastgelegde eigenaar is niemand eigenaar.
+  return exists (select 1 from jarvis.v3_instellingen where sleutel = 'eigenaar_uid' and waarde = uid);
 end $$;
 
 create or replace function jarvis.v3_schrijf_mandaat(p_taak text, p_m jsonb, p_versie int) returns uuid
@@ -457,12 +508,19 @@ begin
 end $$;
 
 -- ----------------------------------------------------------------------- views
+-- Eigenaarsviews: leeg voor iedereen die niet de vastgelegde eigenaar is.
 create or replace view jarvis.v3_voor_jou as
   select v.id, v.taak_id, v.type, v.vraag, v.opties, v.geopend_op, t.titel
     from jarvis.v3_verzoeken v join jarvis.v3_taken t on t.id = v.taak_id
-   where v.status = 'open' and v.type in ('akkoord','beslissing');
+   where jarvis.v3_is_eigenaar() and v.status = 'open' and v.type in ('akkoord','beslissing');
 
 create or replace view jarvis.v3_actueel as
+  select t.id, t.titel, t.toestand, t.blokkade, t.poging, t.lease_houder, t.lease_tot, t.toestand_sinds, t.pr, t.eindcontrole, t.afgerond_op,
+         (select count(*) from jarvis.v3_verzoeken v where v.taak_id = t.id and v.status = 'open' and v.type in ('akkoord','beslissing')) as open_verzoeken
+    from jarvis.v3_taken t where jarvis.v3_is_eigenaar();
+
+-- Werkweergave voor de uitvoerder en de CI: alle taken, zonder eigenaarsfilter.
+create or replace view jarvis.v3_actueel_werk as
   select t.id, t.titel, t.toestand, t.blokkade, t.poging, t.lease_houder, t.lease_tot, t.toestand_sinds, t.pr, t.eindcontrole, t.afgerond_op,
          (select count(*) from jarvis.v3_verzoeken v where v.taak_id = t.id and v.status = 'open' and v.type in ('akkoord','beslissing')) as open_verzoeken
     from jarvis.v3_taken t;
@@ -490,30 +548,38 @@ alter table jarvis.v3_gebeurtenissen enable row level security;
 do $$
 declare r text; f text;
 begin
-  for r in select unnest(array['jarvis_werker','authenticated']) loop
+  for r in select unnest(array['jarvis_werker','jarvis_ci','authenticated']) loop
     continue when not exists (select 1 from pg_roles where rolname = r);
     execute format('revoke all on jarvis.v3_instellingen, jarvis.v3_mandaten, jarvis.v3_taken, jarvis.v3_verzoeken, jarvis.v3_gebeurtenissen from %I', r);
+    execute format('revoke all on jarvis.v3_voor_jou, jarvis.v3_actueel, jarvis.v3_actueel_werk, jarvis.v3_werk, jarvis.v3_verzoeken_zicht from %I', r);
     execute format('grant usage on schema jarvis to %I', r);
-    execute format('grant select on jarvis.v3_voor_jou, jarvis.v3_actueel to %I', r);
   end loop;
-  if exists (select 1 from pg_roles where rolname = 'jarvis_werker') then
-    grant select on jarvis.v3_werk, jarvis.v3_verzoeken_zicht to jarvis_werker;
-  end if;
   -- Functies: standaard voor niemand, daarna per rol.
   for f in select p.oid::regprocedure::text from pg_proc p join pg_namespace n on n.oid = p.pronamespace
             where n.nspname = 'jarvis' and p.proname like 'v3\_%' loop
     execute format('revoke all on function %s from public', f);
   end loop;
   if exists (select 1 from pg_roles where rolname = 'jarvis_werker') then
+    grant select on jarvis.v3_actueel_werk, jarvis.v3_werk, jarvis.v3_verzoeken_zicht to jarvis_werker;
     grant execute on function
       jarvis.v3_nieuwe_taak(text,text,text,text), jarvis.v3_pak(text,text,int), jarvis.v3_hartslag(text,text,int),
       jarvis.v3_blokkade(text,text,text), jarvis.v3_watchdog(), jarvis.v3_dispatch_claim(int), jarvis.v3_vraag(text,text,text,text,jsonb,jsonb),
       jarvis.v3_vraag_akkoord(text,jsonb), jarvis.v3_meet_verzoek(uuid,jsonb), jarvis.v3_overgang(text,text,text,jsonb)
       to jarvis_werker;
   end if;
-  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+  if exists (select 1 from pg_roles where rolname = 'jarvis_ci') then
+    grant select on jarvis.v3_actueel_werk, jarvis.v3_werk, jarvis.v3_verzoeken_zicht to jarvis_ci;
+    grant select on jarvis.toetsingen to jarvis_ci;
     grant execute on function
-      jarvis.v3_geef_mandaat(text), jarvis.v3_wijs_af(text), jarvis.v3_beantwoord(uuid,text,jsonb), jarvis.v3_nieuwe_opdracht(text,text)
+      jarvis.v3_watchdog(), jarvis.v3_dispatch_claim(int),
+      jarvis.v3_ci_samengevoegd(text,text,int,text,text), jarvis.v3_ci_eindcontrole(text,jsonb)
+      to jarvis_ci;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    grant select on jarvis.v3_voor_jou, jarvis.v3_actueel to authenticated;
+    grant execute on function
+      jarvis.v3_geef_mandaat(text), jarvis.v3_wijs_af(text), jarvis.v3_beantwoord(uuid,text,jsonb), jarvis.v3_nieuwe_opdracht(text,text),
+      jarvis.v3_is_eigenaar()   -- nodig voor de eigenaarsviews: functies in een view worden met de rechten van de aanroeper getoetst
       to authenticated;
   end if;
 end $$;
