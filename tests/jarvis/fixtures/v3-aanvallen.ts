@@ -162,4 +162,15 @@ export const BLK1_AANVALLEN: readonly Aanval[] = [
     effect: async (tx) => ((await tx.unsafe("select count(*)::int as n from pg_locks where locktype = 'advisory'"))[0]?.["n"] as number) >= 1 },
   { naam: "L6: pg_sleep_for", sql: "create table qslp as select pg_sleep_for('0 seconds')::text as x;", altijd: false,
     effect: async (tx) => (await tx.unsafe("select to_regclass('public.qslp') is not null as ja"))[0]?.["ja"] === true },
+  // --- BLK-M (veertiende review): ts_rewrite voert tekst als SQL uit; bereiktypes; LIKE … INCLUDING DEFAULTS; check_function_bodies
+  { naam: "M1: ts_rewrite voert een tekst als SQL uit (setval)", sql: "create sequence public.qts; create table public.qtsx as select ts_rewrite('a'::tsquery, 'select setval(''public.qts'', 5000)::text::tsquery, ''b''::tsquery') as q;", altijd: false,
+    effect: async (tx) => Number((await tx.unsafe("select last_value::int as n from public.qts"))[0]?.["n"]) === 5000 },
+  { naam: "M2: een bereiktype maakt een functie power(int4,int4) die elke aanroep overschrijft", sql: "create type public.power as range (subtype = int4);", altijd: false,
+    effect: async (tx) => (await tx.unsafe("select power(2,3)::text as p"))[0]?.["p"] === "[2,3)" },
+  { naam: "M3: LIKE … INCLUDING DEFAULTS kopieert nextval(...) en verbruikt de sequentie", sql: "create table public.qa_src (id serial); create table public.qa_dst (like public.qa_src including defaults); insert into public.qa_dst select from generate_series(1,3);", altijd: false,
+    effect: async (tx) => Number((await tx.unsafe("select last_value::int as n from public.qa_src_id_seq"))[0]?.["n"]) === 3 },
+  { naam: "M4: set check_function_bodies = off laat een triggerfunctie met argumenten toe die lower(varchar) kaapt", sql: "set check_function_bodies = off; create function public.lower(varchar) returns trigger language plpgsql as $$ begin return new; end $$;", altijd: false,
+    effect: async (tx) => {
+      try { await tx.unsafe("savepoint s"); await tx.unsafe("select lower('A'::varchar)"); return false; } catch { await tx.unsafe("rollback to savepoint s"); return true; }
+    } },
 ];

@@ -7,7 +7,7 @@
 // staat en door een pull request niet zelf aan te passen is (de poort draait
 // altijd de versie van `main`).
 import { HARDE_UITZONDERINGEN } from "./attestatie";
-import { beoordeelSql } from "./v3-sql";
+import { beoordeelSql, lexSql as lexSqlIntern, normaliseerMigratie as normaliseerIntern } from "./v3-sql";
 
 export type Meting =
   | { readonly soort: "http"; readonly url: string; readonly bevat?: string; readonly bouwmerk?: boolean }
@@ -117,14 +117,23 @@ export type MigratieOordeel = { readonly pad: string; readonly redenen: readonly
 
 export { beoordeelSql, destructieveSql, lexSql, normaliseerMigratie, sqlTokens } from "./v3-sql";
 
-export function beoordeelMigraties(m: Mandaat, bestanden: readonly { readonly pad: string; readonly sql: string | null }[]): readonly MigratieOordeel[] {
+export function beoordeelMigraties(
+  m: Mandaat,
+  bestanden: readonly { readonly pad: string; readonly sql: string | null }[],
+  /** Het ledger (schema.tabel): een migratie mag zijn eigen administratie niet noemen, anders kan ze een latere migratie vooraf als 'al toegepast' boeken. */
+  ledger = "",
+): readonly MigratieOordeel[] {
+  const ledgerNaam = ledger.split(".").pop()?.toLowerCase() ?? "";
   const uit: MigratieOordeel[] = [];
   for (const b of bestanden) {
     if (!MIGRATIE_PAD.test(b.pad.replace(/\\/g, "/"))) continue;
     const redenen: string[] = [];
     if (!m.migraties) redenen.push("het mandaat staat geen migraties toe (migraties: false)");
     if (b.sql === null) redenen.push("de inhoud van de migratie is niet te lezen");
-    else redenen.push(...beoordeelSql(b.sql, m.destructief).map((r) => `migratie: ${r}`));
+    else {
+      redenen.push(...beoordeelSql(b.sql, m.destructief).map((r) => `migratie: ${r}`));
+      if (ledgerNaam !== "" && new RegExp(`\\b${ledgerNaam.replace(/[^a-z0-9_]/g, "")}\\b`).test(lexSqlIntern(normaliseerIntern(b.sql)).alles.toLowerCase())) redenen.push("migratie: noemt het ledger van de migratieroute");
+    }
     if (redenen.length > 0) uit.push({ pad: b.pad, redenen });
   }
   return uit;

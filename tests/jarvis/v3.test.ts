@@ -560,6 +560,13 @@ describe("BLK-D: een goedaardige additieve migratie blijft doorgelaten; secrets 
     ];
     for (const g of goed) expect(beoordeelSql(g, false), g).toEqual([]);
   });
+  it("BLK-M: een migratie mag het ledger van de migratieroute niet noemen", async () => {
+    const { beoordeelMigraties } = await import("@/jarvis/src/v3");
+    const m = { doel: "x", acceptatie: [], repos: ["a/b"], paden_ja: [], productie: true, migraties: true, destructief: false, kosten_max_eur: 0 } as never;
+    const kwaad = "insert into supabase_migrations.schema_migrations (version, name) values ('99', 'later');";
+    expect(beoordeelMigraties(m, [{ pad: "supabase/migrations/0101_x.sql", sql: kwaad }], "supabase_migrations.schema_migrations")[0]?.redenen.join()).toMatch(/ledger/);
+    expect(beoordeelMigraties(m, [{ pad: "supabase/migrations/0101_x.sql", sql: "create table public.a (id int);" }], "supabase_migrations.schema_migrations")).toEqual([]);
+  });
   it("BLK-L: commentaar op een functie eist dezelfde naam én argumenten als de functie uit deze migratie", () => {
     const sql = "create function mijn() returns trigger language plpgsql as $$ begin return new; end $$; comment on function mijn(int) is 'x';";
     expect(beoordeelSql(sql, false).length).toBeGreaterThan(0);

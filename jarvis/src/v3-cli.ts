@@ -538,7 +538,7 @@ async function migreerBestanden(o: {
     }
     bestanden.push({ pad, sql: Buffer.from(l.content, "base64").toString("utf8") });
   }
-  const oordeel = beoordeelMigraties(m, bestanden);
+  const oordeel = beoordeelMigraties(m, bestanden, ledger);
   if (oordeel.length > 0) {
     for (const x of oordeel) console.error(`jarvis v3 migreer: ${x.pad}: ${x.redenen.join("; ")}`);
     return 3;

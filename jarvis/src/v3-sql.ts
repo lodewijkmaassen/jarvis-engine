@@ -352,13 +352,13 @@ const ALTIJD_VERBODEN: readonly Regel[] = [
   [/\b(session_replication_role|standard_conforming_strings|backslash_quote|escape_string_warning)\b/, "sessie-instellingen die het lezen van SQL of triggers veranderen"],
   [/\bdisable\b/, "DISABLE (triggers of beveiliging uitzetten)"],
   [/\blanguage\s+(?!(sql|plpgsql)\b)/, "een andere functietaal dan sql of plpgsql"],
-  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|pg_sleep\w*|pg_advisory\w*|pg_notify|pg_stat_reset\w*|pg_reload_conf|pg_rotate_logfile|pg_switch_wal|pg_drop_\w+|pg_create_\w+|pg_promote|pg_wal_replay\w*|pg_truncate\w*|pg_import\w*|pg_export\w*)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
+  [/\b(lo_\w+|setval|nextval|currval|lastval|pg_read_file|pg_ls_dir|pg_read_binary_file|dblink|pg_terminate_backend|pg_cancel_backend|set_config|ts_rewrite|pg_sleep\w*|pg_advisory\w*|pg_notify|pg_stat_reset\w*|pg_reload_conf|pg_rotate_logfile|pg_switch_wal|pg_drop_\w+|pg_create_\w+|pg_promote|pg_wal_replay\w*|pg_truncate\w*|pg_import\w*|pg_export\w*)\b/, "bestands-, netwerk-, sessie-, large-object- of sequentiefuncties"],
 ];
 
 /** Per statement (bovenste niveau) verboden beginwoorden: eigen transactiebesturing en sessie-instellingen. */
 const STATEMENT_BEGIN_VERBODEN = /^(begin|commit|end|rollback|abort|savepoint|release|start|prepare|reset|discard|load|listen|notify|unlisten|checkpoint)\b/;
 /** Een `set` mag alleen deze onschuldige instellingen aanraken. */
-const SET_TOEGESTAAN = /^set\s+(local\s+)?(statement_timeout|lock_timeout|idle_in_transaction_session_timeout|client_min_messages|check_function_bodies|search_path)\b/;
+const SET_TOEGESTAAN = /^set\s+(local\s+)?(statement_timeout|lock_timeout|idle_in_transaction_session_timeout|client_min_messages|search_path)\b/;
 /** De enige toegestane vorm van EXECUTE op het bovenste niveau: de triggerdefinitie (drie lineaire toetsen, precies één EXECUTE). */
 function triggerExecute(st: string): boolean {
   return (
@@ -404,7 +404,7 @@ const TOEGESTAAN: readonly RegExp[] = [
   /^alter table (if exists )?(only )?[^\s,.]+( ?\. ?[^\s,.]+)? enable row level security$/,
   /^insert into\b/,
   /^comment on\b/,
-  /^set\s+(local\s+)?(statement_timeout|lock_timeout|idle_in_transaction_session_timeout|client_min_messages|check_function_bodies|search_path)\b/,
+  /^set\s+(local\s+)?(statement_timeout|lock_timeout|idle_in_transaction_session_timeout|client_min_messages|search_path)\b/,
   // Onschadelijke extensies uit een vaste lijst; alles anders valt onder ALTIJD_VERBODEN.
   /^create extension (if not exists )?"?(pgcrypto|uuid-ossp|pg_trgm|citext|unaccent|btree_gist|btree_gin)"?( with schema (public|extensions))?$/,
 ];
@@ -523,6 +523,7 @@ function additieveGrammatica(statements: readonly string[]): string[] {
     if (/^set\b/.test(st) && /\bsearch_path\b/.test(st)) redenen.push("SET search_path verandert hoe namen worden gelezen en vraagt destructief: true in het mandaat");
     let m: RegExpMatchArray | null;
     if ((m = st.match(new RegExp(`^create (?:unlogged )?table (?:if not exists )?(${NAAM})`)))) {
+      if (/\blike\b[^,)]*\bincluding\b/.test(st)) redenen.push("CREATE TABLE … LIKE … INCLUDING kopieert standaardwaarden (zoals nextval) van een bestaande tabel en vraagt destructief: true in het mandaat");
       if (/\bpartition of\b|\binherits\b/.test(st)) redenen.push("CREATE TABLE … PARTITION OF of INHERITS verandert een bestaande tabel en vraagt destructief: true in het mandaat");
       if (!/^create (?:unlogged )?table if not exists\b/.test(st)) nieuw.add(naamCheck(m[1]!));
     } else if ((m = st.match(new RegExp(`^create (?:recursive )?view (${NAAM})`)))) nieuw.add(naamCheck(m[1]!));
@@ -533,6 +534,9 @@ function additieveGrammatica(statements: readonly string[]): string[] {
       const tabelDeel = eigenaar === null ? null : canoniek(eigenaar[1]!).replace(/\.[^.]*$/, "");
       if (!(eigenaar !== null && canoniek(eigenaar[1]!) === "none") && (tabelDeel === null || !nieuw.has(tabelDeel))) redenen.push("OWNED BY een kolom van een bestaande tabel verandert die tabel en vraagt destructief: true in het mandaat");
       if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(naamCheck(m[1]!));
+    } else if (/^create type\b/.test(st) && !/^create type \S+( ?\. ?\S+)? as (enum|\()/.test(st)) {
+      // Een bereiktype (as range) of basistype maakt functies aan met de naam van het type en overschrijft zo bestaande aanroepen.
+      redenen.push("alleen CREATE TYPE … AS ENUM of AS (samengesteld) is additief; een bereiks- of basistype maakt verborgen functies");
     } else if ((m = st.match(new RegExp(`^create (?:sequence|type) (?:if not exists )?(${NAAM})`)))) { if (!/ if not exists\b/.test(st.slice(0, 40))) nieuw.add(naamCheck(m[1]!)); }
     else if ((m = st.match(new RegExp(`^create function (${NAAM})`)))) {
       // Een nieuwe functie met dezelfde naam en een passender argumenttype overschrijft bij PostgreSQL elke bestaande
