@@ -63,8 +63,8 @@ export function padNaarUrl(pad: string): string {
 
 /** Is er een GO op precies deze kop, en géén NO-GO? (Eén NO-GO weegt zwaarder dan elke GO; V2 blijft ongemoeid.) */
 export const V3_TOETSING_GO_SQL =
-  "select 1 as go from jarvis.toetsingen where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and oordeel = 'GO' " +
-  "and not exists (select 1 from jarvis.toetsingen where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and oordeel <> 'GO') limit 1";
+  "select 1 as go from jarvis.toetsingen where lower(pr_repo) = lower($1) and pr_nummer = $2 and commit_sha = $3 and oordeel = 'GO' " +
+  "and not exists (select 1 from jarvis.toetsingen where lower(pr_repo) = lower($1) and pr_nummer = $2 and commit_sha = $3 and oordeel <> 'GO') limit 1";
 
 const TOESTANDEN = ["ANALYSE", "UITVOEREN", "CONTROLE", "UITROL", "EINDCONTROLE", "KLAAR", "MISLUKT"] as const;
 
@@ -193,6 +193,8 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
   if (redenen.length > 0) {
     for (const r of redenen) console.error(`jarvis v3 beoordeel-pr: ${r}`);
     console.error(`jarvis v3 beoordeel-pr: #${nummer} op ${pr.kop.slice(0, 7)} valt niet binnen het mandaat.`);
+    // Een eerder gegeven goedkeuring van de poort op deze kop mag niet blijven staan (bijv. na een NO-GO).
+    await trekGoedkeuringIn(token, slug, nummer, pr.kop);
     return 3;
   }
   const taak = f.taken[0]!;
@@ -232,6 +234,13 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     console.log(`jarvis v3 beoordeel-pr: nog niet samenvoegbaar (staat: ${vers.samenvoegStaat}); een volgende ronde probeert opnieuw.`);
     return 0;
   }
+  // Vlak voor het samenvoegen opnieuw: een NO-GO die na de beoordeling is geschreven telt nog.
+  const nogGo = (await met(async (sql) => await sql.unsafe(V3_TOETSING_GO_SQL, [slug, nummer, pr.kop]))).length > 0;
+  if (!nogGo) {
+    console.error(`jarvis v3 beoordeel-pr: #${nummer}: de toetsing op ${pr.kop.slice(0, 7)} is niet meer GO; niet samengevoegd, goedkeuring ingetrokken.`);
+    await trekGoedkeuringIn(token, slug, nummer, pr.kop);
+    return 3;
+  }
   const samen = await github(token, "PUT", `/repos/${slug}/pulls/${nummer}/merge`, { merge_method: SAMENVOEGMETHODE, sha: pr.kop });
   if (samen.status !== 200) {
     console.error(`jarvis v3 beoordeel-pr: samenvoegen mislukte (${foutTekst(samen)}).`);
@@ -240,6 +249,20 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
   const mergeSha = (samen.lading as { sha?: string } | null)?.sha ?? "";
   console.log(`jarvis v3 beoordeel-pr: #${nummer} samengevoegd binnen het mandaat (${uitrol.reden}).`);
   return await leggSamengevoegdVast(taak, slug, nummer, pr.kop, mergeSha);
+}
+
+/** Trekt elke goedkeuring van de poort (reviews met de attestatietekst van deze poort) op precies deze kop in. Best effort: een mislukking wordt gemeld, de afwijzing blijft staan. */
+async function trekGoedkeuringIn(token: string, slug: string, nummer: number, kop: string): Promise<void> {
+  const lijst = await github(token, "GET", `/repos/${slug}/pulls/${nummer}/reviews?per_page=100`);
+  if (lijst.status !== 200 || !Array.isArray(lijst.lading)) {
+    console.error(`jarvis v3 beoordeel-pr: reviews niet te lezen om de goedkeuring in te trekken (${foutTekst(lijst)})`);
+    return;
+  }
+  for (const r of lijst.lading as { id: number; state: string; commit_id: string; body: string | null }[]) {
+    if (r.state !== "APPROVED" || r.commit_id !== kop || !(r.body ?? "").startsWith("Attestatie V3:")) continue;
+    const uit = await github(token, "PUT", `/repos/${slug}/pulls/${nummer}/reviews/${r.id}/dismissals`, { message: "Jarvis V3: niet meer binnen het mandaat of toetsing niet meer GO.", event: "DISMISS" });
+    if (uit.status !== 200) console.error(`jarvis v3 beoordeel-pr: goedkeuring intrekken mislukt (${foutTekst(uit)})`);
+  }
 }
 
 /** Legt vast (als de CI-identiteit) dat de pull request is samengevoegd: de taak gaat naar UITROL. */

@@ -375,11 +375,11 @@ begin
   if not found then raise exception 'v3: % heeft geen mandaat', p_taak; end if;
   if not (m.repos @> array[p_repo]) then raise exception 'v3: repo % valt buiten het mandaat', p_repo; end if;
   select count(*) into n from jarvis.toetsingen
-   where pr_repo = p_repo and pr_nummer = p_nummer and commit_sha = p_kop and oordeel = 'GO';
+   where lower(pr_repo) = lower(p_repo) and pr_nummer = p_nummer and commit_sha = p_kop and oordeel = 'GO';
   if n = 0 then raise exception 'v3: geen toetsing GO op de kop %', p_kop; end if;
   -- Eén NO-GO op dezelfde kop weegt zwaarder dan elke GO.
   if exists (select 1 from jarvis.toetsingen
-              where pr_repo = p_repo and pr_nummer = p_nummer and commit_sha = p_kop and oordeel <> 'GO') then
+              where lower(pr_repo) = lower(p_repo) and pr_nummer = p_nummer and commit_sha = p_kop and oordeel <> 'GO') then
     raise exception 'v3: op de kop % staat ook een NO-GO', p_kop;
   end if;
   if coalesce(p_merge_sha, '') !~ '^[0-9a-f]{7,40}$' then raise exception 'v3: ongeldige merge-sha'; end if;

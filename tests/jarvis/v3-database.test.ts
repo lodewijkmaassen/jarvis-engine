@@ -593,8 +593,9 @@ draai("V3-database (PostgreSQL)", () => {
     let aanroepen: { methode: string; pad: string }[] = [];
     let oud: Record<string, string | undefined> = {};
 
-    function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string; gesloten?: unknown[]; basis?: string; bestanden?: Record<string, string> } = {}) {
+    function stubGitHub(id: string, bestanden: Bestand[], opties: { merged?: boolean; migratieSql?: string; gesloten?: unknown[]; basis?: string; bestanden?: Record<string, string>; reviews?: unknown[]; bijVerseLeesbeurt?: () => Promise<void> } = {}) {
       aanroepen = [];
+      let leesbeurten = 0;
       let gemerged = opties.merged === true;
       vi.stubGlobal("fetch", async (invoer: string | URL, init?: { method?: string; body?: string }) => {
         const url = new URL(String(invoer));
@@ -603,9 +604,14 @@ draai("V3-database (PostgreSQL)", () => {
         aanroepen.push({ methode, pad });
         const antwoord = (lading: unknown, status = 200) => new Response(JSON.stringify(lading), { status, headers: { "content-type": "application/json" } });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls`) return antwoord(url.searchParams.get("state") === "closed" ? (opties.gesloten ?? []) : []);
+        if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5`) {
+          leesbeurten += 1;
+          if (leesbeurten === 3) await opties.bijVerseLeesbeurt?.();
+        }
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5`)
           return antwoord({ user: { login: "tovas-jarvis-bot" }, head: { sha: KOP }, base: { ref: opties.basis ?? "main" }, state: gemerged ? "closed" : "open", draft: false, mergeable: true, mergeable_state: "clean", body: "Uitzonderingen: geen", merged: gemerged, merge_commit_sha: gemerged ? MERGE : null });
-        if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/reviews`) return antwoord([]);
+        if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/reviews`) return antwoord(opties.reviews ?? []);
+        if (methode === "PUT" && pad.startsWith(`/repos/${SLUG}/pulls/5/reviews/`) && pad.endsWith("/dismissals")) return antwoord({});
         if (methode === "GET" && pad === `/repos/${SLUG}/commits/${KOP}/check-runs`) return antwoord({ check_runs: [{ name: "poort", status: "completed", conclusion: "success" }] });
         if (methode === "GET" && pad === `/repos/${SLUG}/pulls/5/commits`)
           return antwoord([{ sha: KOP, commit: { message: `werk\n\nJarvis-Role: developer\nJarvis-Task: ${id}` }, parents: [{}] }]);
@@ -680,6 +686,33 @@ draai("V3-database (PostgreSQL)", () => {
       expect(schrijfacties().map((a) => `${a.methode} ${a.pad.split("/").slice(-1)[0]}`)).toEqual(["POST reviews", "PUT merge"]);
       expect(await toestand(id)).toBe("UITROL");
       expect((await sql`select pr from jarvis.v3_taken where id = ${id}`)[0]!.pr).toMatchObject({ merge_sha: MERGE, nummer: 5, sha: KOP });
+    });
+
+    it("BLK-F: een NO-GO die na de beoordeling maar vóór het samenvoegen komt, voorkomt de merge en trekt de goedkeuring in", async () => {
+      const id = await taakKlaarVoorPr(MANDAAT);
+      stubGitHub(id, [{ filename: "app/v3-proef/page.tsx", status: "added" }], {
+        reviews: [{ id: 901, state: "APPROVED", commit_id: KOP, body: "Attestatie V3: x", user: { login: "github-actions[bot]" } }],
+        bijVerseLeesbeurt: async () => {
+          await sql`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values (${SLUG}, 5, ${KOP}, 'NO-GO')`;
+        },
+      });
+      expect(await beoordeel(["--samenvoegen"])).toBe(3);
+      expect(aanroepen.some((a) => a.methode === "PUT" && a.pad.endsWith("/merge"))).toBe(false);
+      expect(aanroepen.some((a) => a.methode === "PUT" && a.pad === `/repos/${SLUG}/pulls/5/reviews/901/dismissals`)).toBe(true);
+      expect(await toestand(id)).toBe("CONTROLE");
+      await sql`delete from jarvis.toetsingen where oordeel = 'NO-GO' and pr_nummer = 5`;
+    });
+
+    it("BLK-F: een NO-GO op een stilstaande goedkeuring trekt die in bij elke ronde (geen merge)", async () => {
+      const id = await taakKlaarVoorPr(MANDAAT);
+      await sql`insert into jarvis.toetsingen (pr_repo, pr_nummer, commit_sha, oordeel) values (${SLUG.toUpperCase()}, 5, ${KOP}, 'NO-GO')`; // andere hoofdletters, zelfde repo
+      stubGitHub(id, [{ filename: "app/v3-proef/page.tsx", status: "added" }], {
+        reviews: [{ id: 902, state: "APPROVED", commit_id: KOP, body: "Attestatie V3: x", user: { login: "github-actions[bot]" } }],
+      });
+      expect(await beoordeel(["--samenvoegen"])).toBe(3);
+      expect(aanroepen.some((a) => a.pad === `/repos/${SLUG}/pulls/5/reviews/902/dismissals`)).toBe(true);
+      expect(schrijfacties().some((a) => a.pad.endsWith("/merge"))).toBe(false);
+      await sql`delete from jarvis.toetsingen where oordeel = 'NO-GO' and pr_nummer = 5`;
     });
 
     it("B2: een hernoeming vanuit een beschermd pad wordt geweigerd, voor elk beschermd pad", async () => {
