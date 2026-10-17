@@ -41,6 +41,7 @@ import {
 } from "./opdrachten";
 import { laatstePerNaam, SAMENVOEGMETHODE, VERPLICHTE_CHECK } from "./pr";
 import {
+  alleenFeitenblokGewijzigd,
   geraaktePaden,
   beoordeelHttpMeting,
   leesBouwmerkUitPagina,
@@ -163,6 +164,24 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     migratieBestanden.push({ pad: b.filename, sql: inhoud.status === 200 && l?.encoding === "base64" && typeof l.content === "string" ? Buffer.from(l.content, "base64").toString("utf8") : null });
   }
   const prRaw = (await github(token, "GET", `/repos/${slug}/pulls/${nummer}`)).lading as { body?: string | null; merged?: boolean; merge_commit_sha?: string | null } | null;
+  // Het feitenblok (CURRENT_STATE) is afgeleide uitvoer die de poort zelf eist: alleen als de tekst buiten het
+  // blok gelijk blijft aan de merge-base telt het niet als werk (alleenFeitenblokGewijzigd). Pad van main, niet uit de PR.
+  const afgeleidePaden: string[] = [];
+  const statePad = config.ok ? config.config.current_state : "";
+  const stateBestand = bestanden.find((b) => b.filename === statePad && b.status === "modified");
+  if (stateBestand !== undefined && pr.basis !== "") {
+    const lees = async (ref: string): Promise<string | null> => {
+      const r = await github(token, "GET", `/repos/${slug}/contents/${padNaarUrl(statePad)}?ref=${ref}`);
+      const l = r.lading as { content?: string; encoding?: string } | null;
+      return r.status === 200 && l?.encoding === "base64" && typeof l.content === "string" ? Buffer.from(l.content, "base64").toString("utf8") : null;
+    };
+    // De lijst van gewijzigde bestanden is tegen de merge-base; vergelijk dus met die, niet met de kop van main.
+    const vergelijk = await github(token, "GET", `/repos/${slug}/compare/${encodeURIComponent(pr.basis)}...${pr.kop}`);
+    const mergeBasis = (vergelijk.lading as { merge_base_commit?: { sha?: string } } | null)?.merge_base_commit?.sha;
+    if (vergelijk.status === 200 && typeof mergeBasis === "string" && alleenFeitenblokGewijzigd(await lees(mergeBasis), await lees(pr.kop))) {
+      afgeleidePaden.push(statePad);
+    }
+  }
 
   const { mandaat, toestand, go } = await met(async (sql) => {
     const taak = t.taken[0];
@@ -188,6 +207,7 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     toetsingGoOpKop: go,
     poortGroen: poort.length > 0 && poort.every((c) => c.status === "completed" && c.conclusie === "success"),
     prTekst: prRaw?.body ?? "",
+    afgeleidePaden,
   };
   const redenen = beoordeelV3Pr(f);
   if (redenen.length > 0) {

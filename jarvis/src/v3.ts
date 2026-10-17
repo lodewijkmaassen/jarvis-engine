@@ -7,6 +7,7 @@
 // staat en door een pull request niet zelf aan te passen is (de poort draait
 // altijd de versie van `main`).
 import { HARDE_UITZONDERINGEN } from "./attestatie";
+import { FEITEN_EIND, FEITEN_START } from "./state";
 import { beoordeelSql, lexSql as lexSqlIntern, normaliseerMigratie as normaliseerIntern } from "./v3-sql";
 
 export type Meting =
@@ -162,7 +163,61 @@ export type V3PrFeiten = {
   readonly toetsingGoOpKop: boolean;
   readonly poortGroen: boolean;
   readonly prTekst: string;
+  /**
+   * Paden waarvan de wijziging uitsluitend afgeleid is (zie `alleenFeitenblokGewijzigd`): geen werk van
+   * de uitvoerder maar uitvoer die de poort zelf eist en controleert. Ze vallen niet onder paden_ja.
+   */
+  readonly afgeleidePaden?: readonly string[];
 };
+
+/**
+ * Wijzigt deze pull request in het CURRENT_STATE-document alleen het gegenereerde feitenblok?
+ *
+ * Het feitenblok is geen werk maar afgeleide uitvoer: `jarvis state` rekent het uit de boom uit, en de
+ * poort (`jarvis state` in de check "poort") eist dat het klopt. Voegt een taak een testbestand of een
+ * migratie toe, dan MOET het blok mee, ook als het document zelf buiten het smalle mandaat valt. Zonder
+ * deze regel valt de uitvoer die de poort zelf eist buiten elk smal mandaat (gemeten 2026-10-17 bij
+ * acceptatietest H: #276 rood op het feitenblok, mandaat app/layout.tsx + één testbestand).
+ *
+ * Alleen het blok, en daarin alleen de waarden die een wijziging binnen een mandaat kan verschuiven:
+ * de tekst buiten de markeringen blijft byte-gelijk (op regeleinden na), beide versies dragen precies één
+ * blok, en binnen het blok verschilt een regel alleen als het de datumregel of een van de regels in
+ * `AFGELEIDE_FEITREGELS` is, in het exacte formaat dat `genereerFeitenblok` schrijft. Vrije tekst kan er
+ * zo niet in: de controle van de poort zelf (`blokIsActueel`) negeert witruimte en de datumregel, dus het
+ * formaat wordt hier streng getoetst (QA-bevinding B1 op jarvis-engine#87). Of de waarden kloppen, toetst
+ * de poort, die voor samenvoegen groen moet zijn.
+ */
+export function alleenFeitenblokGewijzigd(basis: string | null, kop: string | null): boolean {
+  if (basis === null || kop === null) return false;
+  const delen = (doc: string): { readonly buiten: string; readonly blok: readonly string[] } | null => {
+    const t = doc.replace(/\r\n/g, "\n");
+    const start = t.indexOf(FEITEN_START);
+    const eind = t.indexOf(FEITEN_EIND);
+    if (start === -1 || eind === -1 || eind < start) return null;
+    // Precies één blok: een tweede markering zou een tweede, ongetoetst "blok" toelaten.
+    if (t.indexOf(FEITEN_START, start + 1) !== -1 || t.indexOf(FEITEN_EIND, eind + 1) !== -1) return null;
+    return {
+      buiten: t.slice(0, start) + FEITEN_START + FEITEN_EIND + t.slice(eind + FEITEN_EIND.length),
+      blok: t.slice(start, eind).split("\n"),
+    };
+  };
+  const b = delen(basis);
+  const k = delen(kop);
+  if (b === null || k === null || b.buiten !== k.buiten || b.blok.length !== k.blok.length) return false;
+  return b.blok.every((regel, i) => {
+    const nieuw = k.blok[i]!;
+    if (regel === nieuw) return true;
+    return AFGELEIDE_FEITREGELS.some((p) => p.test(regel) && p.test(nieuw));
+  });
+}
+
+/** De regels van het feitenblok die een wijziging binnen een mandaat legitiem verschuift, in het exacte formaat van `genereerFeitenblok`. */
+const AFGELEIDE_FEITREGELS: readonly RegExp[] = [
+  /^_Gegenereerd op \d{4}-\d{2}-\d{2}\._$/,
+  /^\| Hoofdbranch \| `[A-Za-z0-9._/-]{1,100}` \|$/,
+  /^\| Hoogste migratie \| (?:[A-Za-z0-9_.-]{1,120}|onbekend) \|$/,
+  /^\| Testbestanden \| (?:\d{1,6}|onbekend) \|$/,
+];
 
 /**
  * Waarom deze PR niet door het mandaat gedekt wordt. Leeg = de poort mag
@@ -217,6 +272,8 @@ export function beoordeelV3Pr(f: V3PrFeiten): readonly string[] {
       if (!padMatcht(pad, m.paden_ja)) r.push(`${pad} valt buiten paden_ja`);
       continue;
     }
+    // Afgeleide uitvoer die de poort zelf eist (het feitenblok) is geen werk; paden_nee en de grens hierboven gelden wel.
+    if ((f.afgeleidePaden ?? []).includes(pad)) continue;
     if (!padMatcht(pad, m.paden_ja)) r.push(`${pad} valt buiten paden_ja van het mandaat`);
   }
   for (const o of beoordeelMigraties(m, f.migratieBestanden)) r.push(`migratie ${o.pad}: ${o.redenen.join("; ")}`);
