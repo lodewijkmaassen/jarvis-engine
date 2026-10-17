@@ -3007,7 +3007,11 @@ export async function verzamelAttestatieFeiten(
     bestandStatus,
     alleenStatusregel,
     prTekst,
-    enginePinGewijzigd: enginePinGeraakt(bestandenRuw),
+    // In de engine-repository zelf (geen engine_repository) zijn de afhankelijkheden de afhankelijkheden van de
+    // reviewer: elke wijziging van package.json of het lockfile daar telt als een nieuwe engine.
+    enginePinGewijzigd:
+      enginePinGeraakt(bestandenRuw) ||
+      (config.engine_repository === "" && bestanden.some((b) => /(^|\/)package(-lock)?\.json$/.test(b.replace(/\\/g, "/")))),
     autorisatiePr: await bron.pr(slug, nummer, feiten.kop),
     checks: feiten.checks,
     verplichteCheck: VERPLICHTE_CHECK,

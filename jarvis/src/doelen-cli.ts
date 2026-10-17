@@ -148,7 +148,8 @@ async function reviewen(sql: DbClient, token: string): Promise<number> {
           console.log(`jarvis review-ci: ${slug}#${p.number} → kop veranderd tijdens de review; volgende ronde`);
           continue;
         }
-        const oordeel = uit.review.oordeel === "akkoord" ? "GO" : "NO-GO";
+        // Een akkoord met een punt van ernst hoog is geen GO: dat punt hoort eerst hersteld.
+        const oordeel = uit.review.oordeel === "akkoord" && !uit.review.punten.some((x) => x.ernst === "hoog") ? "GO" : "NO-GO";
         const rapport = rendereerReview(uit.review, { repo: slug, nummer: p.number, kop: uit.kop, model: REVIEW_MODEL });
         await sql.unsafe(TOETSING_SQL, [slug, p.number, uit.kop, oordeel, rapport, REVIEWER_DOOR]);
         // Commentaar alleen in de eigen repository: het GITHUB_TOKEN van deze run kan niet elders schrijven.

@@ -89,7 +89,7 @@ async function stubFetch(s: Scenario): Promise<Aanroep[]> {
   const aanroepen: Aanroep[] = [];
   const b64 = (t: string) => Buffer.from(t, "utf8").toString("base64");
   const hash = await scopeHashVan(SCOPE_TEKST);
-  const bestanden = s.bestanden ?? ["jarvis/src/iets.ts"];
+  const bestanden = s.bestanden ?? ["src/iets.ts"];
 
   const autorisatie =
     s.autorisatieTaak === undefined

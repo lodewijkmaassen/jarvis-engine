@@ -59,7 +59,7 @@ function feiten(over: Partial<AttestatieFeiten> = {}): AttestatieFeiten {
     taken: [{ taak: "T-20260913-proef", autorisatie, scopeHashKop: scopeHash(SCOPE) }],
     taakRedenen: [],
     toetsing,
-    gewijzigdeBestanden: ["jarvis/src/iets.ts", "tests/jarvis/iets.test.ts"],
+    gewijzigdeBestanden: ["src/iets.ts", "tests/jarvis/iets.test.ts"],
     prTekst: "## Wat\n\nIets.\n\nUitzonderingen: geen\n",
     autorisatiePr: null,
     checks: [{ naam: "poort", status: "completed", conclusie: "success" }],

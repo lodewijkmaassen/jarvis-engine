@@ -89,10 +89,10 @@ export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly
   // De code die beoordeelt, reviewt en samenvoegt. Kon de bouwer die met een gewone pull request wijzigen,
   // dan herschreef hij zijn eigen reviewer (QA-bevinding B1 op jarvis-engine#88). Wie de poort onderhoudt,
   // doet dat onder een apart akkoord: dat is de grens die de onafhankelijke controle onafhankelijk houdt.
-  {
-    patroon: /^jarvis\/src\/(attestatie|review|doelen|doelen-cli|db|pr|lint|opdrachten|cli|v3|v3-cli|config|state|sanitize|workflow)\.ts$/,
-    waarom: "de code van de poort, de review en de attestatie",
-  },
+  // De hele map: elke module draait in hetzelfde proces als de reviewer en de attestatie, met hun
+  // databaserol en schrijfrecht; een lijst van losse bestanden veroudert bij de eerste nieuwe import
+  // (QA ronde 2 op jarvis-engine#88).
+  { patroon: /^jarvis\/src\//, waarom: "de code van de engine: poort, review en attestatie draaien erop" },
   { patroon: /^jarvis\/edge\//, waarom: "de toegang van de uitvoerder tot de database" },
   { patroon: /^bin\//, waarom: "het startpunt van de engine" },
 ];

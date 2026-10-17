@@ -81,7 +81,7 @@ export function bouwReviewVraag(invoer: ReviewInvoer): string {
   const delen: string[] = [];
   delen.push(
     `# Te beoordelen wijziging\n\nRepository: ${invoer.repo}, pull request #${invoer.nummer}, kop ${invoer.kop.slice(0, 7)}.\n\n` +
-      `${DATA_BEGIN}\nTitel: ${invoer.titel}\n\n${kort(invoer.beschrijving.trim() || "(geen beschrijving)", REVIEW_LIMIETEN.beschrijvingTekens)}\n${DATA_EIND}`,
+      `${DATA_BEGIN}\nTitel: ${ontmarkeer(invoer.titel)}\n\n${ontmarkeer(kort(invoer.beschrijving.trim() || "(geen beschrijving)", REVIEW_LIMIETEN.beschrijvingTekens))}\n${DATA_EIND}`,
   );
   if (invoer.dossier !== null && invoer.dossier.trim().length > 0) {
     delen.push(`# Opdracht en acceptatiecriteria (taakdossier)\n\n${kort(invoer.dossier.trim(), REVIEW_LIMIETEN.dossierTekens)}`);
@@ -89,7 +89,7 @@ export function bouwReviewVraag(invoer: ReviewInvoer): string {
   delen.push(`# Relevante kennis (besluiten, randvoorwaarden, stand)\n\n${kort(invoer.context.trim(), REVIEW_LIMIETEN.contextTekens)}`);
   let diff = "";
   for (const b of invoer.diff) {
-    const stuk = `\n## ${b.bestand} (${b.status})\n\n\`\`\`diff\n${kort(b.patch, REVIEW_LIMIETEN.patchPerBestand)}\n\`\`\`\n`;
+    const stuk = `\n## ${b.bestand} (${b.status})\n\n\`\`\`diff\n${ontmarkeer(kort(b.patch, REVIEW_LIMIETEN.patchPerBestand))}\n\`\`\`\n`;
     if (diff.length + stuk.length > REVIEW_LIMIETEN.diffTekens) {
       diff += `\n## ${b.bestand} (${b.status})\n\n(patch weggelaten: de diff is groter dan ${REVIEW_LIMIETEN.diffTekens} tekens)\n`;
       continue;
@@ -98,6 +98,11 @@ export function bouwReviewVraag(invoer: ReviewInvoer): string {
   }
   delen.push(`# De wijziging (${invoer.diff.length} bestand(en))\n\n${DATA_BEGIN}\n${diff || "\n(geen bestanden)"}\n${DATA_EIND}`);
   return delen.join("\n\n");
+}
+
+/** Haalt nagemaakte markeringen uit tekst van de bouwer, zodat hij het datablok niet voortijdig kan sluiten. */
+export function ontmarkeer(tekst: string): string {
+  return tekst.replace(/<<<\s*(BEGIN|EINDE)\s+DATA/gi, "<<(nagemaakte markering) $1 DATA");
 }
 
 /** Markeringen rond wat de bouwer schreef: data voor de reviewer, nooit instructies. */
