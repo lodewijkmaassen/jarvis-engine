@@ -89,9 +89,9 @@ export function bouwReviewVraag(invoer: ReviewInvoer): string {
   delen.push(`# Relevante kennis (besluiten, randvoorwaarden, stand)\n\n${kort(invoer.context.trim(), REVIEW_LIMIETEN.contextTekens)}`);
   let diff = "";
   for (const b of invoer.diff) {
-    const stuk = `\n## ${b.bestand} (${b.status})\n\n\`\`\`diff\n${ontmarkeer(kort(b.patch, REVIEW_LIMIETEN.patchPerBestand))}\n\`\`\`\n`;
+    const stuk = `\n## ${ontmarkeer(b.bestand)} (${b.status})\n\n\`\`\`diff\n${ontmarkeer(kort(b.patch, REVIEW_LIMIETEN.patchPerBestand))}\n\`\`\`\n`;
     if (diff.length + stuk.length > REVIEW_LIMIETEN.diffTekens) {
-      diff += `\n## ${b.bestand} (${b.status})\n\n(patch weggelaten: de diff is groter dan ${REVIEW_LIMIETEN.diffTekens} tekens)\n`;
+      diff += `\n## ${ontmarkeer(b.bestand)} (${b.status})\n\n(patch weggelaten: de diff is groter dan ${REVIEW_LIMIETEN.diffTekens} tekens)\n`;
       continue;
     }
     diff += stuk;

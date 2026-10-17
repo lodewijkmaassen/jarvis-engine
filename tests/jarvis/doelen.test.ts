@@ -90,6 +90,10 @@ describe("herstel QA ronde 1 op jarvis-engine#88", () => {
     for (const pad of ["jarvis/src/overzicht.ts", "jarvis/src/records.ts", "jarvis/src/frontmatter.ts", "jarvis/src/v3-sql.ts", "jarvis/src/nieuw-hulpje.ts"]) {
       expect(raaktHardeUitzondering([pad]).length, pad).toBe(1);
     }
+    // Wat bepaalt hoe de engine modules en pakketten vindt (QA ronde 3).
+    for (const pad of ["tsconfig.json", "tsconfig.build.json", "app/tsconfig.json", ".npmrc", "sub/.npmrc"]) {
+      expect(raaktHardeUitzondering([pad]).length, pad).toBe(1);
+    }
     // Tests en de interface blijven gewoon werk.
     for (const pad of ["tests/jarvis/doelen.test.ts", "jarvis/interface/v3.html"]) {
       expect(raaktHardeUitzondering([pad]), pad).toEqual([]);

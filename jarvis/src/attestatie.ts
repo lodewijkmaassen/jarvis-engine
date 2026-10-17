@@ -95,6 +95,10 @@ export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly
   { patroon: /^jarvis\/src\//, waarom: "de code van de engine: poort, review en attestatie draaien erop" },
   { patroon: /^jarvis\/edge\//, waarom: "de toegang van de uitvoerder tot de database" },
   { patroon: /^bin\//, waarom: "het startpunt van de engine" },
+  // tsx past `paths` uit tsconfig toe: daarmee wijst een import naar een eigen bestand, buiten jarvis/src
+  // (QA ronde 3 op jarvis-engine#88). .npmrc bepaalt waar pakketten vandaan komen.
+  { patroon: /(^|\/)tsconfig[^/]*\.json$/, waarom: "hoe de engine modules vindt (paths)" },
+  { patroon: /(^|\/)\.npmrc$/, waarom: "waar pakketten vandaan komen" },
 ];
 
 /**
