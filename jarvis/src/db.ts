@@ -124,7 +124,8 @@ export const TOETSING_SQL =
 /** De laatste GO op precies deze kop. */
 export const TOETSING_KOP_SQL =
   `select ${TOETSING_KOLOMMEN} from jarvis.toetsingen ` +
-  "where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and oordeel = 'GO' order by op desc limit 1";
+  // Het laatste oordeel van de reviewjob (ci-review) op deze kop, GO of NO-GO: een latere NO-GO wint.
+  "where pr_repo = $1 and pr_nummer = $2 and commit_sha = $3 and door = 'ci-review' order by op desc limit 1";
 
 export const TOETSING_ID_SQL = `select ${TOETSING_KOLOMMEN} from jarvis.toetsingen where id = $1`;
 
@@ -148,7 +149,7 @@ export function restPadAutorisatiePr(repo: string, nummer: number, kop: string):
 export function restPadToetsingKop(repo: string, nummer: number, kop: string): string {
   return (
     `toetsingen_open?pr_repo=eq.${encodeURIComponent(repo)}&pr_nummer=eq.${nummer}` +
-    `&commit_sha=eq.${encodeURIComponent(kop)}&oordeel=eq.GO&order=op.desc&limit=1`
+    `&commit_sha=eq.${encodeURIComponent(kop)}&door=eq.ci-review&order=op.desc&limit=1`
   );
 }
 
@@ -328,8 +329,15 @@ export function v3Aanroep(naam: string, typen: readonly ("text" | "int" | "uuid"
  * De Edge Function `jarvis-db` (voor de cloud, die geen Postgres kan
  * bereiken) voert uitsluitend deze teksten uit; zie jarvis/edge/jarvis-db.
  */
+/** De doelen (T-20261017-jarvis-vereenvoudigen): lezen, en bijwerken door de uitvoerder. */
+export const DOELEN_SQL =
+  "select id, titel, opdracht, acceptatie_url, status, pr, uitkomst, pogingen, bijgewerkt::text as bijgewerkt from jarvis.doelen order by aangemaakt";
+export const DOEL_WERK_SQL = "select jarvis.doel_werk($1, $2, $3::text::jsonb, $4) as status";
+
 export function toegestaneSql(): readonly string[] {
   return [
+    DOELEN_SQL,
+    DOEL_WERK_SQL,
     WIE_SQL,
     ...TABELLEN.map(claimSql),
     ...TABELLEN.map(verwerktSql),

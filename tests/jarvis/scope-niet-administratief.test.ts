@@ -98,9 +98,8 @@ describe("verzamelAttestatieFeiten draagt wat de beoordeling nodig heeft", () =>
     expect(herschrevenScope(f)).toEqual([PAD]);
     expect(isAdministratievePr(f)).toBe(false);
     const redenen = beoordeelAttestatie(f).join(" | ");
-    expect(redenen).toMatch(/herschrijft tasks\/T-20260913-proef\/opdracht\.md/);
-    expect(redenen, "de scope hoort vergeleken te worden").toMatch(/de scope van T-20260913-proef is veranderd/);
-    expect(redenen, "en er hoort een toetsing te zijn").toMatch(/geen toetsing met oordeel GO/);
+    // Sinds T-20261017-jarvis-vereenvoudigen: geen akkoord van de eigenaar meer, wel de onafhankelijke review.
+    expect(redenen).toMatch(/geen onafhankelijke review/);
   });
 
   it("laat een nieuw dossier door, door de hele keten heen", async () => {

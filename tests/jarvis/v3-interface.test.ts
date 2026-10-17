@@ -8,11 +8,11 @@ const BOUW = path.join(process.cwd(), "jarvis/interface/app/bouw.mjs");
 const HTML = readFileSync(path.join(process.cwd(), "jarvis/interface/v3.html"), "utf8");
 
 describe("de V3-weergave", () => {
-  it("leest uitsluitend de V3-views en roept uitsluitend eigenaarsfuncties aan", () => {
+  it("leest uitsluitend de doelen en roept uitsluitend de eigenaarsfunctie doel_nieuw aan (T-20261017-jarvis-vereenvoudigen)", () => {
     const views = [...HTML.matchAll(/from\("([a-z0-9_]+)"\)/g)].map((m) => m[1]);
-    expect(new Set(views)).toEqual(new Set(["v3_voor_jou", "v3_actueel"]));
+    expect(new Set(views)).toEqual(new Set(["doelen"]));
     const rpcs = new Set([...HTML.matchAll(/rpc\("([a-z0-9_]+)"/g)].map((m) => m[1]));
-    expect(rpcs).toEqual(new Set(["v3_nieuwe_opdracht", "v3_geef_mandaat", "v3_wijs_af", "v3_beantwoord"]));
+    expect(rpcs).toEqual(new Set(["doel_nieuw"]));
   });
   it("raakt geen V2-document, -tabel of -afleiding", () => {
     for (const verboden of ["documenten", "overzicht/huidig", "regie", "autorisaties", "antwoorden", "berichten"]) {
@@ -21,10 +21,13 @@ describe("de V3-weergave", () => {
   });
   it("laat tekst uit de database nooit ongeëscaped in de pagina komen", () => {
     // Elke ${…} binnen een template die uit data komt gaat door esc() of lijst().
-    const kaarten = HTML.slice(HTML.indexOf("function kaartVoorJou"), HTML.indexOf("async function laad"));
+    const begin = HTML.indexOf("function kaartDoel");
+    expect(begin).toBeGreaterThan(0);
+    const kaarten = HTML.slice(begin, HTML.indexOf("async function laad"));
     for (const m of kaarten.matchAll(/\$\{([^}]+)\}/g)) {
       const e = m[1]!.trim();
-      if (/^(esc|lijst|voorstelHtml|opties\.map|t\.eindcontrole\.map|klaar|eind)\b/.test(e) || /^esc\(/.test(e)) continue;
+      if (/^(esc|pr)\b/.test(e) || /^esc\(/.test(e)) continue; // pr is zelf uit esc() opgebouwd
+      if (/^d\.uitkomst \?/.test(e)) continue; // voorwaarde die zelf esc() aanroept
       if (/^(\(|\w+ \? )/.test(e)) continue; // voorwaarden die zelf esc() aanroepen
       expect(e, `onbeschermde invoeging: ${e}`).toMatch(/esc\(/);
     }

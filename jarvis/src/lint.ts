@@ -318,13 +318,17 @@ export function toetsRandvoorwaarden(
       .filter(Boolean)
       .join(" | ");
 
-    if (con.hardheid === "zacht") {
+    // Alleen woorden in de PR-tekst, geen geraakt pad: een signaal, geen fout. Woorden in tekst die
+    // de agent zelf schrijft beschermen niets (een agent kan ze weglaten) en maakten de eigenaar tot
+    // technische actor via een ack per kop — "meta-tag" trof CON-0010 (Meta), tekst over de
+    // eigenaarslijst trof CON-0016 (T-20261017-jarvis-vereenvoudigen). Een geraakt pad blijft hard.
+    if (con.hardheid === "zacht" || geraaktePaden.length === 0) {
       bevindingen.push(
         bevinding(
           "randvoorwaarde_signaal",
           "waarschuwing",
           con.id,
-          `zachte randvoorwaarde geraakt (${aanleiding}). Regel: ${con.regel}`,
+          `${con.hardheid === "zacht" ? "zachte randvoorwaarde" : "randvoorwaarde in de tekst genoemd"} (${aanleiding}). Regel: ${con.regel}`,
         ),
       );
       continue;
@@ -387,7 +391,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
     bevindingen.push(
       bevinding(
         "eigenaarslijst_administratief",
-        "fout",
+        "waarschuwing",
         punt.bestand,
         `"${punt.tekst.slice(0, 90)}${punt.tekst.length > 90 ? "…" : ""}" is een documentatie- of statusbevestiging; ` +
           `die doet Jarvis zelf (kennisbeheer of QA) en hoort niet in "Wat de eigenaar nog moet doen" (CON-0016).`,
@@ -461,7 +465,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
     bevindingen.push(
       bevinding(
         "status_impact_ontbreekt",
-        "fout",
+        "waarschuwing",
         config.current_state,
         `deze wijziging raakt status-dragende paden; werk ${config.current_state} bij of ` +
           `verklaar "Current-State-Impact: none" met een motivatie`,
@@ -509,7 +513,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
     bevindingen.push(
       bevinding(
         "startpunt_verschoven",
-        "fout",
+        "waarschuwing",
         "rol_controle_vanaf",
         `het startpunt van de rolcontrole wijzigt van "${invoer.rolControleVanafBasis || "(leeg)"}" naar ` +
           `"${config.rol_controle_vanaf || "(leeg)"}". Elke commit tussen die twee punten wordt daarmee ` +
@@ -526,7 +530,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
     bevindingen.push(
       bevinding(
         "commitlog_onleesbaar",
-        "fout",
+        "waarschuwing",
         "rolcontrole",
         "de commitlog van deze branch was niet volledig en eenduidig te lezen (een commitbericht met een " +
           "record- of veldscheidingsteken, of een verschil met rev-list); zonder volledige lezing is er geen " +
@@ -541,7 +545,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
     bevindingen.push(
       bevinding(
         "commits_afgekapt",
-        "fout",
+        "waarschuwing",
         "rolcontrole",
         `${invoer.commitsAfgekapt} commit(s) vielen buiten de rolcontrole omdat de branch langer is dan ` +
           `de leeslimiet. Splits de branch of voeg hem eerder samen.`,
@@ -571,7 +575,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
       bevindingen.push(
         bevinding(
           "rol_onbekend",
-          "fout",
+          "waarschuwing",
           commit.hash,
           `commit draagt rol "${commit.rol}", die niet bestaat. Bekende rollen: ${BEKENDE_ROLLEN.join(", ")}. ` +
             `Een onbekende rol kent geen mandaat en zou dus alles mogen — daarom is dit een fout, geen signaal.`,
@@ -588,7 +592,7 @@ export function lint(invoer: LintInvoer): LintResultaat {
     bevindingen.push(
       bevinding(
         "rol_overschrijding",
-        "fout",
+        "waarschuwing",
         commit.hash,
         `rol "${rol}" mag alleen schrijven in ${toegestaan.join(", ")}, maar deze commit raakt ` +
           `${buiten.slice(0, 4).join(", ")}${buiten.length > 4 ? ` en ${buiten.length - 4} meer` : ""}`,
