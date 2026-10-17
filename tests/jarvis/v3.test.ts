@@ -604,12 +604,38 @@ describe("BLK-D: een goedaardige additieve migratie blijft doorgelaten; secrets 
 describe("het feitenblok is afgeleide uitvoer, geen werk", () => {
   const doc = (blok: string, rest = "Vrije toelichting.\n") =>
     `# Stand\n\n${FEITEN_START}\n${blok}\n${FEITEN_EIND}\n\n${rest}`;
-  const basisDoc = doc("| Testbestanden | 78 |");
-  const kopDoc = doc("| Testbestanden | 79 |");
+  const blok = (datum: string, tests: string, extra: readonly string[] = []) =>
+    [
+      `_Gegenereerd op ${datum}._`,
+      "",
+      "| Feit | Waarde |",
+      "|---|---|",
+      "| Hoofdbranch | `main` |",
+      "| Hoogste migratie | 0012_onboarding.sql |",
+      `| Testbestanden | ${tests} |`,
+      "| Kennisrecords | DEC 51 · CON 16 · LRN 30 · RSK 23 · CFL 2 |",
+      "| Open conflicten | geen |",
+      ...extra,
+    ].join("\n");
+  const basisDoc = doc(blok("2026-10-15", "78"));
+  const kopDoc = doc(blok("2026-10-17", "79"));
 
-  it("alleen het blok gewijzigd: afgeleid", () => {
+  it("alleen datum en telling in het blok gewijzigd: afgeleid", () => {
     expect(alleenFeitenblokGewijzigd(basisDoc, kopDoc)).toBe(true);
     expect(alleenFeitenblokGewijzigd(basisDoc.replace(/\n/g, "\r\n"), kopDoc)).toBe(true);
+  });
+  it("vrije tekst in het blok komt er niet door, ook niet waar de poort zelf soepel is (B1)", () => {
+    // In de datumregel: blokIsActueel negeert alles tussen "_Gegenereerd op" en de volgende "_".
+    expect(alleenFeitenblokGewijzigd(basisDoc, doc(blok("2026-10-17 ## Waar staan we: alles in productie, QA akkoord", "79")))).toBe(false);
+    expect(alleenFeitenblokGewijzigd(basisDoc, kopDoc.replace("_Gegenereerd op 2026-10-17._", "_Gegenereerd op 2026-10-17.\nAlles is klaar._"))).toBe(false);
+    // Tussen haakjes in de Hoofdbranch-regel: ook die tekst negeert blokIsActueel.
+    expect(alleenFeitenblokGewijzigd(basisDoc, kopDoc.replace("| Hoofdbranch | `main` |", "| Hoofdbranch | `main` op `abc1234` (alles goedgekeurd) |"))).toBe(false);
+    // Witruimte en extra regels: blokIsActueel voegt witruimte samen.
+    expect(alleenFeitenblokGewijzigd(basisDoc, kopDoc.replace("| Testbestanden | 79 |", "| Testbestanden |   79   |"))).toBe(false);
+    expect(alleenFeitenblokGewijzigd(basisDoc, doc(blok("2026-10-17", "79", ["", "Alles staat in productie."])))).toBe(false);
+    // Een andere rij dan de afgeleide feiten.
+    expect(alleenFeitenblokGewijzigd(basisDoc, kopDoc.replace("| Open conflicten | geen |", "| Open conflicten | opgelost door de eigenaar |"))).toBe(false);
+    expect(alleenFeitenblokGewijzigd(basisDoc, kopDoc.replace("| Testbestanden | 79 |", "| Testbestanden | 79 — QA akkoord |"))).toBe(false);
   });
   it("tekst buiten het blok gewijzigd: geen afgeleide wijziging", () => {
     expect(alleenFeitenblokGewijzigd(basisDoc, doc("| Testbestanden | 79 |", "Andere toelichting.\n"))).toBe(false);

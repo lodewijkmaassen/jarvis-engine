@@ -163,20 +163,20 @@ async function beoordeelPr(nummer: number, slug: string, samenvoegen: boolean): 
     const l = inhoud.lading as { content?: string; encoding?: string } | null;
     migratieBestanden.push({ pad: b.filename, sql: inhoud.status === 200 && l?.encoding === "base64" && typeof l.content === "string" ? Buffer.from(l.content, "base64").toString("utf8") : null });
   }
-  const prRaw = (await github(token, "GET", `/repos/${slug}/pulls/${nummer}`)).lading as { body?: string | null; merged?: boolean; merge_commit_sha?: string | null; base?: { sha?: string } } | null;
+  const prRaw = (await github(token, "GET", `/repos/${slug}/pulls/${nummer}`)).lading as { body?: string | null; merged?: boolean; merge_commit_sha?: string | null } | null;
   // Het feitenblok (CURRENT_STATE) is afgeleide uitvoer die de poort zelf eist: alleen als de tekst buiten het
   // blok gelijk blijft aan de merge-base telt het niet als werk (alleenFeitenblokGewijzigd). Pad van main, niet uit de PR.
   const afgeleidePaden: string[] = [];
   const statePad = config.ok ? config.config.current_state : "";
   const stateBestand = bestanden.find((b) => b.filename === statePad && b.status === "modified");
-  if (stateBestand !== undefined && typeof prRaw?.base?.sha === "string") {
+  if (stateBestand !== undefined && pr.basis !== "") {
     const lees = async (ref: string): Promise<string | null> => {
       const r = await github(token, "GET", `/repos/${slug}/contents/${padNaarUrl(statePad)}?ref=${ref}`);
       const l = r.lading as { content?: string; encoding?: string } | null;
       return r.status === 200 && l?.encoding === "base64" && typeof l.content === "string" ? Buffer.from(l.content, "base64").toString("utf8") : null;
     };
     // De lijst van gewijzigde bestanden is tegen de merge-base; vergelijk dus met die, niet met de kop van main.
-    const vergelijk = await github(token, "GET", `/repos/${slug}/compare/${prRaw.base.sha}...${pr.kop}`);
+    const vergelijk = await github(token, "GET", `/repos/${slug}/compare/${encodeURIComponent(pr.basis)}...${pr.kop}`);
     const mergeBasis = (vergelijk.lading as { merge_base_commit?: { sha?: string } } | null)?.merge_base_commit?.sha;
     if (vergelijk.status === 200 && typeof mergeBasis === "string" && alleenFeitenblokGewijzigd(await lees(mergeBasis), await lees(pr.kop))) {
       afgeleidePaden.push(statePad);
