@@ -7,6 +7,7 @@
 // staat en door een pull request niet zelf aan te passen is (de poort draait
 // altijd de versie van `main`).
 import { HARDE_UITZONDERINGEN } from "./attestatie";
+import { FEITEN_EIND, FEITEN_START } from "./state";
 import { beoordeelSql, lexSql as lexSqlIntern, normaliseerMigratie as normaliseerIntern } from "./v3-sql";
 
 export type Meting =
@@ -162,7 +163,41 @@ export type V3PrFeiten = {
   readonly toetsingGoOpKop: boolean;
   readonly poortGroen: boolean;
   readonly prTekst: string;
+  /**
+   * Paden waarvan de wijziging uitsluitend afgeleid is (zie `alleenFeitenblokGewijzigd`): geen werk van
+   * de uitvoerder maar uitvoer die de poort zelf eist en controleert. Ze vallen niet onder paden_ja.
+   */
+  readonly afgeleidePaden?: readonly string[];
 };
+
+/**
+ * Wijzigt deze pull request in het CURRENT_STATE-document alleen het gegenereerde feitenblok?
+ *
+ * Het feitenblok is geen werk maar afgeleide uitvoer: `jarvis state` rekent het uit de boom uit, en de
+ * poort (`jarvis state` in de check "poort") eist dat het klopt. Voegt een taak een testbestand of een
+ * migratie toe, dan MOET het blok mee, ook als het document zelf buiten het smalle mandaat valt. Zonder
+ * deze regel valt de uitvoer die de poort zelf eist buiten elk smal mandaat (gemeten 2026-10-17 bij
+ * acceptatietest H: #276 rood op het feitenblok, mandaat app/layout.tsx + één testbestand).
+ *
+ * Alleen het blok en niets anders: de tekst buiten de markeringen moet byte-gelijk blijven aan de basis,
+ * en beide versies dragen precies één blok. De inhoud van het blok toetst de poort, die voor samenvoegen
+ * groen moet zijn. Samen laat dat geen geschreven wijziging toe.
+ */
+export function alleenFeitenblokGewijzigd(basis: string | null, kop: string | null): boolean {
+  if (basis === null || kop === null) return false;
+  const buiten = (doc: string): string | null => {
+    const t = doc.replace(/\r\n/g, "\n");
+    const start = t.indexOf(FEITEN_START);
+    const eind = t.indexOf(FEITEN_EIND);
+    if (start === -1 || eind === -1 || eind < start) return null;
+    // Precies één blok: een tweede markering zou een tweede, ongetoetst "blok" toelaten.
+    if (t.indexOf(FEITEN_START, start + 1) !== -1 || t.indexOf(FEITEN_EIND, eind + 1) !== -1) return null;
+    return t.slice(0, start) + FEITEN_START + FEITEN_EIND + t.slice(eind + FEITEN_EIND.length);
+  };
+  const b = buiten(basis);
+  const k = buiten(kop);
+  return b !== null && k !== null && b === k;
+}
 
 /**
  * Waarom deze PR niet door het mandaat gedekt wordt. Leeg = de poort mag
@@ -217,6 +252,8 @@ export function beoordeelV3Pr(f: V3PrFeiten): readonly string[] {
       if (!padMatcht(pad, m.paden_ja)) r.push(`${pad} valt buiten paden_ja`);
       continue;
     }
+    // Afgeleide uitvoer die de poort zelf eist (het feitenblok) is geen werk; paden_nee en de grens hierboven gelden wel.
+    if ((f.afgeleidePaden ?? []).includes(pad)) continue;
     if (!padMatcht(pad, m.paden_ja)) r.push(`${pad} valt buiten paden_ja van het mandaat`);
   }
   for (const o of beoordeelMigraties(m, f.migratieBestanden)) r.push(`migratie ${o.pad}: ${o.redenen.join("; ")}`);

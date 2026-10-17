@@ -5,7 +5,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { V3_AANROEP_PATROON, v3Aanroep } from "@/jarvis/src/db";
 import { BLK1_AANVALLEN } from "./fixtures/v3-aanvallen";
+import { FEITEN_EIND, FEITEN_START } from "@/jarvis/src/state";
 import {
+  alleenFeitenblokGewijzigd,
   lexSql,
   beoordeelHttpMeting,
   beoordeelV3Pr,
@@ -596,5 +598,38 @@ describe("BLK-D: een goedaardige additieve migratie blijft doorgelaten; secrets 
       const i = yml.indexOf(`\n  ${j}:`);
       expect(yml.slice(i, i + 300), j).toMatch(/environment: jarvis-ci/);
     }
+  });
+});
+
+describe("het feitenblok is afgeleide uitvoer, geen werk", () => {
+  const doc = (blok: string, rest = "Vrije toelichting.\n") =>
+    `# Stand\n\n${FEITEN_START}\n${blok}\n${FEITEN_EIND}\n\n${rest}`;
+  const basisDoc = doc("| Testbestanden | 78 |");
+  const kopDoc = doc("| Testbestanden | 79 |");
+
+  it("alleen het blok gewijzigd: afgeleid", () => {
+    expect(alleenFeitenblokGewijzigd(basisDoc, kopDoc)).toBe(true);
+    expect(alleenFeitenblokGewijzigd(basisDoc.replace(/\n/g, "\r\n"), kopDoc)).toBe(true);
+  });
+  it("tekst buiten het blok gewijzigd: geen afgeleide wijziging", () => {
+    expect(alleenFeitenblokGewijzigd(basisDoc, doc("| Testbestanden | 79 |", "Andere toelichting.\n"))).toBe(false);
+    expect(alleenFeitenblokGewijzigd(basisDoc, kopDoc + "extra\n")).toBe(false);
+  });
+  it("ontbrekend, kapot of dubbel blok: geen afgeleide wijziging", () => {
+    expect(alleenFeitenblokGewijzigd(null, kopDoc)).toBe(false);
+    expect(alleenFeitenblokGewijzigd(basisDoc, null)).toBe(false);
+    expect(alleenFeitenblokGewijzigd(basisDoc, "# Stand\n\nVrije toelichting.\n")).toBe(false);
+    expect(alleenFeitenblokGewijzigd(basisDoc, `${kopDoc}${FEITEN_START}\nverstopt\n${FEITEN_EIND}\n`)).toBe(false);
+    expect(alleenFeitenblokGewijzigd(`${FEITEN_EIND}${FEITEN_START}`, `${FEITEN_EIND}x${FEITEN_START}`)).toBe(false);
+  });
+  it("de poort laat een afgeleid feitenblok buiten paden_ja door, maar niet zonder die vaststelling", () => {
+    const f = { ...basis, bestanden: [...basis.bestanden, "docs/CURRENT_STATE.md"] };
+    expect(beoordeelV3Pr(f).join()).toMatch(/docs\/CURRENT_STATE\.md valt buiten paden_ja/);
+    expect(beoordeelV3Pr({ ...f, afgeleidePaden: ["docs/CURRENT_STATE.md"] })).toEqual([]);
+  });
+  it("paden_nee en de veiligheidsgrens gaan vóór een afgeleid pad", () => {
+    const f = { ...basis, bestanden: ["docs/CURRENT_STATE.md"], afgeleidePaden: ["docs/CURRENT_STATE.md"] };
+    expect(beoordeelV3Pr({ ...f, mandaat: { ...mandaat, paden_nee: ["docs/**"] } }).join()).toMatch(/paden_nee/);
+    expect(beoordeelV3Pr({ ...basis, bestanden: [".github/workflows/x.yml"], afgeleidePaden: [".github/workflows/x.yml"] }).join()).toMatch(/veiligheidsgrens/);
   });
 });
