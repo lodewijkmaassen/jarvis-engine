@@ -46,7 +46,7 @@
   const KLEUR = { klaar: "KLAAR", vast: "MISLUKT" };
 
   function kaartDoel(d) {
-    const pr = d.pr && d.pr.repo && d.pr.nummer ? ` · <a href="https://github.com/${esc(d.pr.repo)}/pull/${esc(d.pr.nummer)}">${esc(d.pr.repo.split("/")[1])} #${esc(d.pr.nummer)}</a>` : "";
+    const pr = d.pr && typeof d.pr.repo === "string" && Number.isInteger(d.pr.nummer) ? ` · <a href="https://github.com/${esc(d.pr.repo)}/pull/${esc(d.pr.nummer)}">${esc(d.pr.repo.split("/")[1])} #${esc(d.pr.nummer)}</a>` : "";
     return `<div class="kaart"><h3>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
       <div class="klein">${esc(d.id)} · bijgewerkt ${esc(new Date(d.bijgewerkt).toLocaleString("nl-NL"))}${pr}</div>
       ${d.uitkomst ? `<p class="klein">${esc(d.uitkomst)}</p>` : ""}</div>`;

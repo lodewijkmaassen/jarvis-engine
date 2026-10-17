@@ -33,7 +33,7 @@ export const STIL_MINUTEN = 20;
 
 /** Het doel dat een pull request dient: een regel "Doel: D-…" in de PR-tekst. */
 export function doelUitPrTekst(tekst: string): string | null {
-  return /^\s*Doel:\s*(D-\d{8}-\d{6})\s*$/m.exec(tekst.replace(/\r\n/g, "\n"))?.[1] ?? null;
+  return /^\s*Doel:\s*(D-\d{8}-\d{6}(?:\d{3})?)\s*$/m.exec(tekst.replace(/\r\n/g, "\n"))?.[1] ?? null;
 }
 
 export type ReviewOordeel = { readonly kop: string; readonly oordeel: string; readonly door: string };

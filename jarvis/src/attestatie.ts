@@ -86,7 +86,30 @@ export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly
   { patroon: /^jarvis\/roles\//, waarom: "rolcontracten (mandaat)" },
   { patroon: /^jarvis\/canonical\//, waarom: "de canonieke poort- en attestatieworkflow" },
   { patroon: /^\.claude\//, waarom: "agentconfiguratie" },
+  // De code die beoordeelt, reviewt en samenvoegt. Kon de bouwer die met een gewone pull request wijzigen,
+  // dan herschreef hij zijn eigen reviewer (QA-bevinding B1 op jarvis-engine#88). Wie de poort onderhoudt,
+  // doet dat onder een apart akkoord: dat is de grens die de onafhankelijke controle onafhankelijk houdt.
+  {
+    patroon: /^jarvis\/src\/(attestatie|review|doelen|doelen-cli|db|pr|lint|opdrachten|cli|v3|v3-cli|config|state|sanitize|workflow)\.ts$/,
+    waarom: "de code van de poort, de review en de attestatie",
+  },
+  { patroon: /^jarvis\/edge\//, waarom: "de toegang van de uitvoerder tot de database" },
+  { patroon: /^bin\//, waarom: "het startpunt van de engine" },
 ];
+
+/**
+ * Raakt deze pull request de vastgepinde engine (de regel `jarvis-engine` in package.json of het lockfile)?
+ * Een nieuwe pin is een nieuwe poort en een nieuwe reviewer; die komt er niet door op een review alleen
+ * (QA-bevinding B1 op jarvis-engine#88). Geen patch beschikbaar (te groot) telt als geraakt: onbekend is
+ * nooit het soepelst.
+ */
+export function enginePinGeraakt(bestanden: readonly { readonly filename: string; readonly patch?: string | null }[]): boolean {
+  return bestanden.some((b) => {
+    if (!/(^|\/)package(-lock)?\.json$/.test(b.filename.replace(/\\/g, "/"))) return false;
+    if (typeof b.patch !== "string") return true;
+    return b.patch.split("\n").some((r) => /^[+-](?![+-])/.test(r) && r.includes("jarvis-engine"));
+  });
+}
 
 /**
  * Welke gewijzigde bestanden onder een harde uitzondering vallen, met reden.
@@ -218,6 +241,8 @@ export type AttestatieFeiten = {
    */
   readonly alleenStatusregel?: readonly string[];
   readonly prTekst: string;
+  /** Raakt de PR de vastgepinde engine? Zie `enginePinGeraakt`; dan geldt een harde uitzondering. */
+  readonly enginePinGewijzigd?: boolean;
   /** Een autorisatie van soort "pr" op precies deze kop, of null. */
   readonly autorisatiePr: Autorisatie | null;
   readonly checks: readonly Check[];
@@ -401,7 +426,10 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     }
   }
 
-  const treffers = raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
+  const treffers = [
+    ...raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []),
+    ...(f.enginePinGewijzigd === true ? ["de vastgepinde engine (jarvis-engine in package.json of het lockfile)"] : []),
+  ];
   const verklaring = leesUitzonderingenRegel(f.prTekst);
   const uitzondering = treffers.length > 0 || (verklaring !== null && verklaring !== "geen");
   if (verklaring === null) {

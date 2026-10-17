@@ -67,6 +67,7 @@ import {
   beoordeelAttestatie,
   leesAttestatie,
   alleenStatusVerschil,
+  enginePinGeraakt,
   scopeHash,
   takenUitCommits,
   verifieerAttestatie,
@@ -2939,7 +2940,7 @@ export async function verzamelAttestatieFeiten(
   const commitsRuw = await leesAllePaginas<{ sha: string; commit: { message: string }; parents?: readonly unknown[] }>(token, `/repos/${slug}/pulls/${nummer}/commits`, 10, haal);
   if (typeof commitsRuw === "string") return commitsRuw;
   const commits = commitsRuw.map((c) => ({ sha: c.sha, boodschap: c.commit.message, ouders: Array.isArray(c.parents) ? c.parents.length : 1 }));
-  const bestandenRuw = await leesAllePaginas<{ filename: string; status?: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10, haal);
+  const bestandenRuw = await leesAllePaginas<{ filename: string; status?: string; patch?: string | null }>(token, `/repos/${slug}/pulls/${nummer}/files`, 10, haal);
   if (typeof bestandenRuw === "string") return bestandenRuw;
   const bestanden = bestandenRuw.map((f) => f.filename);
   // De status staat erbij omdat "nieuw dossier" en "bestaand dossier
@@ -3006,6 +3007,7 @@ export async function verzamelAttestatieFeiten(
     bestandStatus,
     alleenStatusregel,
     prTekst,
+    enginePinGewijzigd: enginePinGeraakt(bestandenRuw),
     autorisatiePr: await bron.pr(slug, nummer, feiten.kop),
     checks: feiten.checks,
     verplichteCheck: VERPLICHTE_CHECK,
