@@ -94,10 +94,10 @@ describe("eigenaarslijst_administratief — documentatie bevestigt Jarvis zelf (
     expect(isAdministratieveBevestiging("Log in op Vercel en koppel het project")).toBe(false);
     expect(isAdministratieveBevestiging("Beslis of Kasboek een eigen repository krijgt")).toBe(false);
   });
-  it("is een fout in de poort zodra zo'n punt in een geraakt dossier staat", async () => {
+  it("meldt het als waarschuwing zodra zo'n punt in een geraakt dossier staat", async () => {
     const l = await lading();
     const uit = lint({ ...basis(l), eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Het narratief in docs/CURRENT_STATE.md bevestigen." }] });
-    expect(uit.bevindingen.some((b) => b.code === "eigenaarslijst_administratief" && b.severity === "fout")).toBe(true);
+    expect(uit.bevindingen.some((b) => b.code === "eigenaarslijst_administratief" && b.severity === "waarschuwing")).toBe(true);
     const ok = lint({ ...basis(l), eigenaarsPunten: [{ bestand: "tasks/T-1/resultaat.md", tekst: "Vink in GitHub de instelling aan en geef akkoord." }] });
     expect(ok.bevindingen.some((b) => b.code === "eigenaarslijst_administratief")).toBe(false);
   });
@@ -136,7 +136,7 @@ describe("bevatTriggerwoord", () => {
 });
 
 describe("toetsRandvoorwaarden", () => {
-  it("blokkeert bij een triggerwoord in de tekst zonder ack", async () => {
+  it("meldt een triggerwoord in de tekst als signaal, niet als fout (T-20261017-jarvis-vereenvoudigen)", async () => {
     const l = await lading();
     const bevindingen = toetsRandvoorwaarden(
       l.records,
@@ -144,10 +144,10 @@ describe("toetsRandvoorwaarden", () => {
       "Bouw de onboarding om zodat de klant zelf zijn webhook invult.",
       [],
     );
-    const fout = bevindingen.find((b) => b.code === "randvoorwaarde_geraakt");
-    expect(fout?.severity).toBe("fout");
-    expect(fout?.onderwerp).toBe("CON-0001");
-    expect(fout?.boodschap).toContain("Constraint-ack: CON-0001");
+    const signaal = bevindingen.find((b) => b.code === "randvoorwaarde_signaal");
+    expect(signaal?.severity).toBe("waarschuwing");
+    expect(signaal?.onderwerp).toBe("CON-0001");
+    expect(signaal?.boodschap).toContain("in de tekst genoemd");
   });
 
   it("blokkeert bij een geraakt pad, ook zonder triggerwoord", async () => {
@@ -193,20 +193,20 @@ describe("lint", () => {
     expect(resultaat.ok).toBe(true);
   });
 
-  it("faalt op een botsing met een harde randvoorwaarde", async () => {
+  it("laat een triggerwoord zonder geraakt pad de poort niet rood maken", async () => {
     const l = await lading();
     const resultaat = lint({
       ...basis(l),
       tekstCorpus: "de klant vult tijdens onboarding zelf zijn webhook-URL in",
     });
-    expect(resultaat.ok).toBe(false);
-    expect(resultaat.bevindingen.some((b) => b.code === "randvoorwaarde_geraakt")).toBe(true);
+    expect(resultaat.ok).toBe(true);
+    expect(resultaat.bevindingen.some((b) => b.code === "randvoorwaarde_signaal")).toBe(true);
   });
 
-  it("eist een statusverklaring bij wijziging van status-dragende paden", async () => {
+  it("vraagt een statusverklaring bij wijziging van status-dragende paden, als waarschuwing", async () => {
     const l = await lading();
     const resultaat = lint({ ...basis(l), gewijzigdeBestanden: ["supabase/migrations/0012_iets.sql"] });
-    expect(resultaat.ok).toBe(false);
+    expect(resultaat.ok).toBe(true);
     expect(resultaat.bevindingen.some((b) => b.code === "status_impact_ontbreekt")).toBe(true);
   });
 
@@ -316,16 +316,16 @@ describe("rolmandaat", () => {
     voorStartpunt,
   });
 
-  it("blokkeert een rol die buiten zijn mandaat schrijft", async () => {
+  it("meldt een rol die buiten zijn mandaat schrijft, als waarschuwing", async () => {
     const l = await lading();
     const resultaat = lint({
       ...basis(l),
       commits: [commit("qa", ["tests/iets.test.ts", "jarvis/src/lint.ts"])],
     });
     const bevinding = resultaat.bevindingen.find((b) => b.code === "rol_overschrijding");
-    expect(bevinding?.severity).toBe("fout");
+    expect(bevinding?.severity).toBe("waarschuwing");
     expect(bevinding?.boodschap).toContain("jarvis/src/lint.ts");
-    expect(resultaat.ok).toBe(false);
+    expect(resultaat.ok).toBe(true);
   });
 
   it("laat een rol door die binnen zijn mandaat blijft", async () => {
@@ -337,7 +337,7 @@ describe("rolmandaat", () => {
     expect(resultaat.bevindingen.some((b) => b.code === "rol_overschrijding")).toBe(false);
   });
 
-  it("laat QA geen tests committen: dat is werk van de bouwende rol", async () => {
+  it("meldt het als QA tests commit: dat is werk van de bouwende rol", async () => {
     // Het QA-contract verbood het al; de poort stond het toe en sprak het
     // contract tegen. Beslist door de eigenaar op 2026-09-12: het contract wint.
     const l = await lading();
@@ -346,7 +346,7 @@ describe("rolmandaat", () => {
       commits: [commit("qa", ["tests/iets.test.ts", "tasks/T-1/qa-rapport.md"])],
     });
     const bevinding = resultaat.bevindingen.find((b) => b.code === "rol_overschrijding");
-    expect(bevinding?.severity).toBe("fout");
+    expect(bevinding?.severity).toBe("waarschuwing");
     expect(bevinding?.boodschap).toContain("tests/iets.test.ts");
   });
 
@@ -401,12 +401,12 @@ describe("rolmandaat — de gaten die de tweede QA-ronde vond", () => {
     }
   });
 
-  it("wijst een onbekende rol af in plaats van hem alles toe te staan", async () => {
+  it("meldt een onbekende rol in plaats van hem stil alles toe te staan", async () => {
     const l = await lading();
     const resultaat = lint({ ...basis(l), commits: [commit("tovenaar", ["jarvis/src/lint.ts"])] });
     const bevinding = resultaat.bevindingen.find((b) => b.code === "rol_onbekend");
-    expect(bevinding?.severity).toBe("fout");
-    expect(resultaat.ok).toBe(false);
+    expect(bevinding?.severity).toBe("waarschuwing");
+    expect(resultaat.ok).toBe(true);
   });
 
   it("struikelt niet over een rolnaam uit het prototype", async () => {
@@ -420,7 +420,7 @@ describe("rolmandaat — de gaten die de tweede QA-ronde vond", () => {
     }
   });
 
-  it("blokkeert het verschuiven van het startpunt", async () => {
+  it("meldt het verschuiven van het startpunt", async () => {
     // Zonder deze controle kon een commit met een overtreding worden gevolgd
     // door een tweede die het startpunt op die overtreding zette; de poort
     // kleurde dan groen op precies de historie die hij moest afkeuren.
@@ -431,8 +431,8 @@ describe("rolmandaat — de gaten die de tweede QA-ronde vond", () => {
       rolControleVanafBasis: "",
     });
     const bevinding = verschoven.bevindingen.find((b) => b.code === "startpunt_verschoven");
-    expect(bevinding?.severity).toBe("fout");
-    expect(verschoven.ok).toBe(false);
+    expect(bevinding?.severity).toBe("waarschuwing");
+    expect(verschoven.ok).toBe(true);
 
     const metAck = lint({
       ...basis(l),
@@ -458,23 +458,23 @@ describe("rolmandaat — de gaten die de tweede QA-ronde vond", () => {
     expect(resultaat.bevindingen.some((b) => b.code === "startpunt_verschoven")).toBe(false);
   });
 
-  it("weigert wanneer de commitlog niet volledig en eenduidig gelezen is", async () => {
+  it("meldt het wanneer de commitlog niet volledig en eenduidig gelezen is", async () => {
     const l = await lading();
     const resultaat = lint({ ...basis(l), commitlogOnleesbaar: true });
     const b = resultaat.bevindingen.find((x) => x.code === "commitlog_onleesbaar");
-    expect(b?.severity).toBe("fout");
-    expect(resultaat.ok).toBe(false);
+    expect(b?.severity).toBe("waarschuwing");
+    expect(resultaat.ok).toBe(true);
   });
 
-  it("meldt het wanneer commits buiten de controle vielen", async () => {
+  it("meldt het wanneer commits buiten de controle vielen, als waarschuwing", async () => {
     const l = await lading();
     const resultaat = lint({ ...basis(l), commitsAfgekapt: 7 });
     const bevinding = resultaat.bevindingen.find((b) => b.code === "commits_afgekapt");
     // Blokkerend: een waarschuwing zou de build groen laten op een branch waarvan
     // de oudste commits nooit tegen hun rolmandaat zijn gehouden.
-    expect(bevinding?.severity).toBe("fout");
+    expect(bevinding?.severity).toBe("waarschuwing");
     expect(bevinding?.boodschap).toContain("7");
-    expect(resultaat.ok).toBe(false);
+    expect(resultaat.ok).toBe(true);
   });
 
   it("leest de mandaatpaden uit de configuratie en niet uit de engine", async () => {

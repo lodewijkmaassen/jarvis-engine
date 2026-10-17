@@ -97,7 +97,7 @@ async function stubFetch(s: Scenario): Promise<Aanroep[]> {
       : s.autorisatieTaak;
   const toetsing =
     s.toetsing === undefined
-      ? { id: "TOE-1", oordeel: "GO", commit_sha: KOP, pr_repo: SLUG, pr_nummer: NUMMER }
+      ? { id: "TOE-1", oordeel: "GO", commit_sha: KOP, pr_repo: SLUG, pr_nummer: NUMMER, door: "ci-review" }
       : s.toetsing;
 
   globalThis.fetch = (async (invoer: unknown, init?: { method?: string; body?: string }) => {
@@ -200,8 +200,15 @@ describe("jarvis pr attesteren — voorcontrole vóór de dispatch", () => {
     if (bewaard.url !== undefined) process.env.JARVIS_DB_URL = bewaard.url;
   });
 
-  it("AC-1: zonder taakakkoord start er geen workflow en is de exitcode 3", async () => {
+  it("zonder taakakkoord gaat de dispatch gewoon uit: de review draagt de pull request (T-20261017-jarvis-vereenvoudigen)", async () => {
     const aanroepen = await stubFetch({ autorisatieTaak: null });
+    const uit = await attesteer();
+    expect(uit.code).toBe(0);
+    expect(gedispatcht(aanroepen)).toBe(true);
+  });
+
+  it("AC-1: een GO van een ander dan de reviewjob start geen workflow", async () => {
+    const aanroepen = await stubFetch({ toetsing: { id: "TOE-1", oordeel: "GO", commit_sha: KOP, pr_repo: SLUG, pr_nummer: NUMMER, door: "cloud" } });
     const uit = await attesteer();
     expect(uit.code).toBe(3);
     expect(gedispatcht(aanroepen)).toBe(false);

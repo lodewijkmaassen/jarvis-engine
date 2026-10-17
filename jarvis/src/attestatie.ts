@@ -357,7 +357,22 @@ export function akkoordOpDezeKop(f: AttestatieFeiten): boolean {
   );
 }
 
-/** Waarom er nu niet geattesteerd wordt. Leeg betekent: attesteer. */
+/**
+ * Wie de onafhankelijke toetsing legt die een attestatie draagt: de reviewjob in CI (`jarvis v3 sweep`,
+ * databaserol jarvis_ci, een ander model dan de bouwer). De database laat alleen jarvis_ci een toetsing
+ * met deze `door` schrijven; de bouwer (jarvis_werker) kan hem dus niet namaken.
+ */
+export const REVIEWER_DOOR = "ci-review";
+
+/**
+ * Waarom er nu niet geattesteerd wordt. Leeg betekent: attesteer.
+ *
+ * Sinds T-20261017-jarvis-vereenvoudigen hangt een attestatie niet meer aan een akkoord van de eigenaar
+ * per taak met een scope-hash van het dossier. Dat akkoord vergrendelde zichzelf (scope-hashes die
+ * tussen repositories uiteenliepen, gemeten 2026-10-13) en maakte de eigenaar tot technische actor. Wat
+ * een pull request nu draagt, is de onafhankelijke review in CI (REVIEWER_DOOR) op precies de kop. De
+ * harde uitzonderingen — workflows, governance, migraties — vragen nog steeds een apart akkoord.
+ */
 export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   const redenen: string[] = [];
 
@@ -369,46 +384,20 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   if (f.gewijzigdeBestanden.length === 0) redenen.push("de pull request wijzigt geen bestanden; er is niets te attesteren");
 
   const administratief = isAdministratievePr(f);
-  const herschreven = herschrevenScope(f);
-  // De uitweg moet werkelijk bestaan. Deze reden stond er onvoorwaardelijk, en
-  // daarmee kon een herschreven opdrachttekst nóóit machinaal worden
-  // geattesteerd — ook niet met het aparte akkoord dat de tekst eromheen
-  // belooft. Veilig, maar niet wat er staat, en een belofte die de code niet
-  // waarmaakt is erger dan geen belofte.
-  if (herschreven.length > 0 && !akkoordOpDezeKop(f)) {
-    redenen.push(
-      `deze pull request herschrijft ${herschreven.join(", ")} — de tekst waarop het akkoord van de eigenaar rust; ` +
-        "dat is geen administratieve wijziging en vraagt zijn akkoord op deze pull request",
-    );
-  }
   if (!administratief) {
     if (f.taken.length === 0 && f.taakRedenen.length === 0) {
       redenen.push("geen taak bekend voor deze pull request");
     }
-    for (const t of f.taken) {
-      if (t.autorisatie === null) {
-        redenen.push(`geen akkoord van de eigenaar op taak ${t.taak} in de database`);
-      } else if (t.autorisatie.soort !== "taak" || t.autorisatie.taak !== t.taak) {
-        redenen.push(`de gevonden autorisatie ${t.autorisatie.id} is geen taakakkoord voor ${t.taak}`);
-      } else if (t.scopeHashKop === null) {
-        redenen.push(`tasks/${t.taak}/opdracht.md ontbreekt op de kop; zonder scope geen akkoord`);
-      } else if (t.autorisatie.scope_hash !== t.scopeHashKop) {
-        redenen.push(
-          `de scope van ${t.taak} is veranderd sinds het akkoord van ${t.autorisatie.op} ` +
-            `(akkoord op ${(t.autorisatie.scope_hash ?? "?").slice(0, 12)}, kop ${t.scopeHashKop.slice(0, 12)}); opnieuw autoriseren`,
-        );
-      }
-    }
-
     if (f.toetsing === null) {
-      redenen.push(`geen toetsing met oordeel GO op de kop ${f.kop.slice(0, 7)}`);
+      redenen.push(`geen onafhankelijke review (${REVIEWER_DOOR}) met oordeel GO op de kop ${f.kop.slice(0, 7)}`);
     } else if (
       f.toetsing.oordeel !== "GO" ||
+      f.toetsing.door !== REVIEWER_DOOR ||
       f.toetsing.commit_sha !== f.kop ||
       f.toetsing.pr_repo.toLowerCase() !== f.repo.toLowerCase() ||
       f.toetsing.pr_nummer !== f.nummer
     ) {
-      redenen.push(`de toetsing ${f.toetsing.id} hoort niet bij deze pull request op deze kop, of is geen GO`);
+      redenen.push(`de toetsing ${f.toetsing.id} is geen GO van ${REVIEWER_DOOR} op deze pull request en deze kop`);
     }
   }
 
@@ -453,8 +442,9 @@ export function attestatieInhoud(f: AttestatieFeiten): AttestatieInhoud {
   const administratief = isAdministratievePr(f);
   return {
     taken: administratief ? "administratief" : f.taken.map((t) => t.taak).join("+"),
-    autorisaties: administratief ? "-" : f.taken.map((t) => t.autorisatie?.id ?? "?").join("+"),
-    scope: administratief ? "-" : f.taken.map((t) => t.scopeHashKop ?? "?").join("+"),
+    // Geen taakakkoord en geen scope meer (zie beoordeelAttestatie); het formaat van de tekst blijft gelijk.
+    autorisaties: "-",
+    scope: "-",
     toetsing: administratief ? "-" : (f.toetsing?.id ?? "?"),
     kop: f.kop,
     uitzonderingen: f.autorisatiePr === null ? "geen" : `apart akkoord ${f.autorisatiePr.id}`,
@@ -501,22 +491,11 @@ export function verifieerAttestatie(
     if (inhoud.autorisaties !== "-" || inhoud.toetsing !== "-") redenen.push("een administratieve attestatie noemt geen autorisaties of toetsing");
     return redenen;
   }
-  const taken = inhoud.taken.split("+");
-  const ids = inhoud.autorisaties.split("+");
-  const scopes = inhoud.scope.split("+");
-  if (taken.length === 0 || taken.length !== ids.length || taken.length !== scopes.length) {
-    redenen.push("de attestatie noemt taken, autorisaties en scopes niet paarsgewijs");
-    return redenen;
-  }
-  taken.forEach((taak, n) => {
-    const a = autorisaties.get(ids[n]!) ?? null;
-    if (a === null) redenen.push(`autorisatie ${ids[n]} bestaat niet in de database`);
-    else if (a.soort !== "taak" || a.taak !== taak) redenen.push(`autorisatie ${ids[n]} is geen taakakkoord voor ${taak}`);
-    else if ((a.scope_hash ?? "") !== scopes[n]) redenen.push(`de scope van ${taak} in de attestatie wijkt af van de autorisatie`);
-  });
+  void autorisaties;
+  if (inhoud.autorisaties !== "-" || inhoud.scope !== "-") redenen.push("een attestatie noemt geen taakakkoord of scope meer");
   if (toetsing === null) redenen.push(`toetsing ${inhoud.toetsing} bestaat niet in de database`);
-  else if (toetsing.oordeel !== "GO" || toetsing.commit_sha !== kop) {
-    redenen.push(`toetsing ${inhoud.toetsing} is geen GO op de kop`);
+  else if (toetsing.oordeel !== "GO" || toetsing.commit_sha !== kop || toetsing.door !== REVIEWER_DOOR) {
+    redenen.push(`toetsing ${inhoud.toetsing} is geen GO van ${REVIEWER_DOOR} op de kop`);
   }
   return redenen;
 }

@@ -21,6 +21,7 @@
 //   migreer --repo <slug> --basis <sha> --kop <sha> [--droog]   idem voor een expliciete reeks commits
 //   eindcontrole                         (alleen CI, rol jarvis_ci) meet elk acceptatiecriterium en legt KLAAR of terug-naar-UITVOEREN vast
 import { readFile } from "node:fs/promises";
+import { ciDispatch, ciEindcontrole, ciSweep } from "./doelen-cli";
 import { laadConfig, vindWortel } from "./config";
 import { leesArgumenten } from "./args";
 import { takenUitCommits } from "./attestatie";
@@ -782,21 +783,23 @@ export async function voerV3Uit(argv: readonly string[]): Promise<number> {
           console.log(JSON.stringify(await sql.unsafe(v3Aanroep("watchdog", [])), null, 2));
           return 0;
         });
+      // Sinds T-20261017-jarvis-vereenvoudigen roept de workflow `jarvis-v3` hiermee de kleine keten van
+      // doelen aan (doelen-cli.ts). De oude V3-implementaties blijven tot fase 4 staan maar draaien niet meer.
       case "dispatch":
-        return await dispatch(vlaggen.has("droog"));
+        return await ciDispatch(vlaggen.has("droog"));
       case "beoordeel-pr": {
         const nummer = Number.parseInt(taak, 10);
         if (!Number.isInteger(nummer) || nummer <= 0) throw new Error("gebruik: jarvis v3 beoordeel-pr <nummer> --repo <slug> [--samenvoegen]");
         return await beoordeelPr(nummer, vlaggen.get("repo") || (process.env.GITHUB_REPOSITORY ?? "").trim(), vlaggen.has("samenvoegen"));
       }
       case "sweep":
-        return await sweep(vlaggen.get("repo") || (process.env.GITHUB_REPOSITORY ?? "").trim());
+        return await ciSweep();
       case "migreer":
         return vlaggen.has("basis") || vlaggen.has("kop")
           ? await migreer(vlaggen.get("repo") || (process.env.GITHUB_REPOSITORY ?? "").trim(), vereist(vlaggen, "basis"), vereist(vlaggen, "kop"), vlaggen.has("droog"))
           : await migreerUitstaand(vlaggen.get("repo") || (process.env.GITHUB_REPOSITORY ?? "").trim(), vlaggen.has("droog"));
       case "eindcontrole":
-        return await eindcontrole();
+        return await ciEindcontrole();
       default:
         console.error("jarvis v3: onbekende opdracht. Zie de kop van jarvis/src/v3-cli.ts.");
         return 2;

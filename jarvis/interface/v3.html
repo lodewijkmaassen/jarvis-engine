@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
-<title>Jarvis V3</title>
+<title>Jarvis</title>
 <style>
   :root { --bg:#f6f6f3; --kaart:#fff; --tekst:#1b1b19; --gedempt:#6b6b66; --lijn:#e2e1da; --accent:#1f5eff; --goed:#17794a; --fout:#b3261e; --wacht:#9a6b00; }
   @media (prefers-color-scheme: dark) { :root { --bg:#141413; --kaart:#1d1d1b; --tekst:#efeee8; --gedempt:#a2a19a; --lijn:#2f2f2b; --accent:#7ea2ff; --goed:#5fd09a; --fout:#ff8a80; --wacht:#f0c05a; } }
@@ -26,7 +26,7 @@
 </head>
 <body>
 <main>
-  <h1>Jarvis V3</h1>
+  <h1>Jarvis</h1>
   <div id="status" class="klein">laden…</div>
   <div id="melding"></div>
   <div id="inhoud"></div>
@@ -37,65 +37,38 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-  const lijst = (a) => `<ul>${(Array.isArray(a) ? a : []).map((x) => `<li>${esc(typeof x === "string" ? x : x.omschrijving ?? JSON.stringify(x))}</li>`).join("")}</ul>`;
   let client = null;
   const melding = (t) => { $("melding").innerHTML = t ? `<div class="melding">${esc(t)}</div>` : ""; };
   const zeg = async (f) => { try { melding(""); await f(); await laad(); } catch (e) { melding(e.message ?? String(e)); } };
   const rpc = async (naam, args) => { const { data, error } = await client.rpc(naam, args); if (error) throw error; return data; };
 
-  function voorstelHtml(m) {
-    if (!m || typeof m !== "object") return "";
-    return `<div class="klein">
-      <p><b>Doel:</b> ${esc(m.doel)}</p>
-      <p><b>Het is klaar als:</b></p>${lijst(m.acceptatie)}
-      <p><b>Jarvis mag werken in:</b> ${esc((m.repos ?? []).join(", "))}</p>
-      <p><b>Alleen deze bestanden:</b></p>${lijst(m.paden_ja)}
-      <p><b>Uitrollen naar productie zonder verder akkoord:</b> ${m.productie ? "ja" : "nee"} &nbsp;
-         <b>Databasemigraties:</b> ${m.migraties ? "ja" : "nee"}${m.destructief ? " (ook verwijderend)" : ""} &nbsp;
-         <b>Kosten:</b> € ${esc(m.kosten_max_eur ?? 0)}</p>
-      <p>Wijzigingen aan de poort, workflows en beveiligingsconfiguratie vallen er nooit onder.</p></div>`;
-  }
+  const LABEL = { open: "nieuw", bezig: "Jarvis bouwt", review: "in review", samengevoegd: "wordt uitgerold", klaar: "klaar", vast: "vastgelopen" };
+  const KLEUR = { klaar: "KLAAR", vast: "MISLUKT" };
 
-  function kaartVoorJou(v) {
-    if (v.type === "akkoord") {
-      return `<div class="kaart"><h3>${esc(v.titel)}<span class="badge AKKOORD_NODIG">akkoord nodig</span></h3>${voorstelHtml(v.opties)}
-        <button class="hoofd" data-akkoord="${esc(v.taak_id)}">Akkoord op dit mandaat</button><button data-afwijs="${esc(v.taak_id)}">Afwijzen</button></div>`;
-    }
-    const opties = Array.isArray(v.opties) ? v.opties : [];
-    return `<div class="kaart"><h3>${esc(v.titel)}<span class="badge BESLISSING_NODIG">beslissing nodig</span></h3><p>${esc(v.vraag)}</p>
-      ${opties.map((o) => `<button data-kies="${esc(v.id)}" data-antwoord="${esc(o)}">${esc(o)}</button>`).join("")}
-      <input data-vrij="${esc(v.id)}" placeholder="of een eigen antwoord"><button data-vrijstuur="${esc(v.id)}">Verstuur</button></div>`;
-  }
-
-  function kaartTaak(t) {
-    const klaar = t.toestand === "KLAAR";
-    const eind = klaar && Array.isArray(t.eindcontrole) ? `<ul>${t.eindcontrole.map((e) => `<li>${esc(e.criterium)}: ${esc(e.uitkomst)} — ${esc(e.bewijs)}</li>`).join("")}</ul>` : "";
-    return `<div class="kaart"><h3>${esc(t.titel)}<span class="badge ${esc(t.toestand)}">${esc(t.toestand.toLowerCase().replace("_", " "))}</span></h3>
-      <div class="klein">${esc(t.id)} · sinds ${esc(new Date(t.toestand_sinds).toLocaleString("nl-NL"))}${t.blokkade ? ` · technisch bezig: ${esc(t.blokkade)}` : ""}</div>${eind}</div>`;
+  function kaartDoel(d) {
+    const pr = d.pr && d.pr.repo && d.pr.nummer ? ` · <a href="https://github.com/${esc(d.pr.repo)}/pull/${esc(d.pr.nummer)}">${esc(d.pr.repo.split("/")[1])} #${esc(d.pr.nummer)}</a>` : "";
+    return `<div class="kaart"><h3>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
+      <div class="klein">${esc(d.id)} · bijgewerkt ${esc(new Date(d.bijgewerkt).toLocaleString("nl-NL"))}${pr}</div>
+      ${d.uitkomst ? `<p class="klein">${esc(d.uitkomst)}</p>` : ""}</div>`;
   }
 
   async function laad(auto) {
     // Een verversing op de klok mag nooit een half getypte opdracht wegvegen.
     if (auto === true && document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
-    const [voor, taken] = await Promise.all([
-      client.from("v3_voor_jou").select("*").order("geopend_op"),
-      client.from("v3_actueel").select("*").order("toestand_sinds", { ascending: false }),
-    ]);
-    if (voor.error || taken.error) { melding(`Niet te lezen: ${(voor.error ?? taken.error).message}`); return; }
-    const open = taken.data.filter((t) => !["KLAAR", "MISLUKT"].includes(t.toestand));
-    const af = taken.data.filter((t) => ["KLAAR", "MISLUKT"].includes(t.toestand));
-    $("status").textContent = `bijgewerkt ${new Date().toLocaleTimeString("nl-NL")} · ${voor.data.length} voor jou · ${open.length} lopend`;
+    const doelen = await client.from("doelen").select("*").order("aangemaakt", { ascending: false });
+    if (doelen.error) { melding(`Niet te lezen: ${doelen.error.message}`); return; }
+    const lopend = doelen.data.filter((d) => !["klaar", "vast"].includes(d.status));
+    const vast = doelen.data.filter((d) => d.status === "vast");
+    const klaar = doelen.data.filter((d) => d.status === "klaar");
+    $("status").textContent = `bijgewerkt ${new Date().toLocaleTimeString("nl-NL")} · ${lopend.length} lopend`;
     $("inhoud").innerHTML = `
-      <h2>Nieuwe opdracht</h2>
-      <div class="kaart"><input id="nt" placeholder="Titel"><textarea id="no" rows="4" placeholder="Wat wil je dat Jarvis doet?"></textarea><button class="hoofd" id="nv">Geef opdracht</button></div>
-      <h2>Voor jou</h2>${voor.data.length ? voor.data.map(kaartVoorJou).join("") : '<div class="leeg">Niets. Jarvis werkt door.</div>'}
-      <h2>Lopend</h2>${open.length ? open.map(kaartTaak).join("") : '<div class="leeg">Geen lopende opdrachten.</div>'}
-      <h2>Resultaat</h2>${af.length ? af.map(kaartTaak).join("") : '<div class="leeg">Nog niets afgerond.</div>'}`;
-    $("nv").onclick = () => zeg(async () => { await rpc("v3_nieuwe_opdracht", { p_titel: $("nt").value, p_opdracht: $("no").value }); });
-    document.querySelectorAll("[data-akkoord]").forEach((b) => b.onclick = () => zeg(() => rpc("v3_geef_mandaat", { p_taak: b.dataset.akkoord })));
-    document.querySelectorAll("[data-afwijs]").forEach((b) => b.onclick = () => zeg(() => rpc("v3_wijs_af", { p_taak: b.dataset.afwijs })));
-    document.querySelectorAll("[data-kies]").forEach((b) => b.onclick = () => zeg(() => rpc("v3_beantwoord", { p_verzoek: b.dataset.kies, p_antwoord: b.dataset.antwoord })));
-    document.querySelectorAll("[data-vrijstuur]").forEach((b) => b.onclick = () => zeg(() => rpc("v3_beantwoord", { p_verzoek: b.dataset.vrijstuur, p_antwoord: document.querySelector(`[data-vrij="${b.dataset.vrijstuur}"]`).value })));
+      <h2>Nieuw doel</h2>
+      <div class="kaart"><input id="nt" placeholder="Titel"><textarea id="no" rows="4" placeholder="Wat wil je dat Jarvis bereikt?"></textarea>
+        <input id="nu" placeholder="Waar het te zien is (https://…), optioneel"><button class="hoofd" id="nv">Geef doel</button></div>
+      <h2>Lopend</h2>${lopend.length ? lopend.map(kaartDoel).join("") : '<div class="leeg">Geen lopende doelen.</div>'}
+      ${vast.length ? `<h2>Vastgelopen</h2>${vast.map(kaartDoel).join("")}` : ""}
+      <h2>Klaar</h2>${klaar.length ? klaar.map(kaartDoel).join("") : '<div class="leeg">Nog niets afgerond.</div>'}`;
+    $("nv").onclick = () => zeg(async () => { await rpc("doel_nieuw", { p_titel: $("nt").value, p_opdracht: $("no").value, p_acceptatie_url: $("nu").value || null }); });
   }
 
   function login(melding_) {

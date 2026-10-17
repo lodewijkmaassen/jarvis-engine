@@ -11,6 +11,7 @@
 //
 // Gebruik: npx tsx jarvis/src/cli.ts <opdracht> [opties]
 import { AfbrekenFout, voerUit } from "./opdrachten";
+import { voerDoelUit } from "./doelen-cli";
 import { voerV3Uit } from "./v3-cli";
 
 /**
@@ -40,7 +41,8 @@ async function hoofd(): Promise<void> {
   await volgOmgevingsProxy();
   try {
     const argv = process.argv.slice(2);
-    process.exitCode = argv[0] === "v3" ? await voerV3Uit(argv.slice(1)) : await voerUit(argv);
+    process.exitCode =
+      argv[0] === "v3" ? await voerV3Uit(argv.slice(1)) : argv[0] === "doel" ? await voerDoelUit(argv.slice(1)) : await voerUit(argv);
   } catch (fout) {
     if (fout instanceof AfbrekenFout) {
       console.error(fout.message);

@@ -17,6 +17,7 @@ import {
   type AttestatieFeiten,
   type Autorisatie,
   type Toetsing,
+  REVIEWER_DOOR,
 } from "@/jarvis/src/attestatie";
 import { ATTESTATIE_GEBRUIKER, beoordeelSamenvoegen, laatstePerNaam, type PullRequestFeiten } from "@/jarvis/src/pr";
 import { restPadAutorisatieTaak, restPadToetsingKop } from "@/jarvis/src/db";
@@ -44,7 +45,7 @@ const toetsing: Toetsing = {
   commit_sha: KOP,
   oordeel: "GO",
   rapport: null,
-  door: "cloud",
+  door: REVIEWER_DOOR,
   op: "2026-09-13T10:05:00Z",
 };
 
@@ -148,21 +149,16 @@ describe("administratieve PR (DEC-0044)", () => {
 
 describe("meerdere taken in één PR", () => {
   const tweede: Autorisatie = { ...autorisatie, id: "44444444-4444-4444-4444-444444444444", taak: "T-20260913-twee", scope_hash: scopeHash("twee") };
-  it("vraagt voor elke taak een akkoord met ongewijzigde scope", () => {
-    const beide = feiten({ taken: [...feiten().taken, { taak: "T-20260913-twee", autorisatie: tweede, scopeHashKop: scopeHash("twee") }] });
+  it("vraagt per taak geen akkoord meer: de review op de kop draagt de pull request", () => {
+    const beide = feiten({ taken: [...feiten().taken, { taak: "T-20260913-twee", autorisatie: null, scopeHashKop: null }] });
     expect(beoordeelAttestatie(beide)).toEqual([]);
-    expect(attestatieInhoud(beide).taken).toBe("T-20260913-proef+T-20260913-twee");
-    expect(attestatieInhoud(beide).autorisaties).toBe(`${autorisatie.id}+${tweede.id}`);
-    const half = feiten({ taken: [...feiten().taken, { taak: "T-20260913-twee", autorisatie: null, scopeHashKop: scopeHash("twee") }] });
-    expect(beoordeelAttestatie(half)).toContainEqual(expect.stringMatching(/geen akkoord van de eigenaar op taak T-20260913-twee/));
+    expect(attestatieInhoud(beide)).toMatchObject({ taken: "T-20260913-proef+T-20260913-twee", autorisaties: "-", scope: "-" });
+    void tweede;
   });
-  it("verifieert een attestatie met twee taken paarsgewijs", () => {
-    const beide = feiten({ taken: [...feiten().taken, { taak: "T-20260913-twee", autorisatie: tweede, scopeHashKop: scopeHash("twee") }] });
-    const inhoud = attestatieInhoud(beide);
-    const rijen = new Map<string, Autorisatie | null>([[autorisatie.id, autorisatie], [tweede.id, tweede]]);
-    expect(verifieerAttestatie(inhoud, KOP, rijen, toetsing)).toEqual([]);
-    expect(verifieerAttestatie(inhoud, KOP, new Map([[autorisatie.id, autorisatie]]), toetsing)).toContainEqual(expect.stringMatching(/bestaat niet/));
-    expect(verifieerAttestatie({ ...inhoud, scope: `${scopeHash(SCOPE)}` }, KOP, rijen, toetsing)).toContainEqual(expect.stringMatching(/paarsgewijs/));
+  it("verifieert een attestatie zonder taakakkoord en zonder scope", () => {
+    const inhoud = attestatieInhoud(feiten());
+    expect(verifieerAttestatie(inhoud, KOP, new Map(), toetsing)).toEqual([]);
+    expect(verifieerAttestatie({ ...inhoud, autorisaties: autorisatie.id }, KOP, new Map(), toetsing)).toContainEqual(expect.stringMatching(/taakakkoord of scope/));
   });
 });
 
@@ -205,31 +201,25 @@ describe("beoordeelAttestatie", () => {
     expect(beoordeelAttestatie(feiten({ auteur: "claude[bot]", uitvoerders: ["claude[bot]"] }))).toEqual([]);
     expect(beoordeelAttestatie(feiten({ auteur: "claude[bot]" }))[0]).toMatch(/niet de bot/);
   });
-  it("weigert zonder akkoord op de taak", () => {
-    expect(beoordeelAttestatie(metTaak({ autorisatie: null }))).toContainEqual(expect.stringMatching(/geen akkoord/));
+  it("vraagt geen akkoord van de eigenaar, geen scope en geen dossier (T-20261017-jarvis-vereenvoudigen)", () => {
+    expect(beoordeelAttestatie(metTaak({ autorisatie: null }))).toEqual([]);
+    expect(beoordeelAttestatie(metTaak({ scopeHashKop: scopeHash(`${SCOPE}\nMeer.\n`) }))).toEqual([]);
+    expect(beoordeelAttestatie(metTaak({ scopeHashKop: null }))).toEqual([]);
   });
-  it("weigert wanneer de scope sinds het akkoord veranderde", () => {
-    const uit = beoordeelAttestatie(metTaak({ scopeHashKop: scopeHash(`${SCOPE}\nMeer.\n`) }));
-    expect(uit).toContainEqual(expect.stringMatching(/scope .* is veranderd/));
+  it("weigert zonder GO van de reviewjob op precies de kop", () => {
+    expect(beoordeelAttestatie(feiten({ toetsing: null }))).toContainEqual(expect.stringMatching(/geen onafhankelijke review/));
+    for (const anders of [{ commit_sha: ANDERE }, { pr_nummer: 8 }, { pr_repo: "eigenaar/anders" }, { oordeel: "NO-GO" }]) {
+      expect(beoordeelAttestatie(feiten({ toetsing: { ...toetsing, ...anders } }))).toContainEqual(expect.stringMatching(/geen GO van ci-review/));
+    }
   });
-  it("weigert zonder dossier op de kop", () => {
-    expect(beoordeelAttestatie(metTaak({ scopeHashKop: null }))).toContainEqual(expect.stringMatching(/opdracht\.md ontbreekt/));
-  });
-  it("weigert zonder GO op precies de kop", () => {
-    expect(beoordeelAttestatie(feiten({ toetsing: null }))).toContainEqual(expect.stringMatching(/geen toetsing/));
-    expect(beoordeelAttestatie(feiten({ toetsing: { ...toetsing, commit_sha: ANDERE } }))).toContainEqual(
-      expect.stringMatching(/hoort niet bij deze pull request/),
-    );
-    expect(beoordeelAttestatie(feiten({ toetsing: { ...toetsing, pr_nummer: 8 } }))).toContainEqual(
-      expect.stringMatching(/hoort niet bij deze pull request/),
-    );
+  it("telt een GO van een ander dan de reviewjob niet — de bouwer keurt zichzelf niet goed", () => {
+    for (const door of ["cloud", "laptop", "qa", "CI-REVIEW", ""]) {
+      expect(beoordeelAttestatie(feiten({ toetsing: { ...toetsing, door } })), door).toContainEqual(expect.stringMatching(/geen GO van ci-review/));
+    }
   });
   it("weigert zonder taak, zonder bestanden, met een akkoord voor een andere taak, en met een pr-akkoord op een ander nummer", () => {
     expect(beoordeelAttestatie(feiten({ taken: [], taakRedenen: [] }))).toContainEqual(expect.stringMatching(/geen taak bekend/));
     expect(beoordeelAttestatie(feiten({ gewijzigdeBestanden: [] }))).toContainEqual(expect.stringMatching(/geen bestanden/));
-    expect(beoordeelAttestatie(metTaak({ autorisatie: { ...autorisatie, taak: "T-anders" } }))).toContainEqual(
-      expect.stringMatching(/geen taakakkoord voor/),
-    );
     const apart: Autorisatie = { ...autorisatie, id: "3", soort: "pr", pr_repo: "eigenaar/proef", pr_nummer: 8, commit_sha: KOP };
     expect(beoordeelAttestatie(feiten({ gewijzigdeBestanden: [".env"], autorisatiePr: apart }))).toContainEqual(
       expect.stringMatching(/harde uitzondering/),
@@ -281,16 +271,12 @@ describe("attestatietekst", () => {
     expect(leesAttestatie(`x ${attestatieTekst(inhoud)}`)).toBeNull();
   });
   it("verifieert tegen de database", () => {
-    expect(inhoud).toMatchObject({ taken: "T-20260913-proef", autorisaties: autorisatie.id, scope: scopeHash(SCOPE), toetsing: toetsing.id, kop: KOP, uitzonderingen: "geen" });
+    expect(inhoud).toMatchObject({ taken: "T-20260913-proef", autorisaties: "-", scope: "-", toetsing: toetsing.id, kop: KOP, uitzonderingen: "geen" });
     expect(verifieerAttestatie(inhoud, KOP, rijen, toetsing)).toEqual([]);
     expect(verifieerAttestatie(inhoud, ANDERE, rijen, toetsing)[0]).toMatch(/hoort bij/);
-    expect(verifieerAttestatie(inhoud, KOP, new Map([[autorisatie.id, null]]), toetsing)).toContainEqual(expect.stringMatching(/bestaat niet/));
-    expect(verifieerAttestatie(inhoud, KOP, new Map([[autorisatie.id, { ...autorisatie, scope_hash: "x" }]]), toetsing)).toContainEqual(
-      expect.stringMatching(/scope/),
-    );
-    expect(verifieerAttestatie(inhoud, KOP, rijen, { ...toetsing, oordeel: "NO-GO" })).toContainEqual(
-      expect.stringMatching(/geen GO/),
-    );
+    expect(verifieerAttestatie(inhoud, KOP, rijen, null)).toContainEqual(expect.stringMatching(/bestaat niet/));
+    expect(verifieerAttestatie(inhoud, KOP, rijen, { ...toetsing, oordeel: "NO-GO" })).toContainEqual(expect.stringMatching(/geen GO/));
+    expect(verifieerAttestatie(inhoud, KOP, rijen, { ...toetsing, door: "cloud" })).toContainEqual(expect.stringMatching(/geen GO van ci-review/));
     // Een administratieve attestatie noemt niets en heeft niets nodig.
     expect(verifieerAttestatie({ ...inhoud, taken: "administratief", autorisaties: "-", scope: "-", toetsing: "-" }, KOP, new Map(), null)).toEqual([]);
     expect(verifieerAttestatie({ ...inhoud, taken: "administratief" }, KOP, new Map(), null)[0]).toMatch(/administratieve attestatie/);
@@ -490,10 +476,11 @@ describe("de opdrachttekst is geen administratieve wijziging", () => {
     const f = dossierPr("modified");
     expect(isAdministratievePr(f)).toBe(false);
     expect(herschrevenScope(f)).toEqual(["tasks/T-20260913-proef/opdracht.md"]);
+    // Een herschreven dossier mandateert niets meer (T-20261017-jarvis-vereenvoudigen), maar is ook geen
+    // administratie: zonder de onafhankelijke review gaat het er niet door.
     const redenen = beoordeelAttestatie(f);
-    expect(redenen.join(" | ")).toMatch(/herschrijft tasks\/T-20260913-proef\/opdracht\.md/);
-    expect(redenen.join(" | "), "de scope hoort ook gewoon te worden vergeleken").toMatch(/de scope van T-20260913-proef is veranderd/);
-    expect(redenen.join(" | "), "en een toetsing hoort te worden geëist").toMatch(/geen toetsing met oordeel GO/);
+    expect(redenen.join(" | ")).toMatch(/geen onafhankelijke review/);
+    expect(beoordeelAttestatie({ ...f, toetsing })).toEqual([]);
   });
 
   it("laat een nieuw dossier wél administratief zijn — het mandateert nog niets", () => {
@@ -645,8 +632,9 @@ describe("de uitweg die DEC-0043 §2 belooft, bestaat ook werkelijk", () => {
     ...over,
   });
 
-  it("weigert zonder apart akkoord", () => {
-    expect(beoordeelAttestatie(herschrijving()).join(" | ")).toMatch(/herschrijft tasks/);
+  it("vraagt voor een herschreven dossier de review, geen akkoord van de eigenaar", () => {
+    expect(beoordeelAttestatie(herschrijving()).join(" | ")).toMatch(/geen onafhankelijke review/);
+    expect(beoordeelAttestatie(herschrijving({ toetsing }))).toEqual([]);
   });
 
   it("laat de herschrijving door met een apart akkoord op precies deze kop", () => {
@@ -667,7 +655,8 @@ describe("de uitweg die DEC-0043 §2 belooft, bestaat ook werkelijk", () => {
     ] as const) {
       const f = herschrijving({ autorisatiePr: prAkkoord(over), toetsing });
       expect(akkoordOpDezeKop(f), wat).toBe(false);
-      expect(beoordeelAttestatie(f).join(" | "), wat).toMatch(/herschrijft tasks/);
+      // Voor een harde uitzondering telt zo'n akkoord nog steeds niet.
+      expect(beoordeelAttestatie({ ...f, gewijzigdeBestanden: [".env"] }).join(" | "), wat).toMatch(/harde uitzondering/);
     }
   });
 });

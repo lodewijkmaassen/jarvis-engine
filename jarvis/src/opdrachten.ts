@@ -471,6 +471,13 @@ ${tekstUitBestand}`,
 export type PoortStap = {
   readonly naam: string;
   readonly draai: () => Promise<number>;
+  /**
+   * Telt een fout van deze stap mee voor de uitkomst? Standaard ja. Rollen-,
+   * index- en feitenblokdrift zijn administratie: ze worden gemeld, maar maken
+   * de poort niet rood (T-20261017-jarvis-vereenvoudigen). Ze blokkeerden
+   * aantoonbaar werk zonder productie te beschermen.
+   */
+  readonly hard?: boolean;
 };
 
 /**
@@ -491,9 +498,9 @@ export function poortStappen(wortel: string, waarden: PoortInvoer): readonly Poo
     { naam: "engine", draai: () => controleerEngine(wortel) },
     // Direct daarna: een rolcontract waarvan de afgeleide drift, stuurt elke
     // agent in deze omgeving met een ander contract op pad dan de bron zegt.
-    { naam: "rollen", draai: () => opdrachtRollen(new Map()) },
-    { naam: "index", draai: () => opdrachtIndex(false) },
-    { naam: "state", draai: () => opdrachtState(new Map([["controleer", "true"]])) },
+    { naam: "rollen", draai: () => opdrachtRollen(new Map()), hard: false },
+    { naam: "index", draai: () => opdrachtIndex(false), hard: false },
+    { naam: "state", draai: () => opdrachtState(new Map([["controleer", "true"]])), hard: false },
     { naam: "sanitize", draai: () => opdrachtSanitize(new Map()) },
     { naam: "lint", draai: () => voerPoortUit(waarden) },
   ];
@@ -510,6 +517,10 @@ export async function poortUitkomst(stappen: readonly PoortStap[]): Promise<numb
   let eersteFout = 0;
   for (const stap of stappen) {
     const code = await stap.draai();
+    if (code !== 0 && stap.hard === false) {
+      console.warn(`jarvis poort: stap ${stap.naam} meldt een afwijking; dat is een waarschuwing, geen fout.`);
+      continue;
+    }
     if (code !== 0 && eersteFout === 0) eersteFout = code;
   }
   return eersteFout;
