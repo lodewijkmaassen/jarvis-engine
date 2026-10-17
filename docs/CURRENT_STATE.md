@@ -6,13 +6,13 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-10-16._
+_Gegenereerd op 2026-10-17._
 
 | Feit | Waarde |
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 47 |
+| Testbestanden | 48 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -29,6 +29,7 @@ _Gegenereerd op 2026-10-16._
 | T-20260917-chatgpt-review | actief | Een tweede model als onafhankelijke reviewer in de keten, en eigenaarstaal in de app |
 | T-20261002-technische-uitvoering | actief | Technische uitvoering volledig door Jarvis |
 | T-20261015-jarvis-v3 | actief | Jarvis V3 — eenvoudige taakketen met mandaat |
+| T-20261017-jarvis-vereenvoudigen | actief | Jarvis vereenvoudigen — terug naar de kleinste keten die werkt |
 
 <!-- jarvis:feiten:eind -->
 
