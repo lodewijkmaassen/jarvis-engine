@@ -6,28 +6,59 @@
 <meta name="robots" content="noindex">
 <title>Jarvis</title>
 <style>
-  :root { --bg:#f6f6f3; --kaart:#fff; --tekst:#1b1b19; --gedempt:#6b6b66; --lijn:#e2e1da; --accent:#1f5eff; --goed:#17794a; --fout:#b3261e; --wacht:#9a6b00; }
-  @media (prefers-color-scheme: dark) { :root { --bg:#141413; --kaart:#1d1d1b; --tekst:#efeee8; --gedempt:#a2a19a; --lijn:#2f2f2b; --accent:#7ea2ff; --goed:#5fd09a; --fout:#ff8a80; --wacht:#f0c05a; } }
-  * { box-sizing: border-box; }
-  body { margin:0; background:var(--bg); color:var(--tekst); font:16px/1.45 system-ui, sans-serif; padding:0 16px 48px; }
-  main { max-width:760px; margin:0 auto; }
-  h1 { font-size:20px; margin:20px 0 4px; } h2 { font-size:15px; margin:28px 0 8px; text-transform:uppercase; letter-spacing:.04em; color:var(--gedempt); }
-  .kaart { background:var(--kaart); border:1px solid var(--lijn); border-radius:12px; padding:14px 16px; margin:10px 0; }
-  .kaart h3 { margin:0 0 6px; font-size:16px; } .klein { color:var(--gedempt); font-size:13.5px; }
-  .badge { display:inline-block; font-size:12px; padding:2px 8px; border-radius:99px; border:1px solid var(--lijn); margin-left:6px; }
+  :root { color-scheme:dark; --bg:#070b12; --bg2:#0c1320; --kaart:#101a2a; --kaart2:#142136; --tekst:#e6edf7; --gedempt:#8a9bb4; --lijn:#1f2d44; --accent:#4cc3ff; --accent2:#2b7bff; --goed:#3ddc97; --fout:#ff6b6b; --wacht:#f2c14e; }
+  * { box-sizing:border-box; }
+  html { background:var(--bg); }
+  body { margin:0; color:var(--tekst); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; min-height:100vh;
+    background:radial-gradient(900px 500px at 50% -120px, rgba(76,195,255,.13), transparent 70%), linear-gradient(var(--bg), var(--bg2)); padding:0 16px 56px; }
+  main { max-width:1120px; margin:0 auto; }
+  header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:22px 0 8px; flex-wrap:wrap; }
+  .merk { display:flex; align-items:center; gap:12px; }
+  .kern { width:34px; height:34px; border-radius:50%; border:2px solid var(--accent); box-shadow:0 0 18px rgba(76,195,255,.45), inset 0 0 10px rgba(76,195,255,.35); position:relative; flex:none; }
+  .kern::after { content:""; position:absolute; inset:9px; border-radius:50%; background:var(--accent); opacity:.85; }
+  h1 { font-size:22px; letter-spacing:.14em; text-transform:uppercase; margin:0; font-weight:600; }
+  .onder { color:var(--gedempt); font-size:14px; margin:2px 0 0; }
+  #status { color:var(--gedempt); font-size:13px; display:flex; align-items:center; gap:8px; }
+  #status::before { content:""; width:8px; height:8px; border-radius:50%; background:var(--goed); box-shadow:0 0 8px var(--goed); }
+  h2 { font-size:12.5px; margin:0 0 12px; text-transform:uppercase; letter-spacing:.14em; color:var(--gedempt); font-weight:600; display:flex; align-items:center; gap:8px; }
+  .tel { background:var(--kaart2); border:1px solid var(--lijn); color:var(--tekst); border-radius:99px; padding:0 8px; font-size:12px; letter-spacing:0; }
+  .invoer { margin:18px 0 26px; padding:20px; border-radius:16px; border:1px solid rgba(76,195,255,.35); background:linear-gradient(160deg, var(--kaart2), var(--kaart)); box-shadow:0 0 0 1px rgba(76,195,255,.05), 0 12px 40px rgba(0,0,0,.45), 0 0 40px rgba(76,195,255,.08); }
+  .invoer .rij { display:grid; grid-template-columns:1fr; gap:10px; }
+  @media (min-width:760px) { .invoer .rij { grid-template-columns:1fr 1fr; } .invoer .breed { grid-column:1 / -1; } }
+  .raster { display:grid; grid-template-columns:1fr; gap:22px; align-items:start; }
+  @media (min-width:900px) { .raster { grid-template-columns:1.25fr 1fr; } }
+  section { min-width:0; }
+  .kaart { background:var(--kaart); border:1px solid var(--lijn); border-radius:14px; padding:14px 16px; margin:0 0 10px; }
+  .kaart.lopend { border-left:3px solid var(--accent); } .kaart.vast { border-left:3px solid var(--fout); } .kaart.klaar { border-left:3px solid var(--goed); }
+  .kaart h3 { margin:0 0 6px; font-size:16px; font-weight:600; overflow-wrap:anywhere; } .klein { color:var(--gedempt); font-size:13px; overflow-wrap:anywhere; }
+  .kaart p { margin:8px 0 0; }
+  a { color:var(--accent); }
+  .badge { display:inline-block; font-size:11.5px; padding:2px 9px; border-radius:99px; border:1px solid var(--lijn); margin-left:8px; vertical-align:middle; letter-spacing:.03em; white-space:nowrap; }
   .KLAAR { color:var(--goed); border-color:var(--goed); } .MISLUKT { color:var(--fout); border-color:var(--fout); }
   .AKKOORD_NODIG, .BESLISSING_NODIG { color:var(--wacht); border-color:var(--wacht); }
-  button { font:inherit; padding:9px 14px; border-radius:9px; border:1px solid var(--lijn); background:var(--kaart); color:var(--tekst); cursor:pointer; margin:8px 8px 0 0; }
-  button.hoofd { background:var(--accent); border-color:var(--accent); color:#fff; } button:disabled { opacity:.5; }
-  input, textarea { font:inherit; width:100%; padding:9px 10px; border-radius:9px; border:1px solid var(--lijn); background:var(--kaart); color:var(--tekst); margin:6px 0; }
-  ul { margin:6px 0 6px 18px; padding:0; } .melding { padding:10px 12px; border-radius:9px; border:1px solid var(--fout); color:var(--fout); margin:10px 0; }
-  .leeg { color:var(--gedempt); padding:6px 0; }
+  .voortgang { display:flex; gap:4px; margin:10px 0 4px; }
+  .voortgang i { flex:1; height:5px; border-radius:3px; background:var(--lijn); }
+  .voortgang i.aan { background:linear-gradient(90deg, var(--accent2), var(--accent)); box-shadow:0 0 8px rgba(76,195,255,.4); }
+  .voortgang i.nu { animation:puls 1.6s ease-in-out infinite; }
+  @keyframes puls { 50% { opacity:.45; } }
+  @media (prefers-reduced-motion: reduce) { .voortgang i.nu { animation:none; } }
+  button { font:inherit; padding:10px 18px; border-radius:10px; border:1px solid var(--lijn); background:var(--kaart2); color:var(--tekst); cursor:pointer; margin:10px 8px 0 0; min-height:44px; }
+  button.hoofd { background:linear-gradient(135deg, var(--accent2), var(--accent)); border-color:transparent; color:#04101f; font-weight:600; }
+  button:disabled { opacity:.5; } button:focus-visible, input:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  input, textarea { font:inherit; width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--lijn); background:var(--bg); color:var(--tekst); margin:0; }
+  input::placeholder, textarea::placeholder { color:#5d6e88; }
+  .melding { padding:10px 12px; border-radius:10px; border:1px solid var(--fout); color:var(--fout); margin:10px 0; }
+  .leeg { color:var(--gedempt); padding:14px; border:1px dashed var(--lijn); border-radius:14px; text-align:center; margin-bottom:10px; }
+  .inlog { max-width:420px; margin:12vh auto 0; }
+  .inlog input { margin:6px 0; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Jarvis</h1>
-  <div id="status" class="klein">laden…</div>
+  <header>
+    <div class="merk"><div class="kern" aria-hidden="true"></div><div><h1>Jarvis</h1><div class="onder">Jij bepaalt wat, Jarvis bepaalt hoe.</div></div></div>
+    <div id="status">laden…</div>
+  </header>
   <div id="melding"></div>
   <div id="inhoud"></div>
 </main>
@@ -45,10 +76,18 @@
   const LABEL = { open: "nieuw", bezig: "Jarvis bouwt", review: "in review", samengevoegd: "wordt uitgerold", klaar: "klaar", vast: "vastgelopen" };
   const KLEUR = { klaar: "KLAAR", vast: "MISLUKT" };
 
+  const STAPPEN = ["open", "bezig", "review", "samengevoegd", "klaar"];
+  const stappen = (status) => {
+    const nu = STAPPEN.indexOf(status);
+    return `<div class="voortgang" aria-hidden="true">${STAPPEN.map((_, i) => `<i class="${i <= nu ? "aan" : ""}${i === nu && status !== "klaar" ? " nu" : ""}"></i>`).join("")}</div>`;
+  };
+
   function kaartDoel(d) {
     const pr = d.pr && typeof d.pr.repo === "string" && Number.isInteger(d.pr.nummer) ? ` · <a href="https://github.com/${esc(d.pr.repo)}/pull/${esc(d.pr.nummer)}">${esc(d.pr.repo.split("/")[1])} #${esc(d.pr.nummer)}</a>` : "";
-    return `<div class="kaart"><h3>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
+    const soort = d.status === "klaar" ? "klaar" : d.status === "vast" ? "vast" : "lopend";
+    return `<div class="kaart ${esc(soort)}"><h3>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
       <div class="klein">${esc(d.id)} · bijgewerkt ${esc(new Date(d.bijgewerkt).toLocaleString("nl-NL"))}${pr}</div>
+      ${(soort === "lopend" ? stappen(d.status) : "")}
       ${d.uitkomst ? `<p class="klein">${esc(d.uitkomst)}</p>` : ""}</div>`;
   }
 
@@ -62,18 +101,21 @@
     const klaar = doelen.data.filter((d) => d.status === "klaar");
     $("status").textContent = `bijgewerkt ${new Date().toLocaleTimeString("nl-NL")} · ${lopend.length} lopend`;
     $("inhoud").innerHTML = `
-      <h2>Nieuw doel</h2>
-      <div class="kaart"><input id="nt" placeholder="Titel"><textarea id="no" rows="4" placeholder="Wat wil je dat Jarvis bereikt?"></textarea>
-        <input id="nu" placeholder="Waar het te zien is (https://…), optioneel"><button class="hoofd" id="nv">Geef doel</button></div>
-      <h2>Lopend</h2>${lopend.length ? lopend.map(kaartDoel).join("") : '<div class="leeg">Geen lopende doelen.</div>'}
-      ${vast.length ? `<h2>Vastgelopen</h2>${vast.map(kaartDoel).join("")}` : ""}
-      <h2>Klaar</h2>${klaar.length ? klaar.map(kaartDoel).join("") : '<div class="leeg">Nog niets afgerond.</div>'}`;
+      <div class="invoer"><h2>Nieuw doel</h2>
+        <div class="rij"><input id="nt" placeholder="Titel" aria-label="Titel"><input id="nu" placeholder="Waar het te zien is (https://…), optioneel" aria-label="Waar het te zien is, optioneel">
+          <textarea class="breed" id="no" rows="4" placeholder="Wat wil je dat Jarvis bereikt?" aria-label="Opdracht"></textarea></div>
+        <button class="hoofd" id="nv">Geef doel</button></div>
+      <div class="raster">
+        <section><h2>Lopend <span class="tel">${lopend.length}</span></h2>${lopend.length ? lopend.map(kaartDoel).join("") : '<div class="leeg">Geen lopende doelen.</div>'}
+          ${vast.length ? `<h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${vast.map(kaartDoel).join("")}` : ""}</section>
+        <section><h2>Klaar <span class="tel">${klaar.length}</span></h2>${klaar.length ? klaar.map(kaartDoel).join("") : '<div class="leeg">Nog niets afgerond.</div>'}</section>
+      </div>`;
     $("nv").onclick = () => zeg(async () => { await rpc("doel_nieuw", { p_titel: $("nt").value, p_opdracht: $("no").value, p_acceptatie_url: $("nu").value || null }); });
   }
 
   function login(melding_) {
     $("status").textContent = "inloggen";
-    $("inhoud").innerHTML = `<div class="kaart"><p>Log in; alleen de eigenaar ziet iets.</p>${melding_ ? `<div class="melding">${esc(melding_)}</div>` : ""}
+    $("inhoud").innerHTML = `<div class="kaart inlog"><p>Log in; alleen de eigenaar ziet iets.</p>${melding_ ? `<div class="melding">${esc(melding_)}</div>` : ""}
       <form id="lf"><input name="e" type="email" placeholder="e-mail" autocomplete="username" required><input name="w" type="password" placeholder="wachtwoord" autocomplete="current-password" required><button class="hoofd" type="submit">Inloggen</button></form></div>`;
     $("lf").onsubmit = async (ev) => {
       ev.preventDefault();
