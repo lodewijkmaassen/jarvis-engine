@@ -2,7 +2,7 @@
 // schil bij de hand als het netwerk even wegvalt. Gegevens komen nooit uit deze
 // cache: alles naar Supabase (andere herkomst) gaat gewoon door.
 const CACHE = "jarvis-v3-schil-v1";
-const SCHIL = ["/v3/", "/v3/manifest.webmanifest", "/icon-192.png", "/icon-512.png", "/icon-maskable-512.png"];
+const SCHIL = ["/v3/", "/v3/manifest.webmanifest", "/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SCHIL)).then(() => self.skipWaiting()));

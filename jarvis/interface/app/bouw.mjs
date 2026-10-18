@@ -112,7 +112,7 @@ writeFileSync(path.join(doel, "v3", "index.html"), v3Pagina, "utf8");
 // De V3-app is zelfstandig installeerbaar: eigen manifest (start_url en scope /v3/) en eigen service worker.
 copyFileSync(path.join(hier, "manifest-v3.webmanifest"), path.join(doel, "v3", "manifest.webmanifest"));
 copyFileSync(path.join(hier, "sw-v3.js"), path.join(doel, "v3", "sw.js"));
-for (const naam of ["manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "icon-maskable-512.png", "vercel.json"]) {
+for (const naam of ["manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "vercel.json"]) {
   if (path.resolve(hier) !== doel) copyFileSync(path.join(hier, naam), path.join(doel, naam));
 }
 console.log(`app gebouwd in ${doel}`);
