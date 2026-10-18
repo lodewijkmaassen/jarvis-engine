@@ -51,6 +51,16 @@
   .leeg { color:var(--gedempt); padding:14px; border:1px dashed var(--lijn); border-radius:14px; text-align:center; margin-bottom:10px; }
   .inlog { max-width:420px; margin:12vh auto 0; }
   .inlog input { margin:6px 0; }
+  nav { display:flex; gap:6px; margin:6px 0 0; border-bottom:1px solid var(--lijn); }
+  nav a { padding:10px 16px; color:var(--gedempt); text-decoration:none; border-bottom:2px solid transparent; min-height:44px; display:flex; align-items:center; letter-spacing:.06em; text-transform:uppercase; font-size:13px; }
+  nav a[aria-current="page"] { color:var(--tekst); border-bottom-color:var(--accent); }
+  .projecten { display:grid; grid-template-columns:1fr; gap:12px; margin-bottom:14px; }
+  @media (min-width:760px) { .projecten { grid-template-columns:1fr 1fr; } }
+  a.projectkaart { display:block; text-decoration:none; color:inherit; background:var(--kaart); border:1px solid var(--lijn); border-left:3px solid var(--accent); border-radius:14px; padding:16px; }
+  a.projectkaart:hover, a.projectkaart:focus-visible { border-color:var(--accent); }
+  a.projectkaart h3 { margin:0 0 6px; font-size:18px; }
+  .terug { display:inline-block; margin:14px 0 4px; font-size:14px; }
+  .telrij { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 </style>
 </head>
 <body>
@@ -59,6 +69,7 @@
     <div class="merk"><div class="kern" aria-hidden="true"></div><div><h1>Jarvis</h1><div class="onder">Jij bepaalt wat, Jarvis bepaalt hoe.</div></div></div>
     <div id="status">laden…</div>
   </header>
+  <nav aria-label="Hoofdnavigatie"><a href="#/" id="nav-cc">Command Center</a><a href="#/projecten" id="nav-pr">Projecten</a></nav>
   <div id="melding"></div>
   <div id="inhoud"></div>
 </main>
@@ -82,6 +93,14 @@
     return `<div class="voortgang" aria-hidden="true">${STAPPEN.map((_, i) => `<i class="${i <= nu ? "aan" : ""}${i === nu && status !== "klaar" ? " nu" : ""}"></i>`).join("")}</div>`;
   };
 
+  // Een project is een vaste plek; zijn doelen zijn gewone doelen waarvan de opdracht begint met "Project: <sleutel>".
+  const PROJECTEN = [
+    { sleutel: "kasboek", naam: "Kasboek", omschrijving: "Het bestaande Kasboek-project: kasstromen en saldo, met eigen repository en omgeving.", repo: "lodewijkmaassen/kasboek" },
+  ];
+  const projectVan = (d) => { const m = /^Project:\s*([a-z0-9-]+)\s*(\n|$)/i.exec(String(d.opdracht ?? "")); return m ? m[1].toLowerCase() : null; };
+  const zonderLabel = (t) => String(t ?? "").replace(/^Project:[^\n]*\n+/i, "");
+  let alleDoelen = [];
+
   function kaartDoel(d) {
     const pr = d.pr && typeof d.pr.repo === "string" && Number.isInteger(d.pr.nummer) ? ` · <a href="https://github.com/${esc(d.pr.repo)}/pull/${esc(d.pr.nummer)}">${esc(d.pr.repo.split("/")[1])} #${esc(d.pr.nummer)}</a>` : "";
     const soort = d.status === "klaar" ? "klaar" : d.status === "vast" ? "vast" : "lopend";
@@ -96,21 +115,81 @@
     if (auto === true && document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
     const doelen = await client.from("doelen").select("*").order("aangemaakt", { ascending: false });
     if (doelen.error) { melding(`Niet te lezen: ${doelen.error.message}`); return; }
-    const lopend = doelen.data.filter((d) => !["klaar", "vast"].includes(d.status));
-    const vast = doelen.data.filter((d) => d.status === "vast");
-    const klaar = doelen.data.filter((d) => d.status === "klaar");
+    alleDoelen = doelen.data;
+    const lopend = alleDoelen.filter((d) => !["klaar", "vast"].includes(d.status));
     $("status").textContent = `bijgewerkt ${new Date().toLocaleTimeString("nl-NL")} · ${lopend.length} lopend`;
-    $("inhoud").innerHTML = `
-      <div class="invoer"><h2>Nieuw doel</h2>
+    teken();
+  }
+
+  const lijst = (arr, leeg) => (arr.length ? arr.map(kaartDoel).join("") : `<div class="leeg">${esc(leeg)}</div>`);
+  const splits = (doelen) => ({
+    lopend: doelen.filter((d) => !["klaar", "vast"].includes(d.status)),
+    vast: doelen.filter((d) => d.status === "vast"),
+    klaar: doelen.filter((d) => d.status === "klaar"),
+  });
+
+  function invoerBlok(project) {
+    return `<div class="invoer"><h2>${project ? `Nieuw doel voor ${esc(project.naam)}` : "Nieuw doel"}</h2>
         <div class="rij"><input id="nt" placeholder="Titel" aria-label="Titel"><input id="nu" placeholder="Waar het te zien is (https://…), optioneel" aria-label="Waar het te zien is, optioneel">
           <textarea class="breed" id="no" rows="4" placeholder="Wat wil je dat Jarvis bereikt?" aria-label="Opdracht"></textarea></div>
-        <button class="hoofd" id="nv">Geef doel</button></div>
+        <button class="hoofd" id="nv">Geef doel</button></div>`;
+  }
+
+  function koppelInvoer(project) {
+    $("nv").onclick = () => zeg(async () => {
+      const opdracht = project ? "Project: " + project.sleutel + "\n\n" + $("no").value : $("no").value;
+      await rpc("doel_nieuw", { p_titel: $("nt").value, p_opdracht: opdracht, p_acceptatie_url: $("nu").value || null });
+    });
+  }
+
+  function weergaveCommandCenter() {
+    const { lopend, vast, klaar } = splits(alleDoelen.filter((d) => !projectVan(d)));
+    const aantalProjecten = PROJECTEN.length;
+    $("inhoud").innerHTML = `${invoerBlok(null)}
       <div class="raster">
-        <section><h2>Lopend <span class="tel">${lopend.length}</span></h2>${lopend.length ? lopend.map(kaartDoel).join("") : '<div class="leeg">Geen lopende doelen.</div>'}
+        <section><h2>Lopend <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Geen lopende doelen.")}
           ${vast.length ? `<h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${vast.map(kaartDoel).join("")}` : ""}</section>
-        <section><h2>Klaar <span class="tel">${klaar.length}</span></h2>${klaar.length ? klaar.map(kaartDoel).join("") : '<div class="leeg">Nog niets afgerond.</div>'}</section>
+        <section><h2>Klaar <span class="tel">${klaar.length}</span></h2>${lijst(klaar, "Nog niets afgerond.")}
+          <h2 style="margin-top:22px">Projecten <span class="tel">${aantalProjecten}</span></h2>
+          <a class="projectkaart" href="#/projecten">Alle projecten bekijken</a></section>
       </div>`;
-    $("nv").onclick = () => zeg(async () => { await rpc("doel_nieuw", { p_titel: $("nt").value, p_opdracht: $("no").value, p_acceptatie_url: $("nu").value || null }); });
+    koppelInvoer(null);
+  }
+
+  function weergaveProjecten() {
+    $("inhoud").innerHTML = `<h2 style="margin-top:18px">Projecten <span class="tel">${PROJECTEN.length}</span></h2>
+      <div class="projecten">${PROJECTEN.map((p) => {
+        const t = splits(alleDoelen.filter((d) => projectVan(d) === p.sleutel));
+        return `<a class="projectkaart" href="#/projecten/${esc(p.sleutel)}"><h3>${esc(p.naam)}</h3><div class="klein">${esc(p.omschrijving)}</div>
+          <div class="telrij"><span class="badge">${t.lopend.length} lopend</span><span class="badge ${t.vast.length ? "MISLUKT" : ""}">${t.vast.length} vastgelopen</span><span class="badge KLAAR">${t.klaar.length} klaar</span></div></a>`;
+      }).join("")}</div>`;
+  }
+
+  function weergaveProject(p) {
+    const { lopend, vast, klaar } = splits(alleDoelen.filter((d) => projectVan(d) === p.sleutel));
+    const status = vast.length ? "Aandacht nodig: er is vastgelopen werk." : lopend.length ? "In ontwikkeling." : "Rustig: er loopt nu niets.";
+    const recent = klaar.slice(0, 3);
+    $("inhoud").innerHTML = `<a class="terug" href="#/projecten">← Projecten</a>
+      <div class="kaart"><h3 style="font-size:22px">${esc(p.naam)}</h3><div class="klein">${esc(p.omschrijving)}</div>
+        <p><span class="badge ${vast.length ? "MISLUKT" : "KLAAR"}">${esc(status)}</span></p>
+        <p class="klein">Repository: <a href="https://github.com/${esc(p.repo)}">${esc(p.repo)}</a></p></div>
+      ${invoerBlok(p)}
+      <div class="raster">
+        <section><h2>Nu in ontwikkeling <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Niets in ontwikkeling.")}
+          <h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${lijst(vast, "Niets vastgelopen.")}</section>
+        <section><h2>Recent afgerond <span class="tel">${recent.length}</span></h2>${lijst(recent, "Nog niets afgerond.")}
+          <h2 style="margin-top:22px">Historie <span class="tel">${klaar.length}</span></h2>${lijst(klaar.slice(3), "Geen oudere doelen.")}</section>
+      </div>`;
+    koppelInvoer(p);
+  }
+
+  function teken() {
+    const route = location.hash.replace(/^#\/?/, "");
+    const [deel, sleutel] = route.split("/");
+    $("nav-cc").removeAttribute("aria-current"); $("nav-pr").removeAttribute("aria-current");
+    const project = deel === "projecten" ? PROJECTEN.find((p) => p.sleutel === sleutel) : null;
+    $("nav-" + (deel === "projecten" ? "pr" : "cc")).setAttribute("aria-current", "page");
+    if (project) weergaveProject(project); else if (deel === "projecten") weergaveProjecten(); else weergaveCommandCenter();
   }
 
   function login(melding_) {
@@ -133,6 +212,7 @@
     const { data: { session } } = await client.auth.getSession();
     if (!session) { login(""); await new Promise((ok) => client.auth.onAuthStateChange((_e, s) => { if (s) ok(); })); }
     client.auth.onAuthStateChange((_e, s) => { if (!s) location.reload(); });
+    window.addEventListener("hashchange", teken);
     await laad();
     setInterval(() => laad(true), 15000);
   }
