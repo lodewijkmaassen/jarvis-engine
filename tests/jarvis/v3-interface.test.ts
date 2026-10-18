@@ -14,6 +14,13 @@ describe("de V3-weergave", () => {
     const rpcs = new Set([...HTML.matchAll(/rpc\("([a-z0-9_]+)"/g)].map((m) => m[1]));
     expect(rpcs).toEqual(new Set(["doel_nieuw"]));
   });
+  it("heeft Projecten als hoofdonderdeel, met Kasboek als eerste project en projectdoelen via de opdrachtregel", () => {
+    expect(HTML).toContain('href="#/projecten"');
+    expect(HTML).toContain('sleutel: "kasboek"');
+    expect(HTML).toContain("Project: ");
+    // Projectdoelen blijven uit het algemene Command Center.
+    expect(HTML).toContain("filter((d) => !projectVan(d))");
+  });
   it("raakt geen V2-document, -tabel of -afleiding", () => {
     for (const verboden of ["documenten", "overzicht/huidig", "regie", "autorisaties", "antwoorden", "berichten"]) {
       expect(HTML, verboden).not.toContain(verboden);
