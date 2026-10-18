@@ -172,10 +172,18 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
   const doelen = await leesDoelen(sql);
   const lopend = doelen.filter((d) => d.status === "bezig" || d.status === "review");
   if (lopend.length === 0) return 0;
+  let code = 0;
   for (const slug of alle) {
-    const gesloten = await leesAllePaginas<{ number: number; merged_at: string | null; merge_commit_sha: string | null; body: string | null; user: { login: string }; head: { sha: string }; base: { ref: string } }>(
-      token, `/repos/${slug}/pulls?state=closed&sort=updated&direction=desc`, 1);
-    if (typeof gesloten === "string") continue;
+    // Alleen de recentst bijgewerkte gesloten pull requests: één expliciete pagina. Eerder via leesAllePaginas
+    // met een plafond van één pagina; bij meer dan 100 gesloten PR's gaf dat een foutmelding terug die hier
+    // stil werd overgeslagen, zodat geen enkel doel ooit op samengevoegd kwam (proef fase 3, #286, 2026-10-18).
+    const antwoord = await github(token, "GET", `/repos/${slug}/pulls?state=closed&sort=updated&direction=desc&per_page=50`);
+    if (antwoord.status !== 200 || !Array.isArray(antwoord.lading)) {
+      console.error(`jarvis doel: gesloten pull requests van ${slug} niet te lezen (${foutTekst(antwoord)})`);
+      code = 1;
+      continue;
+    }
+    const gesloten = antwoord.lading as { number: number; merged_at: string | null; merge_commit_sha: string | null; body: string | null; user: { login: string }; head: { sha: string }; base: { ref: string } }[];
     for (const p of gesloten) {
       if (p.merged_at === null || p.merge_commit_sha === null || p.base.ref !== "main" || p.user.login.toLowerCase() !== bot.toLowerCase()) continue;
       const d = lopend.find((x) => x.id === doelUitPrTekst(p.body ?? ""));
@@ -194,7 +202,7 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
       console.log(`jarvis doel: ${d.id} samengevoegd via ${slug}#${p.number} (${p.merge_commit_sha.slice(0, 7)})`);
     }
   }
-  return 0;
+  return code;
 }
 
 /** Staat `kandidaat` op of na `basis`? Via de compare-API; bij twijfel nee. */
