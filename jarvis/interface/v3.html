@@ -4,6 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex">
+<meta name="theme-color" content="#070b12">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Jarvis">
+<link rel="manifest" href="/v3/manifest.webmanifest">
+<link rel="icon" href="/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>Jarvis</title>
 <style>
   :root { color-scheme:dark; --bg:#070b12; --bg2:#0c1320; --kaart:#101a2a; --kaart2:#142136; --tekst:#e6edf7; --gedempt:#8a9bb4; --lijn:#1f2d44; --accent:#4cc3ff; --accent2:#2b7bff; --goed:#3ddc97; --fout:#ff6b6b; --wacht:#f2c14e; }
@@ -216,6 +223,7 @@
     await laad();
     setInterval(() => laad(true), 15000);
   }
+  if ("serviceWorker" in navigator) navigator.serviceWorker.register("/v3/sw.js", { scope: "/v3/" }).catch(() => {});
   start();
 })();
 </script>

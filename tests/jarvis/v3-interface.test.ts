@@ -49,4 +49,19 @@ describe("de V3-weergave", () => {
     expect(existsSync(path.join(doel, "config.js"))).toBe(true);
     expect(existsSync(path.join(doel, "index.html"))).toBe(true); // V2-weergave intact
   });
+  it("is installeerbaar als PWA: eigen manifest op /v3/, service worker, iconen en koppelingen in de pagina", () => {
+    const doel = mkdtempSync(path.join(tmpdir(), "jarvis-v3-pwa-"));
+    const r = spawnSync("node", [BOUW, doel, "--url", "https://x.invalid", "--sleutel", "sb_publishable_x", "--merk", "deadbeef"], { encoding: "utf8" });
+    expect(r.status).toBe(0);
+    const manifest = JSON.parse(readFileSync(path.join(doel, "v3", "manifest.webmanifest"), "utf8"));
+    expect(manifest.display).toBe("standalone");
+    expect(manifest.start_url).toBe("/v3/");
+    expect(manifest.scope).toBe("/v3/");
+    const maten = manifest.icons.map((i: { sizes: string; purpose: string }) => `${i.sizes}/${i.purpose}`);
+    expect(maten).toEqual(expect.arrayContaining(["192x192/any", "512x512/any", "512x512/maskable"]));
+    for (const i of manifest.icons) expect(existsSync(path.join(doel, i.src.replace(/^\//, "")))).toBe(true);
+    expect(existsSync(path.join(doel, "v3", "sw.js"))).toBe(true);
+    expect(HTML).toContain('<link rel="manifest" href="/v3/manifest.webmanifest">');
+    expect(HTML).toContain('navigator.serviceWorker.register("/v3/sw.js", { scope: "/v3/" })');
+  });
 });
