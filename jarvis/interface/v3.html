@@ -68,6 +68,8 @@
   a.projectkaart h3 { margin:0 0 6px; font-size:18px; }
   .terug { display:inline-block; margin:14px 0 4px; font-size:14px; }
   .telrij { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  .acties { margin-top:12px; padding-top:12px; border-top:1px solid var(--lijn); }
+  .kaart.gesloten { opacity:.75; }
 </style>
 </head>
 <body>
@@ -91,7 +93,7 @@
   const zeg = async (f) => { try { melding(""); await f(); await laad(); } catch (e) { melding(e.message ?? String(e)); } };
   const rpc = async (naam, args) => { const { data, error } = await client.rpc(naam, args); if (error) throw error; return data; };
 
-  const LABEL = { open: "nieuw", bezig: "Jarvis bouwt", review: "in review", samengevoegd: "wordt uitgerold", klaar: "klaar", vast: "vastgelopen" };
+  const LABEL = { open: "nieuw", bezig: "Jarvis bouwt", review: "in review", samengevoegd: "wordt uitgerold", klaar: "klaar", vast: "vastgelopen", gesloten: "gesloten" };
   const KLEUR = { klaar: "KLAAR", vast: "MISLUKT" };
 
   const STAPPEN = ["open", "bezig", "review", "samengevoegd", "klaar"];
@@ -120,14 +122,24 @@
   const doelenVanPlek = (plek) => alleDoelen.filter((d) => projectVan(d) === plek);
   const zonderLabel = (t) => String(t ?? "").replace(/^Project:[^\n]*\n+/i, "");
   let alleDoelen = [];
+  // Wat de eigenaar bij een vastgelopen doel al typte, per doel; een verversing op de klok tekent de kaart opnieuw.
+  const concepten = {};
+
+  // Bij een vastgelopen doel: reageren (het doel gaat terug naar Jarvis) of sluiten (het verdwijnt uit Vastgelopen).
+  function vastActies(d) {
+    return `<div class="acties" data-id="${esc(d.id)}">
+        <textarea rows="3" data-concept="${esc(d.id)}" placeholder="Aanvullende informatie of instructie voor Jarvis" aria-label="Reactie op ${esc(d.titel)}">${esc(concepten[d.id] ?? "")}</textarea>
+        <button class="hoofd" data-actie="reageer">Reageer en hervat</button><button data-actie="sluit">Sluiten</button></div>`;
+  }
 
   function kaartDoel(d) {
     const pr = d.pr && typeof d.pr.repo === "string" && Number.isInteger(d.pr.nummer) ? ` · <a href="https://github.com/${esc(d.pr.repo)}/pull/${esc(d.pr.nummer)}">${esc(d.pr.repo.split("/")[1])} #${esc(d.pr.nummer)}</a>` : "";
-    const soort = d.status === "klaar" ? "klaar" : d.status === "vast" ? "vast" : "lopend";
+    const soort = ["klaar", "vast", "gesloten"].includes(d.status) ? d.status : "lopend";
     return `<div class="kaart ${esc(soort)}"><h3>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
       <div class="klein">${esc(d.id)} · bijgewerkt ${esc(new Date(d.bijgewerkt).toLocaleString("nl-NL"))}${pr}</div>
       ${(soort === "lopend" ? stappen(d.status) : "")}
-      ${d.uitkomst ? `<p class="klein">${esc(d.uitkomst)}</p>` : ""}</div>`;
+      ${d.uitkomst ? `<p class="klein">${esc(d.uitkomst)}</p>` : ""}
+      ${(d.status === "vast" ? vastActies(d) : "")}</div>`;
   }
 
   async function laad(auto) {
@@ -136,17 +148,20 @@
     const doelen = await client.from("doelen").select("*").order("aangemaakt", { ascending: false });
     if (doelen.error) { melding(`Niet te lezen: ${doelen.error.message}`); return; }
     alleDoelen = doelen.data;
-    const lopend = alleDoelen.filter((d) => !["klaar", "vast"].includes(d.status));
+    const lopend = splits(alleDoelen).lopend;
     $("status").textContent = `bijgewerkt ${new Date().toLocaleTimeString("nl-NL")} · ${lopend.length} lopend`;
     teken();
   }
 
   const lijst = (arr, leeg) => (arr.length ? arr.map(kaartDoel).join("") : `<div class="leeg">${esc(leeg)}</div>`);
+  // Een gesloten doel is af voor de eigenaar zonder dat het bereikt is: niet lopend, niet vastgelopen, niet klaar.
   const splits = (doelen) => ({
-    lopend: doelen.filter((d) => !["klaar", "vast"].includes(d.status)),
+    lopend: doelen.filter((d) => !["klaar", "vast", "gesloten"].includes(d.status)),
     vast: doelen.filter((d) => d.status === "vast"),
     klaar: doelen.filter((d) => d.status === "klaar"),
+    gesloten: doelen.filter((d) => d.status === "gesloten"),
   });
+  const geslotenBlok = (gesloten) => (gesloten.length ? `<h2 style="margin-top:22px">Gesloten <span class="tel">${gesloten.length}</span></h2>${lijst(gesloten, "")}` : "");
 
   // plek = { naam, label } voor een project of subproject; null in het Command Center.
   function invoerBlok(plek) {
@@ -164,13 +179,14 @@
   }
 
   function weergaveCommandCenter() {
-    const { lopend, vast, klaar } = splits(alleDoelen.filter((d) => !projectVan(d)));
+    const { lopend, vast, klaar, gesloten } = splits(alleDoelen.filter((d) => !projectVan(d)));
     const aantalProjecten = PROJECTEN.length;
     $("inhoud").innerHTML = `${invoerBlok(null)}
       <div class="raster">
         <section><h2>Lopend <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Geen lopende doelen.")}
           ${vast.length ? `<h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${vast.map(kaartDoel).join("")}` : ""}</section>
         <section><h2>Klaar <span class="tel">${klaar.length}</span></h2>${lijst(klaar, "Nog niets afgerond.")}
+          ${geslotenBlok(gesloten)}
           <h2 style="margin-top:22px">Projecten <span class="tel">${aantalProjecten}</span></h2>
           <a class="projectkaart" href="#/projecten">Alle projecten bekijken</a></section>
       </div>`;
@@ -192,7 +208,7 @@
 
   // Projectpagina en subprojectpagina hebben dezelfde opbouw; alleen de doelen en de terugweg verschillen.
   function weergavePlek({ terug, terugLabel, naam, omschrijving, repo, extra, doelen, plek }) {
-    const { lopend, vast, klaar } = splits(doelen);
+    const { lopend, vast, klaar, gesloten } = splits(doelen);
     const status = vast.length ? "Aandacht nodig: er is vastgelopen werk." : lopend.length ? "In ontwikkeling." : "Rustig: er loopt nu niets.";
     const recent = klaar.slice(0, 3);
     $("inhoud").innerHTML = `<a class="terug" href="${esc(terug)}">← ${esc(terugLabel)}</a>
@@ -205,7 +221,8 @@
         <section><h2>Nu in ontwikkeling <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Niets in ontwikkeling.")}
           <h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${lijst(vast, "Niets vastgelopen.")}</section>
         <section><h2>Recent afgerond <span class="tel">${recent.length}</span></h2>${lijst(recent, "Nog niets afgerond.")}
-          <h2 style="margin-top:22px">Historie <span class="tel">${klaar.length}</span></h2>${lijst(klaar.slice(3), "Geen oudere doelen.")}</section>
+          <h2 style="margin-top:22px">Historie <span class="tel">${klaar.length}</span></h2>${lijst(klaar.slice(3), "Geen oudere doelen.")}
+          ${geslotenBlok(gesloten)}</section>
       </div>`;
     koppelInvoer(plek);
   }
@@ -238,6 +255,22 @@
     $("nav-" + (deel === "projecten" ? "pr" : "cc")).setAttribute("aria-current", "page");
     if (sub) weergaveSubproject(project, sub); else if (project) weergaveProject(project); else if (deel === "projecten") weergaveProjecten(); else weergaveCommandCenter();
   }
+
+  // Eén luisteraar voor de knoppen op alle vastgelopen kaarten, in elke weergave.
+  $("inhoud").addEventListener("input", (ev) => { const id = ev.target.dataset?.concept; if (id) concepten[id] = ev.target.value; });
+  $("inhoud").addEventListener("click", (ev) => {
+    const knop = ev.target.closest("button[data-actie]");
+    const blok = knop?.closest(".acties");
+    if (!blok) return;
+    const id = blok.dataset.id;
+    if (knop.dataset.actie === "reageer") {
+      const reactie = blok.querySelector("textarea").value.trim();
+      if (!reactie) { melding("Schrijf eerst je reactie; Jarvis pakt het doel daarmee weer op."); return; }
+      zeg(async () => { await rpc("doel_reageer", { p_id: id, p_reactie: reactie }); delete concepten[id]; });
+    } else if (knop.dataset.actie === "sluit" && confirm("Dit doel sluiten? Jarvis werkt er niet meer aan en het verdwijnt uit Vastgelopen.")) {
+      zeg(async () => { await rpc("doel_sluit", { p_id: id }); delete concepten[id]; });
+    }
+  });
 
   function login(melding_) {
     $("status").textContent = "inloggen";

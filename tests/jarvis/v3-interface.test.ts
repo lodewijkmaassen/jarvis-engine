@@ -8,11 +8,39 @@ const BOUW = path.join(process.cwd(), "jarvis/interface/app/bouw.mjs");
 const HTML = readFileSync(path.join(process.cwd(), "jarvis/interface/v3.html"), "utf8");
 
 describe("de V3-weergave", () => {
-  it("leest uitsluitend de doelen en roept uitsluitend de eigenaarsfunctie doel_nieuw aan (T-20261017-jarvis-vereenvoudigen)", () => {
+  it("leest uitsluitend de doelen en roept uitsluitend de eigenaarsfuncties voor doelen aan (T-20261017-jarvis-vereenvoudigen, D-20261019-202736404)", () => {
     const views = [...HTML.matchAll(/from\("([a-z0-9_]+)"\)/g)].map((m) => m[1]);
     expect(new Set(views)).toEqual(new Set(["doelen"]));
     const rpcs = new Set([...HTML.matchAll(/rpc\("([a-z0-9_]+)"/g)].map((m) => m[1]));
-    expect(rpcs).toEqual(new Set(["doel_nieuw"]));
+    expect(rpcs).toEqual(new Set(["doel_nieuw", "doel_reageer", "doel_sluit"]));
+  });
+  it("geeft een vastgelopen doel een reactieveld, 'Reageer en hervat' en 'Sluiten' (D-20261019-202736404)", () => {
+    // Alleen een vastgelopen kaart krijgt de knoppen.
+    expect(HTML).toContain('${(d.status === "vast" ? vastActies(d) : "")}');
+    expect(HTML).toContain('data-actie="reageer">Reageer en hervat</button>');
+    expect(HTML).toContain('data-actie="sluit">Sluiten</button>');
+    expect(HTML).toContain('rpc("doel_reageer", { p_id: id, p_reactie: reactie })');
+    expect(HTML).toContain('rpc("doel_sluit", { p_id: id })');
+  });
+  it("telt een gesloten doel niet als lopend, vastgelopen of klaar (D-20261019-202736404)", () => {
+    const bron = /const splits = (\(doelen\) => \(\{[\s\S]*?\}\));/.exec(HTML)?.[1];
+    expect(bron).toBeTruthy();
+    const splits = new Function(`return ${bron};`)() as (d: { status: string }[]) => Record<string, { status: string }[]>;
+    const t = splits(["open", "bezig", "review", "samengevoegd", "klaar", "vast", "gesloten"].map((status) => ({ status })));
+    expect(t.lopend!.map((d) => d.status)).toEqual(["open", "bezig", "review", "samengevoegd"]);
+    expect(t.vast!.map((d) => d.status)).toEqual(["vast"]);
+    expect(t.klaar!.map((d) => d.status)).toEqual(["klaar"]);
+    expect(t.gesloten!.map((d) => d.status)).toEqual(["gesloten"]);
+  });
+  it("legt de databasekant vast in het dossier: status gesloten, doel_reageer, doel_sluit en een herstart (D-20261019-202736404)", () => {
+    const sql = readFileSync(path.join(process.cwd(), "tasks/D-20261019-202736404/0001_vast_reageren_sluiten.sql"), "utf8");
+    expect(sql).toContain("'vast', 'gesloten'");
+    for (const f of ["doel_reageer(p_id text, p_reactie text)", "doel_sluit(p_id text)"]) expect(sql).toContain(`create or replace function jarvis.${f}`);
+    // Beide alleen voor de eigenaar en alleen vanuit 'vast'.
+    expect(sql.match(/if not jarvis\.v3_is_eigenaar\(\)/g)).toHaveLength(2);
+    expect(sql.match(/if d\.status <> 'vast'/g)).toHaveLength(2);
+    expect(sql).toContain("when (old.status = 'vast' and new.status = 'open')");
+    expect(sql).toContain("execute function jarvis.doel_start()");
   });
   it("heeft Projecten als hoofdonderdeel, met Kasboek als eerste project en projectdoelen via de opdrachtregel", () => {
     expect(HTML).toContain('href="#/projecten"');
