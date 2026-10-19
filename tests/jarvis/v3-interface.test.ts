@@ -21,6 +21,31 @@ describe("de V3-weergave", () => {
     // Projectdoelen blijven uit het algemene Command Center.
     expect(HTML).toContain("filter((d) => !projectVan(d))");
   });
+  it("heeft ToVas Flow als project met de drie subprojecten van de eigenaar (D-20261019-151236935)", () => {
+    expect(HTML).toContain('sleutel: "tovas-flow", naam: "ToVas Flow"');
+    for (const [sleutel, naam] of [
+      ["gemiste-oproepen", "Gemiste oproepen"],
+      ["offerte-opvolging", "Offerte opvolging"],
+      ["reviews-verzamelen", "Reviews verzamelen"],
+    ]) {
+      expect(HTML).toContain(`sleutel: "${sleutel}", naam: "${naam}"`);
+    }
+    // Een subproject heeft een eigen pagina en een eigen invoer met het label <project>/<subproject>.
+    expect(HTML).toContain("weergaveSubproject(project, sub)");
+    expect(HTML).toContain('label: p.sleutel + "/" + sp.sleutel');
+  });
+  it("wijst een doel toe aan project of subproject via de eerste regel van de opdracht", () => {
+    const regel = /const projectVan = (\(d\) => \{.*?\});/.exec(HTML)?.[1];
+    expect(regel).toBeTruthy();
+    const projectVan = new Function(`return ${regel};`)() as (d: { opdracht: string }) => string | null;
+    expect(projectVan({ opdracht: "Project: kasboek\n\nIets" })).toBe("kasboek");
+    expect(projectVan({ opdracht: "Project: tovas-flow/offerte-opvolging\n\nIets" })).toBe("tovas-flow/offerte-opvolging");
+    expect(projectVan({ opdracht: "Project: tovas-flow\n\nIets" })).toBe("tovas-flow");
+    expect(projectVan({ opdracht: "Geen project" })).toBeNull();
+    expect(projectVan({ opdracht: "Project: a/b/c\n" })).toBeNull();
+    // Het projectoverzicht telt de doelen van de subprojecten mee.
+    expect(HTML).toContain('(plek ?? "").startsWith(p.sleutel + "/")');
+  });
   it("raakt geen V2-document, -tabel of -afleiding", () => {
     for (const verboden of ["documenten", "overzicht/huidig", "regie", "autorisaties", "antwoorden", "berichten"]) {
       expect(HTML, verboden).not.toContain(verboden);

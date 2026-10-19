@@ -101,10 +101,21 @@
   };
 
   // Een project is een vaste plek; zijn doelen zijn gewone doelen waarvan de opdracht begint met "Project: <sleutel>".
+  // Een project kan subprojecten hebben; een doel van een subproject begint met "Project: <project>/<subproject>".
   const PROJECTEN = [
     { sleutel: "kasboek", naam: "Kasboek", omschrijving: "Het bestaande Kasboek-project: kasstromen en saldo, met eigen repository en omgeving.", repo: "lodewijkmaassen/kasboek" },
+    { sleutel: "tovas-flow", naam: "ToVas Flow", omschrijving: "ToVas Flow: van gemiste oproep tot gekwalificeerde lead, offerte en review, met eigen repository en omgeving.", repo: "lodewijkmaassen/tovas-flow",
+      subprojecten: [
+        { sleutel: "gemiste-oproepen", naam: "Gemiste oproepen", omschrijving: "Een gemiste oproep wordt via WhatsApp en de AI-intake een gekwalificeerde lead." },
+        { sleutel: "offerte-opvolging", naam: "Offerte opvolging", omschrijving: "Verstuurde offertes bewaken en op het juiste moment opvolgen." },
+        { sleutel: "reviews-verzamelen", naam: "Reviews verzamelen", omschrijving: "Na een afgeronde klus om een review vragen." },
+      ] },
   ];
-  const projectVan = (d) => { const m = /^Project:\s*([a-z0-9-]+)\s*(\n|$)/i.exec(String(d.opdracht ?? "")); return m ? m[1].toLowerCase() : null; };
+  // Volledige plek van een doel: "kasboek", of "tovas-flow/offerte-opvolging" voor een subproject.
+  const projectVan = (d) => { const m = /^Project:\s*([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s*(\n|$)/i.exec(String(d.opdracht ?? "")); return m ? m[1].toLowerCase() : null; };
+  // Alle doelen van een project, inclusief die van zijn subprojecten.
+  const doelenVanProject = (p) => alleDoelen.filter((d) => { const plek = projectVan(d); return plek === p.sleutel || (plek ?? "").startsWith(p.sleutel + "/"); });
+  const doelenVanPlek = (plek) => alleDoelen.filter((d) => projectVan(d) === plek);
   const zonderLabel = (t) => String(t ?? "").replace(/^Project:[^\n]*\n+/i, "");
   let alleDoelen = [];
 
@@ -135,16 +146,17 @@
     klaar: doelen.filter((d) => d.status === "klaar"),
   });
 
-  function invoerBlok(project) {
-    return `<div class="invoer"><h2>${project ? `Nieuw doel voor ${esc(project.naam)}` : "Nieuw doel"}</h2>
+  // plek = { naam, label } voor een project of subproject; null in het Command Center.
+  function invoerBlok(plek) {
+    return `<div class="invoer"><h2>${plek ? `Nieuw doel voor ${esc(plek.naam)}` : "Nieuw doel"}</h2>
         <div class="rij"><input id="nt" placeholder="Titel" aria-label="Titel"><input id="nu" placeholder="Waar het te zien is (https://…), optioneel" aria-label="Waar het te zien is, optioneel">
           <textarea class="breed" id="no" rows="4" placeholder="Wat wil je dat Jarvis bereikt?" aria-label="Opdracht"></textarea></div>
         <button class="hoofd" id="nv">Geef doel</button></div>`;
   }
 
-  function koppelInvoer(project) {
+  function koppelInvoer(plek) {
     $("nv").onclick = () => zeg(async () => {
-      const opdracht = project ? "Project: " + project.sleutel + "\n\n" + $("no").value : $("no").value;
+      const opdracht = plek ? "Project: " + plek.label + "\n\n" + $("no").value : $("no").value;
       await rpc("doel_nieuw", { p_titel: $("nt").value, p_opdracht: opdracht, p_acceptatie_url: $("nu").value || null });
     });
   }
@@ -166,37 +178,61 @@
   function weergaveProjecten() {
     $("inhoud").innerHTML = `<h2 style="margin-top:18px">Projecten <span class="tel">${PROJECTEN.length}</span></h2>
       <div class="projecten">${PROJECTEN.map((p) => {
-        const t = splits(alleDoelen.filter((d) => projectVan(d) === p.sleutel));
+        const t = splits(doelenVanProject(p));
+        const subs = p.subprojecten ?? [];
         return `<a class="projectkaart" href="#/projecten/${esc(p.sleutel)}"><h3>${esc(p.naam)}</h3><div class="klein">${esc(p.omschrijving)}</div>
-          <div class="telrij"><span class="badge">${t.lopend.length} lopend</span><span class="badge ${t.vast.length ? "MISLUKT" : ""}">${t.vast.length} vastgelopen</span><span class="badge KLAAR">${t.klaar.length} klaar</span></div></a>`;
+          ${subs.length ? `<div class="klein">Subprojecten: ${subs.map((s) => esc(s.naam)).join(" · ")}</div>` : ""}
+          ${telrij(t)}</a>`;
       }).join("")}</div>`;
   }
 
-  function weergaveProject(p) {
-    const { lopend, vast, klaar } = splits(alleDoelen.filter((d) => projectVan(d) === p.sleutel));
+  const telrij = (t) => `<div class="telrij"><span class="badge">${t.lopend.length} lopend</span><span class="badge ${t.vast.length ? "MISLUKT" : ""}">${t.vast.length} vastgelopen</span><span class="badge KLAAR">${t.klaar.length} klaar</span></div>`;
+
+  // Projectpagina en subprojectpagina hebben dezelfde opbouw; alleen de doelen en de terugweg verschillen.
+  function weergavePlek({ terug, terugLabel, naam, omschrijving, repo, extra, doelen, plek }) {
+    const { lopend, vast, klaar } = splits(doelen);
     const status = vast.length ? "Aandacht nodig: er is vastgelopen werk." : lopend.length ? "In ontwikkeling." : "Rustig: er loopt nu niets.";
     const recent = klaar.slice(0, 3);
-    $("inhoud").innerHTML = `<a class="terug" href="#/projecten">← Projecten</a>
-      <div class="kaart"><h3 style="font-size:22px">${esc(p.naam)}</h3><div class="klein">${esc(p.omschrijving)}</div>
+    $("inhoud").innerHTML = `<a class="terug" href="${esc(terug)}">← ${esc(terugLabel)}</a>
+      <div class="kaart"><h3 style="font-size:22px">${esc(naam)}</h3><div class="klein">${esc(omschrijving)}</div>
         <p><span class="badge ${vast.length ? "MISLUKT" : "KLAAR"}">${esc(status)}</span></p>
-        <p class="klein">Repository: <a href="https://github.com/${esc(p.repo)}">${esc(p.repo)}</a></p></div>
-      ${invoerBlok(p)}
+        <p class="klein">Repository: <a href="https://github.com/${esc(repo)}">${esc(repo)}</a></p></div>
+      ${extra}
+      ${invoerBlok(plek)}
       <div class="raster">
         <section><h2>Nu in ontwikkeling <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Niets in ontwikkeling.")}
           <h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${lijst(vast, "Niets vastgelopen.")}</section>
         <section><h2>Recent afgerond <span class="tel">${recent.length}</span></h2>${lijst(recent, "Nog niets afgerond.")}
           <h2 style="margin-top:22px">Historie <span class="tel">${klaar.length}</span></h2>${lijst(klaar.slice(3), "Geen oudere doelen.")}</section>
       </div>`;
-    koppelInvoer(p);
+    koppelInvoer(plek);
+  }
+
+  function weergaveProject(p) {
+    const subs = p.subprojecten ?? [];
+    const extra = subs.length
+      ? `<h2 style="margin-top:18px">Subprojecten <span class="tel">${subs.length}</span></h2>
+        <div class="projecten">${subs.map((sp) => `<a class="projectkaart" href="#/projecten/${esc(p.sleutel)}/${esc(sp.sleutel)}"><h3>${esc(sp.naam)}</h3><div class="klein">${esc(sp.omschrijving)}</div>
+          ${telrij(splits(doelenVanPlek(p.sleutel + "/" + sp.sleutel)))}</a>`).join("")}</div>`
+      : "";
+    // Op de projectpagina staan alle doelen van het project, ook die van zijn subprojecten.
+    weergavePlek({ terug: "#/projecten", terugLabel: "Projecten", naam: p.naam, omschrijving: p.omschrijving, repo: p.repo, extra,
+      doelen: doelenVanProject(p), plek: { naam: p.naam, label: p.sleutel } });
+  }
+
+  function weergaveSubproject(p, sp) {
+    weergavePlek({ terug: "#/projecten/" + p.sleutel, terugLabel: p.naam, naam: `${p.naam} · ${sp.naam}`, omschrijving: sp.omschrijving, repo: p.repo, extra: "",
+      doelen: doelenVanPlek(p.sleutel + "/" + sp.sleutel), plek: { naam: sp.naam, label: p.sleutel + "/" + sp.sleutel } });
   }
 
   function teken() {
     const route = location.hash.replace(/^#\/?/, "");
-    const [deel, sleutel] = route.split("/");
+    const [deel, sleutel, subsleutel] = route.split("/");
     $("nav-cc").removeAttribute("aria-current"); $("nav-pr").removeAttribute("aria-current");
     const project = deel === "projecten" ? PROJECTEN.find((p) => p.sleutel === sleutel) : null;
+    const sub = project && subsleutel ? (project.subprojecten ?? []).find((sp) => sp.sleutel === subsleutel) : null;
     $("nav-" + (deel === "projecten" ? "pr" : "cc")).setAttribute("aria-current", "page");
-    if (project) weergaveProject(project); else if (deel === "projecten") weergaveProjecten(); else weergaveCommandCenter();
+    if (sub) weergaveSubproject(project, sub); else if (project) weergaveProject(project); else if (deel === "projecten") weergaveProjecten(); else weergaveCommandCenter();
   }
 
   function login(melding_) {
