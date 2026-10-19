@@ -112,6 +112,8 @@
       ] },
   ];
   // Volledige plek van een doel: "kasboek", of "tovas-flow/offerte-opvolging" voor een subproject.
+  // Bewust precies één subniveau: de eigenaar vroeg project → subproject. Een dieper label ("a/b/c") telt
+  // nergens mee; een derde niveau is een nieuwe ontwerpbeslissing, geen uitbreiding van deze regel.
   const projectVan = (d) => { const m = /^Project:\s*([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s*(\n|$)/i.exec(String(d.opdracht ?? "")); return m ? m[1].toLowerCase() : null; };
   // Alle doelen van een project, inclusief die van zijn subprojecten.
   const doelenVanProject = (p) => alleDoelen.filter((d) => { const plek = projectVan(d); return plek === p.sleutel || (plek ?? "").startsWith(p.sleutel + "/"); });
@@ -225,6 +227,8 @@
       doelen: doelenVanPlek(p.sleutel + "/" + sp.sleutel), plek: { naam: sp.naam, label: p.sleutel + "/" + sp.sleutel } });
   }
 
+  // Drie routes onder #/projecten: het overzicht, één project (#/projecten/<project>) en één subproject
+  // (#/projecten/<project>/<subproject>). Een onbekende sleutel valt terug op het overzicht.
   function teken() {
     const route = location.hash.replace(/^#\/?/, "");
     const [deel, sleutel, subsleutel] = route.split("/");
