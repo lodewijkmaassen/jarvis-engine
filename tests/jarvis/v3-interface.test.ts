@@ -74,6 +74,12 @@ describe("de V3-weergave", () => {
     // Het projectoverzicht telt de doelen van de subprojecten mee.
     expect(HTML).toContain('(plek ?? "").startsWith(p.sleutel + "/")');
   });
+  it("toont het Command Center als HUD-dashboard met vaste zijbalk, AI Core, recente activiteit en de bestaande panelen (D-20261019-220029150)", () => {
+    for (const deel of ['class="zijbalk"', "Jarvis AI Core", "Recente activiteit", 'class="dashboard"', "statustegel"]) expect(HTML, deel).toContain(deel);
+    for (const naam of ["Lopend", "Vastgelopen", "Klaar", "Gesloten"]) expect(HTML, naam).toContain(`"${naam}")`);
+    // Geen nieuwe modules uit het voorbeeld.
+    for (const verboden of ["Agents", "Kalender", "Memory", "Voice", "System Monitor", "Knowledge Base"]) expect(HTML, verboden).not.toContain(verboden);
+  });
   it("raakt geen V2-document, -tabel of -afleiding", () => {
     for (const verboden of ["documenten", "overzicht/huidig", "regie", "autorisaties", "antwoorden", "berichten"]) {
       expect(HTML, verboden).not.toContain(verboden);

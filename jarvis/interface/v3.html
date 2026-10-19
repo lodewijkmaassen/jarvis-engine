@@ -13,12 +13,42 @@
 <link rel="apple-touch-icon" href="/icon-192.png">
 <title>Jarvis</title>
 <style>
-  :root { color-scheme:dark; --bg:#070b12; --bg2:#0c1320; --kaart:#101a2a; --kaart2:#142136; --tekst:#e6edf7; --gedempt:#8a9bb4; --lijn:#1f2d44; --accent:#4cc3ff; --accent2:#2b7bff; --goed:#3ddc97; --fout:#ff6b6b; --wacht:#f2c14e; }
+  :root { color-scheme:dark; --bg:#050a14; --bg2:#08111f; --kaart:#0b1626; --kaart2:#0f1d33; --tekst:#e6edf7; --gedempt:#8a9bb4; --lijn:#1f2d44; --accent:#4cc3ff; --accent2:#2b7bff; --goed:#3ddc97; --fout:#ff6b6b; --wacht:#f2c14e; }
   * { box-sizing:border-box; }
   html { background:var(--bg); }
   body { margin:0; color:var(--tekst); font:16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; min-height:100vh;
     background:radial-gradient(900px 500px at 50% -120px, rgba(76,195,255,.13), transparent 70%), linear-gradient(var(--bg), var(--bg2)); padding:0 16px 56px; }
-  main { max-width:1120px; margin:0 auto; }
+  .schil { display:block; }
+  .zijbalk { position:fixed; top:0; left:0; bottom:0; width:220px; padding:18px 14px; display:flex; flex-direction:column; gap:18px; background:linear-gradient(180deg, rgba(8,17,31,.96), rgba(5,10,20,.96)); border-right:1px solid rgba(76,195,255,.28); box-shadow:0 0 30px rgba(76,195,255,.08); z-index:5; }
+  .zijbalk nav { flex-direction:column; border:0; margin:0; gap:6px; }
+  .zijbalk nav a { border:1px solid transparent; border-radius:8px; padding:10px 12px; }
+  .zijbalk nav a[aria-current="page"] { border-color:rgba(76,195,255,.55); background:rgba(76,195,255,.08); box-shadow:0 0 12px rgba(76,195,255,.18) inset; }
+  .zijbalk #status { margin-top:auto; line-height:1.4; align-items:flex-start; }
+  .zijbalk #status::before { margin-top:5px; flex:none; }
+  main { margin-left:220px; padding:18px 22px 56px; max-width:1500px; }
+  @media (max-width:820px) { .zijbalk { position:static; width:auto; flex-direction:row; flex-wrap:wrap; align-items:center; padding:12px 16px; } .zijbalk nav { flex-direction:row; } .zijbalk #status { margin:0; } main { margin-left:0; padding:12px 16px 56px; } }
+  .bovenrij { display:grid; grid-template-columns:1fr; gap:14px; margin-bottom:14px; }
+  @media (min-width:1000px) { .bovenrij { grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); } }
+  .paneel { background:linear-gradient(160deg, var(--kaart2), var(--kaart)); border:1px solid rgba(76,195,255,.28); border-radius:12px; padding:14px 16px; box-shadow:0 0 22px rgba(76,195,255,.06), inset 0 0 30px rgba(76,195,255,.03); min-width:0; }
+  .paneel > .invoer { margin:0; padding:0; border:0; background:none; box-shadow:none; }
+  .ai-kern { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; min-height:230px; background:radial-gradient(circle at 50% 50%, rgba(76,195,255,.16), transparent 62%), linear-gradient(160deg, var(--kaart2), var(--kaart)); }
+  .ai-ring { width:150px; height:150px; border-radius:50%; position:relative; border:2px solid var(--accent); box-shadow:0 0 34px rgba(76,195,255,.55), inset 0 0 30px rgba(76,195,255,.35); display:flex; align-items:center; justify-content:center; }
+  .ai-ring::before { content:""; position:absolute; inset:-14px; border-radius:50%; border:1px dashed rgba(76,195,255,.55); animation:draai 24s linear infinite; }
+  .ai-ring::after { content:""; position:absolute; inset:22px; border-radius:50%; border:1px solid rgba(76,195,255,.6); }
+  .ai-ring b { width:58px; height:58px; border-radius:50%; background:radial-gradient(circle, #d8f3ff, var(--accent) 55%, var(--accent2)); box-shadow:0 0 30px var(--accent); animation:puls 3s ease-in-out infinite; }
+  @keyframes draai { to { transform:rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { .ai-ring::before, .ai-ring b { animation:none; } }
+  .ai-kern h2 { margin:18px 0 4px; justify-content:center; color:var(--accent); letter-spacing:.3em; font-size:14px; }
+  .activiteit { list-style:none; margin:0; padding:0; }
+  .activiteit li { padding:7px 0; border-bottom:1px solid var(--lijn); font-size:14px; overflow-wrap:anywhere; }
+  .activiteit li:last-child { border-bottom:0; }
+  .statusrij { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:12px; }
+  .statustegel { border:1px solid var(--lijn); border-radius:10px; padding:8px; text-align:center; background:var(--bg); }
+  .statustegel b { display:block; font-size:24px; line-height:1.2; }
+  .statustegel span { font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--gedempt); }
+  .statustegel.lopend b { color:var(--accent); } .statustegel.vast b { color:var(--fout); } .statustegel.klaar b { color:var(--goed); }
+  .dashboard { display:grid; grid-template-columns:1fr; gap:14px; align-items:start; }
+  @media (min-width:1000px) { .dashboard { grid-template-columns:minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr); } }
   header { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:22px 0 8px; flex-wrap:wrap; }
   .merk { display:flex; align-items:center; gap:12px; }
   .kern { width:34px; height:34px; border-radius:50%; border:2px solid var(--accent); box-shadow:0 0 18px rgba(76,195,255,.45), inset 0 0 10px rgba(76,195,255,.35); position:relative; flex:none; }
@@ -73,15 +103,17 @@
 </style>
 </head>
 <body>
-<main>
-  <header>
-    <div class="merk"><div class="kern" aria-hidden="true"></div><div><h1>Jarvis</h1><div class="onder">Jij bepaalt wat, Jarvis bepaalt hoe.</div></div></div>
-    <div id="status">laden…</div>
-  </header>
+<div class="schil">
+<aside class="zijbalk">
+  <div class="merk"><div class="kern" aria-hidden="true"></div><div><h1>Jarvis</h1><div class="onder">Command Center</div></div></div>
   <nav aria-label="Hoofdnavigatie"><a href="#/" id="nav-cc">Command Center</a><a href="#/projecten" id="nav-pr">Projecten</a></nav>
+  <div id="status">laden…</div>
+</aside>
+<main>
   <div id="melding"></div>
   <div id="inhoud"></div>
 </main>
+</div>
 <script src="../config.js"></script>
 <script>
 (() => {
@@ -180,15 +212,24 @@
 
   function weergaveCommandCenter() {
     const { lopend, vast, klaar, gesloten } = splits(alleDoelen.filter((d) => !projectVan(d)));
-    const aantalProjecten = PROJECTEN.length;
-    $("inhoud").innerHTML = `${invoerBlok(null)}
-      <div class="raster">
-        <section><h2>Lopend <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Geen lopende doelen.")}
-          ${vast.length ? `<h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${vast.map(kaartDoel).join("")}` : ""}</section>
-        <section><h2>Klaar <span class="tel">${klaar.length}</span></h2>${lijst(klaar, "Nog niets afgerond.")}
-          ${geslotenBlok(gesloten)}
-          <h2 style="margin-top:22px">Projecten <span class="tel">${aantalProjecten}</span></h2>
-          <a class="projectkaart" href="#/projecten">Alle projecten bekijken</a></section>
+    const totaal = splits(alleDoelen);
+    const recent = alleDoelen.slice().sort((x, y) => new Date(y.bijgewerkt) - new Date(x.bijgewerkt)).slice(0, 6);
+    const tegel = (soort, n, naam) => `<div class="statustegel ${soort}"><b>${n}</b><span>${naam}</span></div>`;
+    $("inhoud").innerHTML = `<div class="bovenrij">
+        <div class="paneel ai-kern"><div class="ai-ring" aria-hidden="true"><b></b></div><h2>Jarvis AI Core</h2><div class="klein">Jij bepaalt wat, Jarvis bepaalt hoe.</div></div>
+        <div class="paneel"><h2>Recente activiteit</h2>${recent.length ? `<ul class="activiteit">${recent.map((d) => `<li>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span><div class="klein">${esc(new Date(d.bijgewerkt).toLocaleString("nl-NL"))}</div></li>`).join("")}</ul>` : `<div class="leeg">Nog geen activiteit.</div>`}</div>
+      </div>
+      <div class="dashboard">
+        <div class="paneel"><h2>Projecten <span class="tel">${PROJECTEN.length}</span></h2>
+          ${PROJECTEN.map((p) => `<a class="projectkaart" style="margin-bottom:10px" href="#/projecten/${esc(p.sleutel)}"><h3>${esc(p.naam)}</h3>${telrij(splits(doelenVanProject(p)))}</a>`).join("")}
+          <a class="projectkaart" href="#/projecten">Alle projecten bekijken</a></div>
+        <div class="paneel"><h2>Taken</h2>
+          <div class="statusrij">${tegel("lopend", totaal.lopend.length, "Lopend")}${tegel("vast", totaal.vast.length, "Vastgelopen")}${tegel("klaar", totaal.klaar.length, "Klaar")}${tegel("gesloten", totaal.gesloten.length, "Gesloten")}</div>
+          <h2>Lopend <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Geen lopende doelen.")}
+          ${vast.length ? `<h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${vast.map(kaartDoel).join("")}` : ""}
+          <h2 style="margin-top:22px">Klaar <span class="tel">${klaar.length}</span></h2>${lijst(klaar, "Nog niets afgerond.")}
+          ${geslotenBlok(gesloten)}</div>
+        <div class="paneel">${invoerBlok(null)}</div>
       </div>`;
     koppelInvoer(null);
   }
