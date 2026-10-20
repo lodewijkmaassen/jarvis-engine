@@ -8,6 +8,10 @@ const BOUW = path.join(process.cwd(), "jarvis/interface/app/bouw.mjs");
 const HTML = readFileSync(path.join(process.cwd(), "jarvis/interface/v3.html"), "utf8");
 
 describe("de V3-weergave", () => {
+  it("zet onder de titel Recente activiteit de subtiele tekst 'Laatste activiteit van Jarvis' (D-20261020-185350597)", () => {
+    expect(HTML).toContain('<h2>Recente activiteit</h2><div class="subtekst">Laatste activiteit van Jarvis</div>');
+    expect(HTML).toMatch(/\.subtekst \{[^}]*color:var\(--gedempt\)/);
+  });
   it("leest uitsluitend de doelen en roept uitsluitend de eigenaarsfuncties voor doelen aan (T-20261017-jarvis-vereenvoudigen, D-20261019-202736404)", () => {
     const views = [...HTML.matchAll(/from\("([a-z0-9_]+)"\)/g)].map((m) => m[1]);
     expect(new Set(views)).toEqual(new Set(["doelen"]));

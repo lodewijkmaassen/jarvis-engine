@@ -47,6 +47,7 @@
   .chatvorm { display:flex; gap:8px; align-items:flex-end; }
   .chatvorm textarea { resize:none; }
   .chatvorm button { margin:0; flex:none; }
+  .subtekst { color:var(--gedempt); font-size:12px; opacity:.8; margin:-8px 0 12px; }
   .activiteit { list-style:none; margin:0; padding:0; }
   .activiteit li { padding:7px 0; border-bottom:1px solid var(--lijn); font-size:14px; overflow-wrap:anywhere; }
   .activiteit li:last-child { border-bottom:0; }
@@ -229,7 +230,7 @@
         <div class="paneel ai-kern"><div class="ai-ring" aria-hidden="true"><b></b></div><h2>Jarvis AI Core</h2>
           <div class="chatlog" id="chatlog" role="log" aria-live="polite" aria-label="Gesprek met Jarvis"></div>
           <form class="chatvorm" id="chatvorm"><textarea id="chatin" rows="2" placeholder="Stel een vraag of geef een opdracht" aria-label="Bericht aan Jarvis"></textarea><button class="hoofd" id="chatstuur" type="submit">Stuur</button></form></div>
-        <div class="paneel"><h2>Recente activiteit</h2>${recent.length ? `<ul class="activiteit">${recent.map((d) => `<li>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span><div class="klein">${esc(tijd(d.bijgewerkt))}</div></li>`).join("")}</ul>` : `<div class="leeg">Nog geen activiteit.</div>`}</div>
+        <div class="paneel"><h2>Recente activiteit</h2><div class="subtekst">Laatste activiteit van Jarvis</div>${recent.length ? `<ul class="activiteit">${recent.map((d) => `<li>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span><div class="klein">${esc(tijd(d.bijgewerkt))}</div></li>`).join("")}</ul>` : `<div class="leeg">Nog geen activiteit.</div>`}</div>
       </div>
       <div class="dashboard">
         <div class="paneel"><h2>Projecten <span class="tel">${PROJECTEN.length}</span></h2>
