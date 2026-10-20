@@ -1,13 +1,19 @@
-// Vercel Function voor de Jarvis AI Core-chat; de logica staat in _chat-kern.mjs.
-// chat-config.json (publieke Supabase-identifiers) schrijft bouw.mjs naast dit bestand.
+// Vercel Function voor de Jarvis AI Core-chat; de logica staat in _chat-kern.mjs. Bereikbaar op /api/chat
+// via api/chat.mjs in de projectwortel.
+// chat-config.json (publieke Supabase-identifiers) schrijft bouw.mjs naast een kopie van dit bestand. Draait de
+// functie vanuit de bron (zo bundelt Vercel api/chat.mjs), dan staan dezelfde publieke identifiers in de
+// omgeving van het project: JARVIS_PUBLISHABLE_KEY, en de URL van de eigen database van Jarvis.
 import { readFileSync } from "node:fs";
 import { verwerk } from "./_chat-kern.mjs";
 
-function leesCfg() {
+const JARVIS_URL = "https://mfjuaiezjtjdhahvwqzn.supabase.co";
+
+export function leesCfg(env = process.env) {
   try {
     return JSON.parse(readFileSync(new URL("./chat-config.json", import.meta.url), "utf8"));
   } catch {
-    return null;
+    const key = (env.JARVIS_PUBLISHABLE_KEY ?? "").trim();
+    return key ? { url: (env.JARVIS_SUPABASE_URL ?? "").trim() || JARVIS_URL, key } : null;
   }
 }
 
