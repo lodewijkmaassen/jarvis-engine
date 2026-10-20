@@ -40,6 +40,29 @@ describe("de V3-weergave", () => {
     expect(sql).toContain("old.status in ('vast', 'klaar', 'gesloten') and new.status = 'open'");
     expect(sql).toContain("grant execute on function jarvis.doel_reageer(text, text) to authenticated");
   });
+  it("toont klaar en gesloten ingeklapt, met uitklapknop en 10 doelen per pagina (D-20261020-203341354)", () => {
+    expect(HTML).toContain("const PER_PAGINA = 10;");
+    expect(HTML).toContain('inklapBlok("cc:klaar", "Klaar", klaar,');
+    expect(HTML).toContain('inklapBlok(ctx + ":gesloten", "Gesloten", gesloten, "")');
+    const bron = /(function inklapBlok[\s\S]*?\n  \})\n/.exec(HTML)?.[1];
+    expect(bron).toBeTruthy();
+    const bouw = new Function("uitgeklapt", "paginas", "PER_PAGINA", "esc", "lijst", `${bron}; return inklapBlok;`);
+    const uitgeklapt = new Set<string>();
+    const paginas: Record<string, number> = {};
+    const lijst = (arr: unknown[]) => `[${arr.length}]`;
+    const inklap = bouw(uitgeklapt, paginas, 10, (t: unknown) => String(t), lijst) as (k: string, t: string, a: number[], l: string) => string;
+    const doelen = Array.from({ length: 25 }, (_, i) => i);
+    expect(inklap("x", "Klaar", doelen, "")).not.toContain("[");
+    uitgeklapt.add("x");
+    expect(inklap("x", "Klaar", doelen, "")).toContain("[10]");
+    expect(inklap("x", "Klaar", doelen, "")).toContain("Pagina 1 van 3");
+    paginas.x = 2;
+    expect(inklap("x", "Klaar", doelen, "")).toContain("[5]");
+    paginas.x = 9;
+    inklap("x", "Klaar", doelen, "");
+    expect(paginas.x).toBe(2);
+    expect(inklap("x", "Klaar", doelen.slice(0, 10), "")).not.toContain("Pagina");
+  });
   it("telt een gesloten doel niet als lopend, vastgelopen of klaar (D-20261019-202736404)", () => {
     const bron = /const splits = (\(doelen\) => \(\{[\s\S]*?\}\));/.exec(HTML)?.[1];
     expect(bron).toBeTruthy();
