@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — gewone .mjs zonder typen
-import { verwerk } from "../../jarvis/interface/app/api/_chat-kern.mjs";
+import { raadpleeg, verwerk } from "../../jarvis/interface/app/api/_chat-kern.mjs";
 
 type Oproep = { url: string; init: RequestInit };
 const cfg = { url: "https://x.supabase.co", key: "sb_publishable_test" };
@@ -115,5 +115,38 @@ describe("chat in de uitrol", () => {
       expect(r.status).toBe(400);
     }
     expect(oproepen.some((o) => o.url.includes("anthropic"))).toBe(false);
+  });
+
+  it("haalt doelen zelf op voor een informatievraag en maakt geen doel aan", async () => {
+    const oproepen: Oproep[] = [];
+    let ronde = 0;
+    const fetchFn = async (url: string, init: RequestInit) => {
+      oproepen.push({ url, init });
+      if (url.includes("/auth/v1/user")) return new Response(JSON.stringify({ id: "u" }), { status: 200 });
+      if (url.includes("/rest/v1/doelen")) return new Response(JSON.stringify([{ id: "D-1", titel: "Login", status: "review", opdracht: "x", uitkomst: null }]), { status: 200 });
+      if (url.includes("api.anthropic.com")) {
+        ronde += 1;
+        return new Response(JSON.stringify(ronde === 1
+          ? { content: [{ type: "tool_use", id: "tu1", name: "raadpleeg_doelen", input: { status: "lopend", zoek: "login'); drop" } }] }
+          : { content: [{ type: "text", text: "Er loopt 1 taak: Login, in review." }] }), { status: 200 });
+      }
+      return new Response("{}", { status: 404 });
+    };
+    const r = await verwerk({ token: "gebruikerstoken", body: vraag, cfg, sleutel: "k", fetchFn });
+    expect(r.lading.antwoord).toBe("Er loopt 1 taak: Login, in review.");
+    expect(r.lading.doel).toBeUndefined();
+    expect(oproepen.some((o) => o.url.includes("doel_nieuw"))).toBe(false);
+    const lees = oproepen.find((o) => o.url.includes("/rest/v1/doelen"))!;
+    expect((lees.init.headers as Record<string, string>).authorization).toBe("Bearer gebruikerstoken");
+    expect(lees.url).toContain("status=in.(open,bezig,review,samengevoegd)");
+    expect(decodeURIComponent(lees.url)).not.toContain("'");
+    const tweede = JSON.parse(String(oproepen.filter((o) => o.url.includes("anthropic"))[1].init.body));
+    expect(tweede.messages.at(-1).content[0]).toMatchObject({ type: "tool_result", tool_use_id: "tu1" });
+  });
+  it("leest één doel met zijn activiteit, ook als de activiteit niet leesbaar is", async () => {
+    const fetchFn = async (url: string) => (url.includes("/doelen") ? new Response(JSON.stringify([{ id: "D-20261020-1", titel: "T", status: "vast" }]), { status: 200 }) : new Response("nee", { status: 403 }));
+    const uit = await raadpleeg(cfg, "t", { id: "D-20261020-1" }, fetchFn);
+    expect(uit).toMatchObject({ gevonden: true, activiteit: [] });
+    expect(await raadpleeg(cfg, "t", { id: "geen id" }, async () => new Response("[]", { status: 200 }))).toMatchObject({ aantal: 0 });
   });
 });
