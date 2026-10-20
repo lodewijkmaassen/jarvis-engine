@@ -115,6 +115,20 @@ copyFileSync(path.join(hier, "sw-v3.js"), path.join(doel, "v3", "sw.js"));
 for (const naam of ["manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.png", "vercel.json"]) {
   if (path.resolve(hier) !== doel) copyFileSync(path.join(hier, naam), path.join(doel, naam));
 }
+// De chat-endpoint (Vercel Function) naast de statische pagina. De functie heeft dezelfde publieke
+// identifiers nodig als de browser; ze worden uit config.js gelezen zodat er één bron blijft.
+mkdirSync(path.join(doel, "api"), { recursive: true });
+for (const naam of ["chat.mjs", "_chat-kern.mjs"]) copyFileSync(path.join(hier, "api", naam), path.join(doel, "api", naam));
+{
+  const cfg = {};
+  new Function("window", readFileSync(configPad, "utf8"))(cfg);
+  const { url: cu, key: ck } = cfg.JARVIS_SUPABASE ?? {};
+  if (!cu || !ck) {
+    console.error("bouw: config.js bevat geen url en key; de chat zou niet werken. Er is niets uitgerold.");
+    process.exit(1);
+  }
+  writeFileSync(path.join(doel, "api", "chat-config.json"), JSON.stringify({ url: cu, key: ck }) + "\n", "utf8");
+}
 console.log(`app gebouwd in ${doel}`);
 if (merk === undefined) {
   // Een waarschuwing en geen fout: de bouw zelf is in orde en wie hem met de

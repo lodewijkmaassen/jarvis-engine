@@ -31,14 +31,22 @@
   @media (min-width:1000px) { .bovenrij { grid-template-columns:minmax(0,1.6fr) minmax(0,1fr); } }
   .paneel { background:linear-gradient(160deg, var(--kaart2), var(--kaart)); border:1px solid rgba(76,195,255,.28); border-radius:12px; padding:14px 16px; box-shadow:0 0 22px rgba(76,195,255,.06), inset 0 0 30px rgba(76,195,255,.03); min-width:0; }
   .paneel > .invoer { margin:0; padding:0; border:0; background:none; box-shadow:none; }
-  .ai-kern { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; min-height:230px; background:radial-gradient(circle at 50% 50%, rgba(76,195,255,.16), transparent 62%), linear-gradient(160deg, var(--kaart2), var(--kaart)); }
-  .ai-ring { width:150px; height:150px; border-radius:50%; position:relative; border:2px solid var(--accent); box-shadow:0 0 34px rgba(76,195,255,.55), inset 0 0 30px rgba(76,195,255,.35); display:flex; align-items:center; justify-content:center; }
-  .ai-ring::before { content:""; position:absolute; inset:-14px; border-radius:50%; border:1px dashed rgba(76,195,255,.55); animation:draai 24s linear infinite; }
-  .ai-ring::after { content:""; position:absolute; inset:22px; border-radius:50%; border:1px solid rgba(76,195,255,.6); }
-  .ai-ring b { width:58px; height:58px; border-radius:50%; background:radial-gradient(circle, #d8f3ff, var(--accent) 55%, var(--accent2)); box-shadow:0 0 30px var(--accent); animation:puls 3s ease-in-out infinite; }
+  .ai-kern { display:flex; flex-direction:column; align-items:stretch; text-align:center; min-height:420px; background:radial-gradient(circle at 50% 50%, rgba(76,195,255,.16), transparent 62%), linear-gradient(160deg, var(--kaart2), var(--kaart)); }
+  .ai-ring { width:76px; height:76px; margin:14px auto 0; border-radius:50%; position:relative; border:2px solid var(--accent); box-shadow:0 0 34px rgba(76,195,255,.55), inset 0 0 30px rgba(76,195,255,.35); display:flex; align-items:center; justify-content:center; }
+  .ai-ring::before { content:""; position:absolute; inset:-9px; border-radius:50%; border:1px dashed rgba(76,195,255,.55); animation:draai 24s linear infinite; }
+  .ai-ring::after { content:""; position:absolute; inset:11px; border-radius:50%; border:1px solid rgba(76,195,255,.6); }
+  .ai-ring b { width:30px; height:30px; border-radius:50%; background:radial-gradient(circle, #d8f3ff, var(--accent) 55%, var(--accent2)); box-shadow:0 0 30px var(--accent); animation:puls 3s ease-in-out infinite; }
   @keyframes draai { to { transform:rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .ai-ring::before, .ai-ring b { animation:none; } }
-  .ai-kern h2 { margin:18px 0 4px; justify-content:center; color:var(--accent); letter-spacing:.3em; font-size:14px; }
+  .ai-kern h2 { margin:12px 0 4px; justify-content:center; color:var(--accent); letter-spacing:.3em; font-size:14px; }
+  .chatlog { flex:1; min-height:160px; max-height:340px; overflow-y:auto; text-align:left; display:flex; flex-direction:column; gap:8px; margin:10px 0; padding:2px; }
+  .bericht { max-width:88%; padding:8px 12px; border-radius:12px; border:1px solid var(--lijn); background:var(--bg); font-size:14.5px; overflow-wrap:anywhere; white-space:pre-wrap; }
+  .bericht.jij { align-self:flex-end; border-color:rgba(76,195,255,.45); background:rgba(76,195,255,.08); }
+  .bericht.jarvis { align-self:flex-start; }
+  .bericht .voortgang { margin:8px 0 2px; }
+  .chatvorm { display:flex; gap:8px; align-items:flex-end; }
+  .chatvorm textarea { resize:none; }
+  .chatvorm button { margin:0; flex:none; }
   .activiteit { list-style:none; margin:0; padding:0; }
   .activiteit li { padding:7px 0; border-bottom:1px solid var(--lijn); font-size:14px; overflow-wrap:anywhere; }
   .activiteit li:last-child { border-bottom:0; }
@@ -218,7 +226,9 @@
     const recent = alleDoelen.slice().sort((x, y) => new Date(y.bijgewerkt) - new Date(x.bijgewerkt)).slice(0, 6);
     const tegel = (soort, n, naam) => `<div class="statustegel ${soort}"><b>${n}</b><span>${naam}</span></div>`;
     $("inhoud").innerHTML = `<div class="bovenrij">
-        <div class="paneel ai-kern"><div class="ai-ring" aria-hidden="true"><b></b></div><h2>Jarvis AI Core</h2><div class="klein">Jij bepaalt wat, Jarvis bepaalt hoe.</div></div>
+        <div class="paneel ai-kern"><div class="ai-ring" aria-hidden="true"><b></b></div><h2>Jarvis AI Core</h2>
+          <div class="chatlog" id="chatlog" role="log" aria-live="polite" aria-label="Gesprek met Jarvis"></div>
+          <form class="chatvorm" id="chatvorm"><textarea id="chatin" rows="2" placeholder="Stel een vraag of geef een opdracht" aria-label="Bericht aan Jarvis"></textarea><button class="hoofd" id="chatstuur" type="submit">Stuur</button></form></div>
         <div class="paneel"><h2>Recente activiteit</h2>${recent.length ? `<ul class="activiteit">${recent.map((d) => `<li>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span><div class="klein">${esc(tijd(d.bijgewerkt))}</div></li>`).join("")}</ul>` : `<div class="leeg">Nog geen activiteit.</div>`}</div>
       </div>
       <div class="dashboard">
@@ -234,6 +244,70 @@
         <div class="paneel">${invoerBlok(null)}</div>
       </div>`;
     koppelInvoer(null);
+    koppelChat();
+  }
+
+  // De chat is een voordeur: een vraag krijgt antwoord, een opdracht wordt via de server een gewoon doel.
+  // De voortgang van zo'n doel wordt bij elke verversing uit alleDoelen getekend; de chat bewaart alleen het doel-id.
+  let chat = [];
+  try { chat = JSON.parse(sessionStorage.getItem("jarvis-chat") ?? "[]"); } catch { chat = []; }
+  let chatBezig = false;
+  let chatConcept = "";
+  const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40))); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
+
+  function berichtHtml(b) {
+    let extra = "";
+    if (b.doelId) {
+      const d = alleDoelen.find((x) => x.id === b.doelId);
+      if (d) {
+        const soort = ["klaar", "vast", "gesloten"].includes(d.status) ? d.status : "lopend";
+        extra = `<div class="klein">${esc(LABEL[d.status] ?? d.status)}${d.status === "klaar" ? " — KLAAR" : ""}</div>${soort === "lopend" ? stappen(d.status) : ""}${["klaar", "vast"].includes(d.status) && d.uitkomst ? `<div class="klein">${esc(d.uitkomst)}</div>` : ""}`;
+      }
+    }
+    return `<div class="bericht ${b.rol === "jij" ? "jij" : "jarvis"}">${esc(b.tekst)}${extra}</div>`;
+  }
+
+  function tekenChat() {
+    const log = $("chatlog");
+    if (!log) return;
+    const onderaan = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    log.innerHTML = chat.length ? chat.map(berichtHtml).join("") + (chatBezig ? `<div class="bericht jarvis klein">Jarvis denkt na…</div>` : "") : `<div class="klein">Jij bepaalt wat, Jarvis bepaalt hoe. Stel een vraag of geef een opdracht.</div>`;
+    if (onderaan || chatBezig) log.scrollTop = log.scrollHeight;
+  }
+
+  async function stuurChat(tekst) {
+    chat.push({ rol: "jij", tekst });
+    chatBezig = true; bewaarChat(); tekenChat();
+    try {
+      const { data: { session } } = await client.auth.getSession();
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${session?.access_token ?? ""}` },
+        body: JSON.stringify({ gesprek: chat.map((b) => ({ rol: b.rol, tekst: b.tekst })) }),
+      });
+      const uit = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(uit.fout ?? `Chat gaf ${r.status}`);
+      chat.push({ rol: "jarvis", tekst: uit.antwoord, doelId: uit.doel?.id ?? null });
+      if (uit.doel) await laad();
+    } catch (e) {
+      chat.push({ rol: "jarvis", tekst: `Dat lukte niet: ${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      chatBezig = false; bewaarChat(); tekenChat();
+    }
+  }
+
+  function koppelChat() {
+    $("chatin").value = chatConcept;
+    $("chatin").oninput = (ev) => { chatConcept = ev.target.value; };
+    $("chatin").onkeydown = (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); $("chatvorm").requestSubmit(); } };
+    $("chatvorm").onsubmit = (ev) => {
+      ev.preventDefault();
+      const tekst = $("chatin").value.trim();
+      if (!tekst || chatBezig) return;
+      $("chatin").value = ""; chatConcept = "";
+      stuurChat(tekst);
+    };
+    tekenChat();
   }
 
   function weergaveProjecten() {
