@@ -86,34 +86,15 @@ export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly
   { patroon: /^jarvis\/roles\//, waarom: "rolcontracten (mandaat)" },
   { patroon: /^jarvis\/canonical\//, waarom: "de canonieke poort- en attestatieworkflow" },
   { patroon: /^\.claude\//, waarom: "agentconfiguratie" },
-  // De code die beoordeelt, reviewt en samenvoegt. Kon de bouwer die met een gewone pull request wijzigen,
-  // dan herschreef hij zijn eigen reviewer (QA-bevinding B1 op jarvis-engine#88). Wie de poort onderhoudt,
-  // doet dat onder een apart akkoord: dat is de grens die de onafhankelijke controle onafhankelijk houdt.
-  // De hele map: elke module draait in hetzelfde proces als de reviewer en de attestatie, met hun
-  // databaserol en schrijfrecht; een lijst van losse bestanden veroudert bij de eerste nieuwe import
-  // (QA ronde 2 op jarvis-engine#88).
-  { patroon: /^jarvis\/src\//, waarom: "de code van de engine: poort, review en attestatie draaien erop" },
-  { patroon: /^jarvis\/edge\//, waarom: "de toegang van de uitvoerder tot de database" },
-  { patroon: /^bin\//, waarom: "het startpunt van de engine" },
-  // tsx past `paths` uit tsconfig toe: daarmee wijst een import naar een eigen bestand, buiten jarvis/src
-  // (QA ronde 3 op jarvis-engine#88). .npmrc bepaalt waar pakketten vandaan komen.
-  { patroon: /(^|\/)tsconfig[^/]*\.json$/, waarom: "hoe de engine modules vindt (paths)" },
+  // .npmrc bepaalt waar pakketten vandaan komen (toeleveringsketen en tokens).
   { patroon: /(^|\/)\.npmrc$/, waarom: "waar pakketten vandaan komen" },
+  // De code van Jarvis zelf (jarvis/src, jarvis/edge, bin, tsconfig) en de engine-pin staan hier bewust niet
+  // (eigenaarsmodel 2026-10-20: de eigenaar bepaalt wat, Jarvis bepaalt hoe). Een doel van de eigenaar geeft
+  // mandaat voor de technisch nodige wijzigingen daaraan. De onafhankelijkheid van de controle hangt niet aan een
+  // pad maar aan wie oordeelt: review en attestatie draaien altijd vanaf main met de engine die in die repository
+  // is vastgepind, nooit met code uit de pull request. Een wijziging van die code wordt dus eerst door de vorige
+  // versie beoordeeld, en wordt pas zelf rechter na samenvoegen én een pin-update met een eigen review.
 ];
-
-/**
- * Raakt deze pull request de vastgepinde engine (de regel `jarvis-engine` in package.json of het lockfile)?
- * Een nieuwe pin is een nieuwe poort en een nieuwe reviewer; die komt er niet door op een review alleen
- * (QA-bevinding B1 op jarvis-engine#88). Geen patch beschikbaar (te groot) telt als geraakt: onbekend is
- * nooit het soepelst.
- */
-export function enginePinGeraakt(bestanden: readonly { readonly filename: string; readonly patch?: string | null }[]): boolean {
-  return bestanden.some((b) => {
-    if (!/(^|\/)package(-lock)?\.json$/.test(b.filename.replace(/\\/g, "/"))) return false;
-    if (typeof b.patch !== "string") return true;
-    return b.patch.split("\n").some((r) => /^[+-](?![+-])/.test(r) && r.includes("jarvis-engine"));
-  });
-}
 
 /**
  * Welke gewijzigde bestanden onder een harde uitzondering vallen, met reden.
@@ -245,8 +226,6 @@ export type AttestatieFeiten = {
    */
   readonly alleenStatusregel?: readonly string[];
   readonly prTekst: string;
-  /** Raakt de PR de vastgepinde engine? Zie `enginePinGeraakt`; dan geldt een harde uitzondering. */
-  readonly enginePinGewijzigd?: boolean;
   /** Een autorisatie van soort "pr" op precies deze kop, of null. */
   readonly autorisatiePr: Autorisatie | null;
   readonly checks: readonly Check[];
@@ -430,10 +409,7 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
     }
   }
 
-  const treffers = [
-    ...raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []),
-    ...(f.enginePinGewijzigd === true ? ["de vastgepinde engine (jarvis-engine in package.json of het lockfile)"] : []),
-  ];
+  const treffers = raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
   const verklaring = leesUitzonderingenRegel(f.prTekst);
   const uitzondering = treffers.length > 0 || (verklaring !== null && verklaring !== "geen");
   if (verklaring === null) {

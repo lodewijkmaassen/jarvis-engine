@@ -77,38 +77,27 @@ describe("poortUitkomst: administratieve stappen zijn waarschuwingen", () => {
 });
 
 describe("herstel QA ronde 1 op jarvis-engine#88", () => {
-  it("B1: de code van poort, review en attestatie is een harde uitzondering", async () => {
+  it("eigenaarsmodel 2026-10-20: de code van Jarvis zelf is gewoon werk binnen een doel, geen harde uitzondering", async () => {
     const { raaktHardeUitzondering } = await import("@/jarvis/src/attestatie");
     for (const pad of [
-      "jarvis/src/attestatie.ts", "jarvis/src/review.ts", "jarvis/src/doelen-cli.ts", "jarvis/src/doelen.ts", "jarvis/src/db.ts",
-      "jarvis/src/lint.ts", "jarvis/src/opdrachten.ts", "jarvis/src/pr.ts", "jarvis/src/v3-cli.ts", "jarvis/src/cli.ts",
-      "jarvis/edge/jarvis-db/toegestaan.json", "bin/jarvis.mjs",
+      "jarvis/src/attestatie.ts", "jarvis/src/review.ts", "jarvis/src/doelen-cli.ts", "jarvis/src/nieuw-hulpje.ts",
+      "jarvis/edge/jarvis-db/index.ts", "bin/jarvis.mjs", "tsconfig.json", "app/tsconfig.build.json",
+      "package.json", "package-lock.json", "tests/jarvis/doelen.test.ts", "jarvis/interface/v3.html",
+    ]) {
+      expect(raaktHardeUitzondering([pad]), pad).toEqual([]);
+    }
+    // Beschermd blijven: secrets, de integriteit van review en CI, productiedata en governance.
+    for (const pad of [
+      ".github/workflows/ci.yml", "CODEOWNERS", "jarvis/canonical/jarvis-attestatie.yml", "supabase/migrations/0013_x.sql",
+      ".env.local", "jarvis/allowlist.yml", ".npmrc", "sub/.npmrc", "jarvis.config.yml", "knowledge/CONSTRAINTS/CON-0001.md",
+      "jarvis/roles/qa.md", ".claude/settings.json",
     ]) {
       expect(raaktHardeUitzondering([pad]).length, pad).toBe(1);
     }
-    // De hele map jarvis/src, ook een module die er nog niet is (QA ronde 2): alles draait in hetzelfde proces.
-    for (const pad of ["jarvis/src/overzicht.ts", "jarvis/src/records.ts", "jarvis/src/frontmatter.ts", "jarvis/src/v3-sql.ts", "jarvis/src/nieuw-hulpje.ts"]) {
-      expect(raaktHardeUitzondering([pad]).length, pad).toBe(1);
-    }
-    // Wat bepaalt hoe de engine modules en pakketten vindt (QA ronde 3).
-    for (const pad of ["tsconfig.json", "tsconfig.build.json", "app/tsconfig.json", ".npmrc", "sub/.npmrc"]) {
-      expect(raaktHardeUitzondering([pad]).length, pad).toBe(1);
-    }
-    // Tests en de interface blijven gewoon werk.
-    for (const pad of ["tests/jarvis/doelen.test.ts", "jarvis/interface/v3.html"]) {
-      expect(raaktHardeUitzondering([pad]), pad).toEqual([]);
-    }
   });
 
-  it("B1: een wijziging van de engine-pin is een harde uitzondering; onbekend telt als geraakt", async () => {
-    const { enginePinGeraakt, beoordeelAttestatie } = await import("@/jarvis/src/attestatie");
-    const pin = { filename: "package.json", patch: '@@ -1 +1 @@\n-    "jarvis-engine": "github:x/jarvis-engine#aaa",\n+    "jarvis-engine": "github:x/jarvis-engine#bbb",' };
-    expect(enginePinGeraakt([pin])).toBe(true);
-    expect(enginePinGeraakt([{ filename: "package-lock.json", patch: null }])).toBe(true);
-    expect(enginePinGeraakt([{ filename: "package.json", patch: '@@ -1 +1 @@\n-    "zod": "1"\n+    "zod": "2"' }])).toBe(false);
-    // Een contextregel met jarvis-engine (geen + of -) telt niet.
-    expect(enginePinGeraakt([{ filename: "package.json", patch: '@@ -1,2 +1,2 @@\n     "jarvis-engine": "x",\n-    "zod": "1"\n+    "zod": "2"' }])).toBe(false);
-    expect(enginePinGeraakt([{ filename: "src/a.ts", patch: null }])).toBe(false);
+  it("een nieuwe engine-pin vraagt geen apart akkoord meer; de review en de poort blijven nodig", async () => {
+    const { beoordeelAttestatie } = await import("@/jarvis/src/attestatie");
     const f = {
       nummer: 7, auteur: "bot", botLogin: "bot", kop: KOP, repo: "e/p", taken: [{ taak: "D-1", autorisatie: null, scopeHashKop: null }],
       taakRedenen: [], toetsing: { id: "t", pr_repo: "e/p", pr_nummer: 7, commit_sha: KOP, oordeel: "GO", rapport: null, door: REVIEWER_DOOR, op: "" },
@@ -116,7 +105,9 @@ describe("herstel QA ronde 1 op jarvis-engine#88", () => {
       checks: [{ naam: "poort", status: "completed", conclusie: "success" }], verplichteCheck: "poort",
     };
     expect(beoordeelAttestatie(f)).toEqual([]);
-    expect(beoordeelAttestatie({ ...f, enginePinGewijzigd: true }).join(" | ")).toMatch(/harde uitzondering.*vastgepinde engine/);
+    expect(beoordeelAttestatie({ ...f, gewijzigdeBestanden: ["package.json", "package-lock.json", "jarvis/src/attestatie.ts"] })).toEqual([]);
+    // Zonder GO van de onafhankelijke review geen attestatie, ook niet voor een pin of de engine zelf.
+    expect(beoordeelAttestatie({ ...f, toetsing: null }).join(" | ")).toMatch(/geen onafhankelijke review/);
   });
 
   it("B3: geen volledige lezing, geen GO", async () => {
