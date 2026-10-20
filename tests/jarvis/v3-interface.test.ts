@@ -14,9 +14,27 @@ describe("de V3-weergave", () => {
   });
   it("leest uitsluitend de doelen en roept uitsluitend de eigenaarsfuncties voor doelen aan (T-20261017-jarvis-vereenvoudigen, D-20261019-202736404)", () => {
     const views = [...HTML.matchAll(/from\("([a-z0-9_]+)"\)/g)].map((m) => m[1]);
-    expect(new Set(views)).toEqual(new Set(["doelen"]));
+    // Naast de doelen alleen de twee tabellen van de bestaande approvalroute (D-20261020-210018901).
+    expect(new Set(views)).toEqual(new Set(["doelen", "berichten", "autorisaties"]));
     const rpcs = new Set([...HTML.matchAll(/rpc\("([a-z0-9_]+)"/g)].map((m) => m[1]));
     expect(rpcs).toEqual(new Set(["doel_nieuw", "doel_reageer", "doel_sluit"]));
+  });
+  it("toont een openstaand akkoord (bericht met context.akkoord_pr) in V3 en handelt het af via dezelfde tabellen (D-20261020-210018901)", () => {
+    expect(HTML).toContain("function openBeslissingen()");
+    expect(HTML).toContain('<h2>Wacht op jou <span class="tel">');
+    expect(HTML).toContain('data-beslis="akkoord">Akkoord</button>');
+    expect(HTML).toContain('data-beslis="afwijzen">Afwijzen</button>');
+    expect(HTML).toContain('client.from("autorisaties").insert({ soort: "pr"');
+    expect(HTML).toContain("akkoord_pr_afgewezen");
+    const bron = /(function openBeslissingen[\s\S]*?\n  \})\n/.exec(HTML)?.[1];
+    const bouw = new Function("berichten", "autorisaties", "objectVan", "prSleutel", `${bron}; return openBeslissingen;`);
+    const v = { repo: "o/r", nummer: 5, commit_sha: "abc1234" };
+    const prSleutel = (x: typeof v) => `${x.repo}#${x.nummer}@${x.commit_sha}`;
+    const objectVan = (c: unknown) => c ?? {};
+    const bericht = { id: 1, van: "jarvis", tekst: "t", context: { akkoord_pr: v } };
+    expect(bouw([bericht], [], objectVan, prSleutel)()).toHaveLength(1);
+    expect(bouw([bericht], [{ soort: "pr", pr_repo: "o/r", pr_nummer: 5, commit_sha: "abc1234" }], objectVan, prSleutel)()).toHaveLength(0);
+    expect(bouw([bericht, { id: 2, van: "eigenaar", context: { akkoord_pr_afgewezen: v } }], [], objectVan, prSleutel)()).toHaveLength(0);
   });
   it("geeft een vastgelopen doel een reactieveld, 'Reageer en hervat' en 'Sluiten' (D-20261019-202736404)", () => {
     // Sluiten alleen bij een vastgelopen doel.
@@ -122,8 +140,8 @@ describe("de V3-weergave", () => {
     // Geen nieuwe modules uit het voorbeeld.
     for (const verboden of ["Agents", "Kalender", "Memory", "Voice", "System Monitor", "Knowledge Base"]) expect(HTML, verboden).not.toContain(verboden);
   });
-  it("raakt geen V2-document, -tabel of -afleiding", () => {
-    for (const verboden of ["documenten", "overzicht/huidig", "regie", "autorisaties", "antwoorden", "berichten"]) {
+  it("raakt geen V2-document, -tabel of -afleiding, behalve de approvalroute (berichten, autorisaties; D-20261020-210018901)", () => {
+    for (const verboden of ["documenten", "overzicht/huidig", "regie", "antwoorden"]) {
       expect(HTML, verboden).not.toContain(verboden);
     }
   });
