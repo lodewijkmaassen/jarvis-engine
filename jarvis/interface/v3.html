@@ -78,6 +78,10 @@
   .kaart.lopend { border-left:3px solid var(--accent); } .kaart.vast { border-left:3px solid var(--fout); } .kaart.klaar { border-left:3px solid var(--goed); }
   .kaart h3 { margin:0 0 6px; font-size:16px; font-weight:600; overflow-wrap:anywhere; } .klein { color:var(--gedempt); font-size:13px; overflow-wrap:anywhere; }
   .kaart p { margin:8px 0 0; }
+  .kaart h3 .kop { font:inherit; font-weight:600; color:inherit; background:none; border:0; padding:0; margin:0; min-height:44px; text-align:left; cursor:pointer; overflow-wrap:anywhere; }
+  .kaart h3 .kop::after { content:"▾"; margin-left:8px; color:var(--gedempt); font-size:12px; } .kaart.open h3 .kop::after { content:"▴"; }
+  .kaart .samengevat { display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+  .kaart .opdracht { white-space:pre-wrap; overflow-wrap:anywhere; }
   a { color:var(--accent); }
   .badge { display:inline-block; font-size:11.5px; padding:2px 9px; border-radius:99px; border:1px solid var(--lijn); margin-left:8px; vertical-align:middle; letter-spacing:.03em; white-space:nowrap; }
   .KLAAR { color:var(--goed); border-color:var(--goed); } .MISLUKT { color:var(--fout); border-color:var(--fout); }
@@ -168,21 +172,29 @@
   // Wat de eigenaar bij een vastgelopen doel al typte, per doel; een verversing op de klok tekent de kaart opnieuw.
   const concepten = {};
 
-  // Bij een vastgelopen doel: reageren (het doel gaat terug naar Jarvis) of sluiten (het verdwijnt uit Vastgelopen).
-  function vastActies(d) {
+  // Welke kaarten de eigenaar heeft opengeklapt; een verversing op de klok tekent ze weer open.
+  const geopend = new Set();
+
+  // Na het aanklikken van een kaart: de details en het reactieveld. Reageren kan bij elk doel (bij een afgerond of
+  // gesloten doel hervat Jarvis het); sluiten alleen bij een vastgelopen doel.
+  function doelActies(d) {
+    const sluit = d.status === "vast" ? `<button data-actie="sluit">Sluiten</button>` : "";
+    const knop = ["klaar", "vast", "gesloten"].includes(d.status) ? "Reageer en hervat" : "Reageer";
     return `<div class="acties" data-id="${esc(d.id)}">
+        <div class="klein">Opdracht</div><p class="opdracht">${esc(zonderLabel(d.opdracht))}</p>
         <textarea rows="3" data-concept="${esc(d.id)}" placeholder="Aanvullende informatie of instructie voor Jarvis" aria-label="Reactie op ${esc(d.titel)}">${esc(concepten[d.id] ?? "")}</textarea>
-        <button class="hoofd" data-actie="reageer">Reageer en hervat</button><button data-actie="sluit">Sluiten</button></div>`;
+        <button class="hoofd" data-actie="reageer">${knop}</button>${sluit}</div>`;
   }
 
   function kaartDoel(d) {
     const pr = d.pr && typeof d.pr.repo === "string" && Number.isInteger(d.pr.nummer) ? ` · <a href="https://github.com/${esc(d.pr.repo)}/pull/${esc(d.pr.nummer)}">${esc(d.pr.repo.split("/")[1])} #${esc(d.pr.nummer)}</a>` : "";
     const soort = ["klaar", "vast", "gesloten"].includes(d.status) ? d.status : "lopend";
-    return `<div class="kaart ${esc(soort)}"><h3>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
+    const open = geopend.has(d.id);
+    return `<div class="kaart ${esc(soort)}${open ? " open" : ""}"><h3><button type="button" class="kop" data-actie="open" aria-expanded="${esc(open)}" data-id="${esc(d.id)}">${esc(d.titel)}</button><span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
       <div class="klein">${esc(d.id)} · bijgewerkt ${esc(tijd(d.bijgewerkt))}${pr}</div>
       ${(soort === "lopend" ? stappen(d.status) : "")}
-      ${d.uitkomst ? `<p class="klein">${esc(d.uitkomst)}</p>` : ""}
-      ${(d.status === "vast" ? vastActies(d) : "")}</div>`;
+      ${d.uitkomst ? `<p class="klein${open ? "" : " samengevat"}">${esc(d.uitkomst)}</p>` : ""}
+      ${(open ? doelActies(d) : "")}</div>`;
   }
 
   async function laad(auto) {
@@ -374,19 +386,25 @@
     if (sub) weergaveSubproject(project, sub); else if (project) weergaveProject(project); else if (deel === "projecten") weergaveProjecten(); else weergaveCommandCenter();
   }
 
-  // Eén luisteraar voor de knoppen op alle vastgelopen kaarten, in elke weergave.
+  // Eén luisteraar voor het openklappen en de knoppen op alle doelkaarten, in elke weergave.
   $("inhoud").addEventListener("input", (ev) => { const id = ev.target.dataset?.concept; if (id) concepten[id] = ev.target.value; });
   $("inhoud").addEventListener("click", (ev) => {
     const knop = ev.target.closest("button[data-actie]");
+    if (knop?.dataset.actie === "open") {
+      const wie = knop.dataset.id;
+      if (geopend.has(wie)) geopend.delete(wie); else geopend.add(wie);
+      teken();
+      return;
+    }
     const blok = knop?.closest(".acties");
     if (!blok) return;
     const id = blok.dataset.id;
     if (knop.dataset.actie === "reageer") {
       const reactie = blok.querySelector("textarea").value.trim();
       if (!reactie) { melding("Schrijf eerst je reactie; Jarvis pakt het doel daarmee weer op."); return; }
-      zeg(async () => { await rpc("doel_reageer", { p_id: id, p_reactie: reactie }); delete concepten[id]; });
+      zeg(async () => { await rpc("doel_reageer", { p_id: id, p_reactie: reactie }); delete concepten[id]; geopend.delete(id); });
     } else if (knop.dataset.actie === "sluit" && confirm("Dit doel sluiten? Jarvis werkt er niet meer aan en het verdwijnt uit Vastgelopen.")) {
-      zeg(async () => { await rpc("doel_sluit", { p_id: id }); delete concepten[id]; });
+      zeg(async () => { await rpc("doel_sluit", { p_id: id }); delete concepten[id]; geopend.delete(id); });
     }
   });
 
