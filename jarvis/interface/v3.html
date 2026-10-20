@@ -47,6 +47,14 @@
   .chatvorm { display:flex; gap:8px; align-items:flex-end; }
   .chatvorm textarea { resize:none; }
   .chatvorm button { margin:0; flex:none; }
+  .chatvorm .invoer { flex:1; min-width:0; }
+  .chatvorm .invoer textarea { width:100%; }
+  .chatvorm.sleep { outline:2px dashed var(--accent); outline-offset:3px; border-radius:10px; }
+  .chatvoorbeeld { display:flex; align-items:center; gap:8px; margin:0 0 8px; }
+  .chatvoorbeeld[hidden] { display:none; }
+  .chatvoorbeeld img, .bericht img { max-width:160px; max-height:120px; border-radius:8px; border:1px solid var(--lijn); display:block; }
+  .bericht img { margin-bottom:6px; }
+  .chatvorm .bijlage { padding:8px 10px; }
   .subtekst { color:var(--gedempt); font-size:12px; opacity:.8; margin:-8px 0 12px; }
   .activiteit { list-style:none; margin:0; padding:0; }
   .activiteit li { padding:7px 0; border-bottom:1px solid var(--lijn); font-size:14px; overflow-wrap:anywhere; }
@@ -261,7 +269,8 @@
     $("inhoud").innerHTML = `<div class="bovenrij">
         <div class="paneel ai-kern"><div class="ai-ring" aria-hidden="true"><b></b></div><h2>Jarvis AI Core</h2>
           <div class="chatlog" id="chatlog" role="log" aria-live="polite" aria-label="Gesprek met Jarvis"></div>
-          <form class="chatvorm" id="chatvorm"><textarea id="chatin" rows="2" placeholder="Stel een vraag of geef een opdracht" aria-label="Bericht aan Jarvis"></textarea><button class="hoofd" id="chatstuur" type="submit">Stuur</button></form></div>
+          <div class="chatvoorbeeld" id="chatvoorbeeld" hidden></div>
+          <form class="chatvorm" id="chatvorm"><input type="file" id="chatbestand" accept="image/png,image/jpeg,image/gif,image/webp" hidden><button type="button" class="bijlage" id="chatbijlage" aria-label="Afbeelding toevoegen" title="Afbeelding toevoegen of hierheen slepen">📎</button><div class="invoer"><textarea id="chatin" rows="2" placeholder="Stel een vraag of geef een opdracht" aria-label="Bericht aan Jarvis"></textarea></div><button class="hoofd" id="chatstuur" type="submit">Stuur</button></form></div>
         <div class="paneel"><h2>Recente activiteit</h2><div class="subtekst">Laatste activiteit van Jarvis</div>${recent.length ? `<ul class="activiteit">${recent.map((d) => `<li>${esc(d.titel)}<span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span><div class="klein">${esc(tijd(d.bijgewerkt))}</div></li>`).join("")}</ul>` : `<div class="leeg">Nog geen activiteit.</div>`}</div>
       </div>
       <div class="dashboard">
@@ -286,7 +295,36 @@
   try { chat = JSON.parse(sessionStorage.getItem("jarvis-chat") ?? "[]"); } catch { chat = []; }
   let chatBezig = false;
   let chatConcept = "";
-  const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40))); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
+  // De afbeelding wordt vóór het versturen verkleind (de server accepteert maar een kleine aanvraag) en blijft alleen in het
+  // geheugen; sessionStorage bewaart het gesprek zonder afbeeldingen.
+  let chatAfbeelding = null;
+  const BEELDTYPEN = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+  async function maakAfbeelding(bestand) {
+    if (!BEELDTYPEN.includes(bestand.type)) throw new Error("Kies een PNG-, JPEG-, GIF- of WebP-afbeelding.");
+    const bron = await createImageBitmap(bestand);
+    const f = Math.min(1, 1280 / Math.max(bron.width, bron.height));
+    const c = document.createElement("canvas");
+    c.width = Math.max(1, Math.round(bron.width * f)); c.height = Math.max(1, Math.round(bron.height * f));
+    const g = c.getContext("2d");
+    g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(bron, 0, 0, c.width, c.height);
+    const url = c.toDataURL("image/jpeg", 0.85);
+    return { media: "image/jpeg", data: url.slice(url.indexOf(",") + 1), url };
+  }
+  function tekenVoorbeeld() {
+    const v = $("chatvoorbeeld");
+    if (!v) return;
+    v.hidden = !chatAfbeelding;
+    v.innerHTML = chatAfbeelding ? `<img src="${chatAfbeelding.url}" alt="Voorbeeld van de bijgevoegde afbeelding"><button type="button" id="chatwis" aria-label="Afbeelding verwijderen">Verwijder</button>` : "";
+    if ($("chatwis")) $("chatwis").onclick = () => { chatAfbeelding = null; tekenVoorbeeld(); };
+  }
+  async function kiesBestand(bestand) {
+    if (!bestand) return;
+    try { chatAfbeelding = await maakAfbeelding(bestand); }
+    catch (e) { chat.push({ rol: "jarvis", tekst: e instanceof Error && !(e instanceof DOMException) ? e.message : "Die afbeelding kon ik niet lezen." }); tekenChat(); }
+    tekenVoorbeeld();
+  }
+  const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40).map(({ beeld, afbeelding, ...b }) => b))); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
 
   function berichtHtml(b) {
     let extra = "";
@@ -297,7 +335,8 @@
         extra = `<div class="klein">${esc(LABEL[d.status] ?? d.status)}${d.status === "klaar" ? " — KLAAR" : ""}</div>${soort === "lopend" ? stappen(d.status) : ""}${["klaar", "vast"].includes(d.status) && d.uitkomst ? `<div class="klein">${esc(d.uitkomst)}</div>` : ""}`;
       }
     }
-    return `<div class="bericht ${b.rol === "jij" ? "jij" : "jarvis"}">${esc(b.tekst)}${extra}</div>`;
+    const beeld = b.beeld ? `<img src="${b.beeld}" alt="Bijgevoegde afbeelding">` : b.metBeeld ? `<div class="klein">[afbeelding]</div>` : "";
+    return `<div class="bericht ${b.rol === "jij" ? "jij" : "jarvis"}">${beeld}${esc(b.tekst)}${extra}</div>`;
   }
 
   function tekenChat() {
@@ -308,15 +347,15 @@
     if (onderaan || chatBezig) log.scrollTop = log.scrollHeight;
   }
 
-  async function stuurChat(tekst) {
-    chat.push({ rol: "jij", tekst });
+  async function stuurChat(tekst, afb) {
+    chat.push({ rol: "jij", tekst, ...(afb ? { beeld: afb.url, afbeelding: { media: afb.media, data: afb.data }, metBeeld: true } : {}) });
     chatBezig = true; bewaarChat(); tekenChat();
     try {
       const { data: { session } } = await client.auth.getSession();
       const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ gesprek: chat.map((b) => ({ rol: b.rol, tekst: b.tekst })) }),
+        body: JSON.stringify({ gesprek: chat.map((b) => ({ rol: b.rol, tekst: b.tekst, ...(b.afbeelding ? { afbeelding: b.afbeelding } : {}) })) }),
       });
       const uit = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(uit.fout ?? `Chat gaf ${r.status}`);
@@ -336,10 +375,19 @@
     $("chatvorm").onsubmit = (ev) => {
       ev.preventDefault();
       const tekst = $("chatin").value.trim();
-      if (!tekst || chatBezig) return;
-      $("chatin").value = ""; chatConcept = "";
-      stuurChat(tekst);
+      if ((!tekst && !chatAfbeelding) || chatBezig) return;
+      const afb = chatAfbeelding;
+      $("chatin").value = ""; chatConcept = ""; chatAfbeelding = null; tekenVoorbeeld();
+      stuurChat(tekst, afb);
     };
+    $("chatbijlage").onclick = () => $("chatbestand").click();
+    $("chatbestand").onchange = (ev) => { kiesBestand(ev.target.files[0]); ev.target.value = ""; };
+    const vorm = $("chatvorm");
+    vorm.ondragover = (ev) => { ev.preventDefault(); vorm.classList.add("sleep"); };
+    vorm.ondragleave = () => vorm.classList.remove("sleep");
+    vorm.ondrop = (ev) => { ev.preventDefault(); vorm.classList.remove("sleep"); kiesBestand(ev.dataTransfer.files[0]); };
+    $("chatin").onpaste = (ev) => { const f = [...ev.clipboardData.files].find((x) => x.type.startsWith("image/")); if (f) { ev.preventDefault(); kiesBestand(f); } };
+    tekenVoorbeeld();
     tekenChat();
   }
 

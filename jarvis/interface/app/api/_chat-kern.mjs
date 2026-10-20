@@ -14,11 +14,17 @@ export const MODEL = "claude-haiku-5-5";
 const MAX_BERICHTEN = 20;
 const MAX_TEKENS = 4000;
 const MAX_UIT = 700;
+// Een Vercel Function accepteert hoogstens 4,5 MB per aanvraag; de browser verkleint de afbeelding vooraf.
+const MAX_AFBEELDING = 2_500_000;
+const MAX_TOTAAL_AFBEELDING = 3_500_000;
+const MAX_AFBEELDINGEN = 2;
+const BEELDTYPEN = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 const SYSTEEM = `Je bent Jarvis, de assistent van de eigenaar in het Command Center. Antwoord in het Nederlands, kort en feitelijk.
 Is het bericht een vraag of gesprek: antwoord gewoon, zonder gereedschap.
 Is het een concrete opdracht om iets te bouwen of te wijzigen: roep het gereedschap maak_doel aan met een korte titel en een volledige opdracht in gewone taal, en kies het project als het duidelijk is.
 Projecten: tovas-flow (ToVas Flow: gemiste oproepen, offertes, reviews, inlogpagina), kasboek (Kasboek). Subprojecten van tovas-flow: gemiste-oproepen, offerte-opvolging, reviews-verzamelen.
+Bij een bericht kan een afbeelding zitten die de eigenaar ter toelichting meestuurt: kijk ernaar en gebruik wat erop staat. Neem bij een opdracht de relevante inhoud van de afbeelding in woorden op in de opdracht.
 Verzin geen resultaten en beloof niets over de uitkomst; de keten bouwt, beoordeelt en rolt uit.`;
 
 const GEREEDSCHAP = [{
@@ -50,12 +56,35 @@ export async function vraagModel(berichten, { sleutel, fetchFn }) {
   return { tekst, doel: gebruik ? gebruik.input : null };
 }
 
+function schoonAfbeelding(a) {
+  if (!a || typeof a.data !== "string" || !BEELDTYPEN.includes(a.media) || !a.data || a.data.length > MAX_AFBEELDING) return null;
+  return /^[A-Za-z0-9+/]+={0,2}$/.test(a.data) ? { media: a.media, data: a.data } : null;
+}
+
+/** Geeft de berichten voor het model, of null; of { fout } als een afbeelding niet deugt. */
 function schoon(gesprek) {
   if (!Array.isArray(gesprek) || gesprek.length === 0) return null;
-  const rest = gesprek.slice(-MAX_BERICHTEN).map((b) => ({
-    role: b?.rol === "jarvis" ? "assistant" : "user",
-    content: String(b?.tekst ?? "").slice(0, MAX_TEKENS),
-  })).filter((b) => b.content.trim());
+  let totaal = 0;
+  let aantal = 0;
+  const rest = [];
+  // Van achteren naar voren, zodat de nieuwste afbeeldingen voorrang krijgen binnen het totaal.
+  for (const b of gesprek.slice(-MAX_BERICHTEN).reverse()) {
+    const tekst = String(b?.tekst ?? "").slice(0, MAX_TEKENS);
+    const role = b?.rol === "jarvis" ? "assistant" : "user";
+    let afb = null;
+    if (role === "user" && b?.afbeelding) {
+      afb = schoonAfbeelding(b.afbeelding);
+      if (!afb) return { fout: "De afbeelding is ongeldig of te groot." };
+      if (aantal >= MAX_AFBEELDINGEN || totaal + afb.data.length > MAX_TOTAAL_AFBEELDING) afb = null;
+      else { aantal += 1; totaal += afb.data.length; }
+    }
+    if (!tekst.trim() && !afb) continue;
+    const content = afb
+      ? [{ type: "image", source: { type: "base64", media_type: afb.media, data: afb.data } }, ...(tekst.trim() ? [{ type: "text", text: tekst }] : [])]
+      : tekst;
+    rest.push({ role, content });
+  }
+  rest.reverse();
   // Het gesprek moet met de eigenaar beginnen en eindigen.
   while (rest.length && rest[0].role !== "user") rest.shift();
   return rest.length && rest[rest.length - 1].role === "user" ? rest : null;
@@ -89,6 +118,7 @@ export async function verwerk({ token, body, cfg, sleutel, fetchFn = fetch }) {
   if (!token) return { status: 401, lading: { fout: "Niet ingelogd." } };
   const berichten = schoon(body?.gesprek);
   if (!berichten) return { status: 400, lading: { fout: "Geen bericht." } };
+  if (!Array.isArray(berichten)) return { status: 400, lading: { fout: berichten.fout } };
   try {
     if (!(await gebruiker(cfg, token, fetchFn))) return { status: 401, lading: { fout: "Sessie ongeldig; log opnieuw in." } };
     const { tekst, doel } = await vraagModel(berichten, { sleutel, fetchFn });
