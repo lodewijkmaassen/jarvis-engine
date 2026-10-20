@@ -23,7 +23,7 @@ const MAX_AFBEELDINGEN = 2;
 const BEELDTYPEN = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
 const SYSTEEM = `Je bent Jarvis, de assistent van de eigenaar in het Command Center. Antwoord in het Nederlands, kort en feitelijk.
-Is het bericht een vraag of gesprek: antwoord gewoon, zonder maak_doel.
+Is het bericht alleen een vraag of gesprek: antwoord gewoon, zonder maak_doel. Bevat het bericht naast een vraag ook een concrete opdracht: beantwoord de vraag en maak voor de opdracht een doel aan.
 Vragen over Jarvis zelf (welke taken lopen, status, wat er vandaag klaar is, wat er vastzit, waarom een taak ergens staat, wat er bij een taak gebeurde): haal de gegevens zelf op met het gereedschap raadpleeg_doelen en vraag de eigenaar nooit om gegevens die al in Jarvis staan. Een informatievraag maakt nooit een doel aan. Stel nooit voor een taak opnieuw aan te maken voordat je met raadpleeg_doelen hebt gecontroleerd of die al bestaat; bestaat hij, verwijs dan naar het bestaande doel.
 De keten van een doel: open (nieuw, wacht tot de uitvoerder het oppakt) → bezig (de uitvoerder bouwt) → review (pull request open, wacht op de reviewjob in CI) → samengevoegd (wordt uitgerold, daarna meet CI productie) → klaar. Vast = vastgelopen (veld vast_door zegt wie: uitvoerder, ci of eigenaar; de uitkomst geeft de reden), gesloten = door de eigenaar afgesloten. Leg bij een vraag uit in welke stap het doel zit en wat er dan gebeurt. De uitvoerder draait periodiek; een doel op open kan dus even wachten.
 Is het een concrete opdracht om iets te bouwen of te wijzigen: roep het gereedschap maak_doel aan met een korte titel en een volledige opdracht in gewone taal, en kies het project als het duidelijk is.
@@ -75,8 +75,8 @@ export async function raadpleeg(cfg, token, invoer, fetchFn) {
     const [doel] = await haal(`doelen?select=${DOEL_KOLOMMEN}&id=eq.${i.id}`);
     if (!doel) return { gevonden: false, id: i.id };
     // Activiteit is een aanvulling; ontbreken van leesrecht mag het antwoord niet breken.
-    const activiteit = await haal(`activiteit?select=op,rol,soort,tekst&taak=eq.${i.id}&order=op.desc&limit=15`).catch(() => []);
-    return { gevonden: true, doel: schoon(doel), activiteit: activiteit.map((a) => ({ ...a, tekst: kort(a.tekst, 300) })) };
+    const activiteit = await haal(`activiteit?select=op,rol,soort,tekst&taak=eq.${i.id}&order=op.desc&limit=15`).catch(() => null);
+    return { gevonden: true, doel: schoon(doel), activiteit: activiteit ? activiteit.map((a) => ({ ...a, tekst: kort(a.tekst, 300) })) : "niet leesbaar" };
   }
   const q = [`select=${DOEL_KOLOMMEN}`, "order=bijgewerkt.desc"];
   const aantal = Math.min(Math.max(Number.parseInt(i.aantal, 10) || 10, 1), MAX_DOELEN);
