@@ -290,7 +290,7 @@
       chat.push({ rol: "jarvis", tekst: uit.antwoord, doelId: uit.doel?.id ?? null });
       if (uit.doel) await laad();
     } catch (e) {
-      chat.push({ rol: "jarvis", tekst: `Dat lukte niet: ${e.message ?? e}` });
+      chat.push({ rol: "jarvis", tekst: `Dat lukte niet: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       chatBezig = false; bewaarChat(); tekenChat();
     }
