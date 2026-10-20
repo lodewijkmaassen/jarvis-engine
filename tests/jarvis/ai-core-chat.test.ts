@@ -71,4 +71,21 @@ describe("chat in de uitrol", () => {
     expect(html).toContain('fetch("/api/chat"');
     expect(html).toContain("Nieuw doel"); // de fallback blijft
   });
+
+  it("Vercel vindt de functie op /api/chat: api/chat.mjs in de projectwortel geeft de bestaande POST door", async () => {
+    // Vercel draait alleen bestanden in api/ in de projectwortel als functie; public/api/ is statisch (404 na #98).
+    // @ts-expect-error — gewone .mjs zonder typen
+    const wortel = await import("../../api/chat.mjs");
+    // @ts-expect-error — gewone .mjs zonder typen
+    const bron = await import("../../jarvis/interface/app/api/chat.mjs");
+    expect(wortel.POST).toBe(bron.POST);
+  });
+
+  it("zonder chat-config.json naast de functie komen de publieke identifiers uit de omgeving", async () => {
+    // @ts-expect-error — gewone .mjs zonder typen
+    const { leesCfg } = await import("../../jarvis/interface/app/api/chat.mjs");
+    expect(leesCfg({ JARVIS_PUBLISHABLE_KEY: "sb_publishable_test" })).toEqual({ url: "https://mfjuaiezjtjdhahvwqzn.supabase.co", key: "sb_publishable_test" });
+    expect(leesCfg({ JARVIS_PUBLISHABLE_KEY: "k", JARVIS_SUPABASE_URL: "https://y.supabase.co" })).toEqual({ url: "https://y.supabase.co", key: "k" });
+    expect(leesCfg({})).toBeNull();
+  });
 });
