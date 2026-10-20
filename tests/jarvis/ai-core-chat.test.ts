@@ -88,4 +88,32 @@ describe("chat in de uitrol", () => {
     expect(leesCfg({ JARVIS_PUBLISHABLE_KEY: "k", JARVIS_SUPABASE_URL: "https://y.supabase.co" })).toEqual({ url: "https://y.supabase.co", key: "k" });
     expect(leesCfg({})).toBeNull();
   });
+  it("geeft een meegestuurde afbeelding door aan het model", async () => {
+    const { oproepen, fetchFn } = nep({ content: [{ type: "text", text: "Ik zie een knop." }] });
+    const body = { gesprek: [{ rol: "jij", tekst: "Wat zie je?", afbeelding: { media: "image/png", data: "iVBORw0KGgo=" } }] };
+    const r = await verwerk({ token: "t", body, cfg, sleutel: "k", fetchFn });
+    expect(r.status).toBe(200);
+    const model = oproepen.find((o) => o.url.includes("anthropic"))!;
+    expect(JSON.parse(String(model.init.body)).messages[0].content).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+      { type: "text", text: "Wat zie je?" },
+    ]);
+  });
+  it("accepteert een bericht met alleen een afbeelding", async () => {
+    const { fetchFn } = nep({ content: [{ type: "text", text: "Ok." }] });
+    const body = { gesprek: [{ rol: "jij", tekst: "", afbeelding: { media: "image/jpeg", data: "AAAA" } }] };
+    expect((await verwerk({ token: "t", body, cfg, sleutel: "k", fetchFn })).status).toBe(200);
+  });
+  it("weigert een afbeelding met een ongeldig type, ongeldige inhoud of te groot, zonder het model aan te roepen", async () => {
+    const { oproepen, fetchFn } = nep({ content: [] });
+    for (const afbeelding of [
+      { media: "image/svg+xml", data: "AAAA" },
+      { media: "image/png", data: "niet base64!" },
+      { media: "image/png", data: "A".repeat(2_500_004) },
+    ]) {
+      const r = await verwerk({ token: "t", body: { gesprek: [{ rol: "jij", tekst: "x", afbeelding }] }, cfg, sleutel: "k", fetchFn });
+      expect(r.status).toBe(400);
+    }
+    expect(oproepen.some((o) => o.url.includes("anthropic"))).toBe(false);
+  });
 });
