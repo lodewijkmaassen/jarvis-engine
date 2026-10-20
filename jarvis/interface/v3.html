@@ -262,8 +262,9 @@
   }
 
   function weergaveCommandCenter() {
-    const { lopend, vast, klaar, gesloten } = splits(alleDoelen.filter((d) => !projectVan(d)));
+    // Teller en lijst komen uit dezelfde bron: ook doelen van projecten (zoals het Kasboek) staan in de lijsten.
     const totaal = splits(alleDoelen);
+    const { lopend, vast, klaar, gesloten } = totaal;
     const recent = alleDoelen.slice().sort((x, y) => new Date(y.bijgewerkt) - new Date(x.bijgewerkt)).slice(0, 6);
     const tegel = (soort, n, naam) => `<div class="statustegel ${soort}"><b>${n}</b><span>${naam}</span></div>`;
     $("inhoud").innerHTML = `<div class="bovenrij">

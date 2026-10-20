@@ -87,8 +87,9 @@ describe("de V3-weergave", () => {
     expect(HTML).toContain('href="#/projecten"');
     expect(HTML).toContain('sleutel: "kasboek"');
     expect(HTML).toContain("Project: ");
-    // Projectdoelen blijven uit het algemene Command Center.
-    expect(HTML).toContain("filter((d) => !projectVan(d))");
+    // Het Command Center toont de doelen van alle projecten: lijst en teller komen uit dezelfde bron.
+    expect(HTML).not.toContain("filter((d) => !projectVan(d))");
+    expect(HTML).toContain("const { lopend, vast, klaar, gesloten } = totaal;");
   });
   it("heeft ToVas Flow als project met de drie subprojecten van de eigenaar (D-20261019-151236935)", () => {
     expect(HTML).toContain('sleutel: "tovas-flow", naam: "ToVas Flow"');
