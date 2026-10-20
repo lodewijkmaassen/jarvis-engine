@@ -208,12 +208,59 @@
       ${(open ? doelActies(d) : "")}</div>`;
   }
 
+  // Eigenaarsbeslissingen (DEC-0043): hetzelfde bericht met context.akkoord_pr en dezelfde tabel jarvis.autorisaties
+  // als de oude interface; hier alleen zichtbaar en afhandelbaar gemaakt.
+  let berichten = [], autorisaties = [], beslissingFout = null;
+  async function laadBeslissingen() {
+    const [b, a] = await Promise.all([
+      client.from("berichten").select("*").order("op"),
+      client.from("autorisaties").select("id, soort, pr_repo, pr_nummer, commit_sha, op").order("op", { ascending: false }),
+    ]);
+    beslissingFout = b.error || a.error ? `Beslissingen niet te lezen: ${(b.error ?? a.error).message}` : null;
+    berichten = b.data ?? []; autorisaties = a.data ?? [];
+  }
+  const objectVan = (c) => { if (typeof c === "string") { try { return JSON.parse(c); } catch { return {}; } } return c ?? {}; };
+  const prSleutel = (v) => `${v.repo}#${v.nummer}@${v.commit_sha}`;
+  // Open: een bericht van Jarvis met akkoord_pr waarop nog geen akkoord ligt en dat de eigenaar niet afwees.
+  function openBeslissingen() {
+    const afgewezen = new Set(berichten.filter((b) => b.van === "eigenaar").map((b) => objectVan(b.context).akkoord_pr_afgewezen).filter(Boolean).map(prSleutel));
+    const gezien = new Set();
+    return berichten.filter((b) => b.van === "jarvis").map((b) => ({ b, v: objectVan(b.context).akkoord_pr })).filter(({ v }) => v && v.repo && v.commit_sha).filter(({ v }) => {
+      const k = prSleutel(v);
+      if (gezien.has(k) || afgewezen.has(k)) return false;
+      gezien.add(k);
+      return !autorisaties.some((a) => a.soort === "pr" && a.pr_repo === v.repo && Number(a.pr_nummer) === Number(v.nummer) && a.commit_sha === v.commit_sha);
+    }).reverse();
+  }
+  function beslissingenPaneel() {
+    const open = openBeslissingen();
+    const fout = beslissingFout ? `<div class="melding">${esc(beslissingFout)}</div>` : "";
+    if (!open.length) return fout;
+    return `<div class="paneel beslissing"><h2>Wacht op jou <span class="tel">${open.length}</span></h2>${fout}${open.map(({ b, v }) => `<div class="kaart" data-bericht="${esc(b.id)}">
+      <h3>${esc(v.repo)} #${esc(v.nummer)}${v.taak ? ` · ${esc(v.taak)}` : ""}</h3>
+      <div class="klein">Wat Jarvis nodig heeft: je akkoord op precies commit ${esc(String(v.commit_sha).slice(0, 7))}. Waarom jij: deze pull request raakt een harde uitzondering; het akkoord op het doel dekt hem niet.</div>
+      ${b.tekst ? `<p class="opdracht">${esc(b.tekst)}</p>` : ""}
+      <button class="hoofd" data-beslis="akkoord">Akkoord</button><button data-beslis="afwijzen">Afwijzen</button></div>`).join("")}</div>`;
+  }
+  async function beslis(berichtId, wat) {
+    const b = berichten.find((x) => String(x.id) === berichtId); const v = objectVan(b?.context).akkoord_pr;
+    if (!v) return;
+    if (wat === "akkoord") {
+      const r = await client.from("autorisaties").insert({ soort: "pr", project: v.project ?? null, taak: v.taak ?? null, pr_repo: v.repo, pr_nummer: Number(v.nummer), commit_sha: v.commit_sha, tekst: b.tekst, bron: "interface" });
+      if (r.error) throw r.error;
+    } else {
+      const r = await client.from("berichten").insert({ van: "eigenaar", tekst: `Afgewezen: ${v.repo}#${v.nummer} (${String(v.commit_sha).slice(0, 7)}).`, op: new Date().toISOString(), status: "nieuw", context: { akkoord_pr_afgewezen: v, taak: v.taak ?? null, project: v.project ?? null } });
+      if (r.error) throw r.error;
+    }
+  }
+
   async function laad(auto) {
     // Een verversing op de klok mag nooit een half getypte opdracht wegvegen.
     if (auto === true && document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
     const doelen = await client.from("doelen").select("*").order("aangemaakt", { ascending: false });
     if (doelen.error) { melding(`Niet te lezen: ${doelen.error.message}`); return; }
     alleDoelen = doelen.data;
+    await laadBeslissingen();
     const lopend = splits(alleDoelen).lopend;
     $("status").textContent = `bijgewerkt ${new Date().toLocaleTimeString("nl-NL")} · ${lopend.length} lopend`;
     teken();
@@ -284,6 +331,7 @@
           ${vast.length ? `<h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${vast.map(kaartDoel).join("")}` : ""}
           ${inklapBlok("cc:klaar", "Klaar", klaar, "Nog niets afgerond.")}
           ${geslotenBlok(gesloten, "cc")}</div>
+        ${beslissingenPaneel()}
         <div class="paneel">${invoerBlok(null)}</div>
       </div>`;
     koppelInvoer(null);
@@ -458,6 +506,14 @@
   // Eén luisteraar voor het openklappen en de knoppen op alle doelkaarten, in elke weergave.
   $("inhoud").addEventListener("input", (ev) => { const id = ev.target.dataset?.concept; if (id) concepten[id] = ev.target.value; });
   $("inhoud").addEventListener("click", (ev) => {
+    const bk = ev.target.closest("button[data-beslis]");
+    if (bk) {
+      const wat = bk.dataset.beslis;
+      if (wat === "afwijzen" && !confirm("Dit akkoord afwijzen? Jarvis voegt deze pull request dan niet samen.")) return;
+      bk.disabled = true;
+      zeg(() => beslis(bk.closest("[data-bericht]").dataset.bericht, wat));
+      return;
+    }
     const knop = ev.target.closest("button[data-actie]");
     if (knop?.dataset.actie === "vouw") {
       const blok = knop.dataset.blok;
