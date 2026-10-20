@@ -146,7 +146,9 @@ describe("chat in de uitrol", () => {
   it("leest één doel met zijn activiteit, ook als de activiteit niet leesbaar is", async () => {
     const fetchFn = async (url: string) => (url.includes("/doelen") ? new Response(JSON.stringify([{ id: "D-20261020-1", titel: "T", status: "vast" }]), { status: 200 }) : new Response("nee", { status: 403 }));
     const uit = await raadpleeg(cfg, "t", { id: "D-20261020-1" }, fetchFn);
-    expect(uit).toMatchObject({ gevonden: true, activiteit: "niet leesbaar" });
+    expect(uit).toMatchObject({ gevonden: true, activiteit: "niet leesbaar (geen leesrecht)" });
+    const stuk = async (url: string) => (url.includes("/doelen") ? new Response(JSON.stringify([{ id: "T-1", titel: "T", status: "vast" }]), { status: 200 }) : new Response("x", { status: 500 }));
+    expect(await raadpleeg(cfg, "t", { id: "T-20261001-onboarding" }, stuk)).toMatchObject({ gevonden: true, activiteit: "niet leesbaar (ophalen mislukt)" });
     expect(await raadpleeg(cfg, "t", { id: "geen id" }, async () => new Response("[]", { status: 200 }))).toMatchObject({ aantal: 0 });
   });
 });

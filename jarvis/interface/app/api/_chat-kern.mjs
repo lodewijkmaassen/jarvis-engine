@@ -71,12 +71,12 @@ export async function raadpleeg(cfg, token, invoer, fetchFn) {
   };
   const i = invoer ?? {};
   const schoon = (d) => ({ ...d, opdracht: kort(d.opdracht, 600), uitkomst: kort(d.uitkomst, 1200) });
-  if (typeof i.id === "string" && /^D-[0-9-]+$/.test(i.id)) {
+  if (typeof i.id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(i.id)) {
     const [doel] = await haal(`doelen?select=${DOEL_KOLOMMEN}&id=eq.${i.id}`);
     if (!doel) return { gevonden: false, id: i.id };
     // Activiteit is een aanvulling; ontbreken van leesrecht mag het antwoord niet breken.
-    const activiteit = await haal(`activiteit?select=op,rol,soort,tekst&taak=eq.${i.id}&order=op.desc&limit=15`).catch(() => null);
-    return { gevonden: true, doel: schoon(doel), activiteit: activiteit ? activiteit.map((a) => ({ ...a, tekst: kort(a.tekst, 300) })) : "niet leesbaar" };
+    const activiteit = await haal(`activiteit?select=op,rol,soort,tekst&taak=eq.${i.id}&order=op.desc&limit=15`).catch((e) => ({ fout: /\((401|403)\)/.test(String(e?.message)) ? "geen leesrecht" : "ophalen mislukt" }));
+    return { gevonden: true, doel: schoon(doel), activiteit: Array.isArray(activiteit) ? activiteit.map((a) => ({ ...a, tekst: kort(a.tekst, 300) })) : `niet leesbaar (${activiteit.fout})` };
   }
   const q = [`select=${DOEL_KOLOMMEN}`, "order=bijgewerkt.desc"];
   const aantal = Math.min(Math.max(Number.parseInt(i.aantal, 10) || 10, 1), MAX_DOELEN);
@@ -86,7 +86,7 @@ export async function raadpleeg(cfg, token, invoer, fetchFn) {
   const sinds = typeof i.sinds === "string" ? new Date(i.sinds) : null;
   if (sinds && !Number.isNaN(sinds.getTime())) q.push(`bijgewerkt=gte.${encodeURIComponent(sinds.toISOString())}`);
   const zoek = typeof i.zoek === "string" ? i.zoek.replace(/[^\p{L}\p{N} -]/gu, "").trim().slice(0, 60) : "";
-  if (zoek) q.push(`or=(${encodeURIComponent(`titel.ilike.*${zoek}*,opdracht.ilike.*${zoek}*`)})`);
+  if (zoek) q.push(`or=(${encodeURIComponent(`titel.ilike.*${zoek}*`)},${encodeURIComponent(`opdracht.ilike.*${zoek}*`)})`);
   const doelen = await haal(`doelen?${q.join("&")}`);
   return { aantal: doelen.length, doelen: doelen.map(schoon) };
 }
