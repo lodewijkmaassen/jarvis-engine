@@ -113,6 +113,9 @@
   .telrij { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
   .acties { margin-top:12px; padding-top:12px; border-top:1px solid var(--lijn); }
   .kaart.gesloten { opacity:.75; }
+  h2 button[data-actie="vouw"] { margin:0 0 0 10px; padding:4px 12px; min-height:32px; font-size:13px; letter-spacing:0; text-transform:none; }
+  .bladeren { display:flex; align-items:center; gap:12px; margin:6px 0 10px; }
+  .bladeren button { margin:0; }
 </style>
 </head>
 <body>
@@ -216,7 +219,24 @@
     klaar: doelen.filter((d) => d.status === "klaar"),
     gesloten: doelen.filter((d) => d.status === "gesloten"),
   });
-  const geslotenBlok = (gesloten) => (gesloten.length ? `<h2 style="margin-top:22px">Gesloten <span class="tel">${gesloten.length}</span></h2>${lijst(gesloten, "")}` : "");
+  // Klaar, historie en gesloten staan standaard ingeklapt en tonen hoogstens PER_PAGINA doelen tegelijk; de eigenaar klapt
+  // ze uit en bladert. Sleutel = weergave + soort, zodat elk blok zijn eigen stand houdt (ook over een verversing heen).
+  const PER_PAGINA = 10;
+  const uitgeklapt = new Set();
+  const paginas = {};
+  function inklapBlok(sleutel, titel, arr, leeg) {
+    const open = uitgeklapt.has(sleutel);
+    const aantal = Math.max(1, Math.ceil(arr.length / PER_PAGINA));
+    const nu = Math.min(Math.max(paginas[sleutel] ?? 0, 0), aantal - 1);
+    paginas[sleutel] = nu;
+    const bladeren = aantal > 1
+      ? `<div class="bladeren"><button type="button" data-actie="pagina" data-blok="${esc(sleutel)}" data-stap="-1"${nu === 0 ? " disabled" : ""}>Vorige</button><span class="klein">Pagina ${nu + 1} van ${aantal}</span><button type="button" data-actie="pagina" data-blok="${esc(sleutel)}" data-stap="1"${nu >= aantal - 1 ? " disabled" : ""}>Volgende</button></div>`
+      : "";
+    return `<h2 style="margin-top:22px">${esc(titel)} <span class="tel">${arr.length}</span>
+        <button type="button" data-actie="vouw" data-blok="${esc(sleutel)}" aria-expanded="${open}">${open ? "Inklappen" : "Uitklappen"}</button></h2>
+      ${open ? lijst(arr.slice(nu * PER_PAGINA, (nu + 1) * PER_PAGINA), leeg) + bladeren : ""}`;
+  }
+  const geslotenBlok = (gesloten, ctx) => (gesloten.length ? inklapBlok(ctx + ":gesloten", "Gesloten", gesloten, "") : "");
 
   // plek = { naam, label } voor een project of subproject; null in het Command Center.
   function invoerBlok(plek) {
@@ -252,8 +272,8 @@
           <div class="statusrij">${tegel("lopend", totaal.lopend.length, "Lopend")}${tegel("vast", totaal.vast.length, "Vastgelopen")}${tegel("klaar", totaal.klaar.length, "Klaar")}${tegel("gesloten", totaal.gesloten.length, "Gesloten")}</div>
           <h2>Lopend <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Geen lopende doelen.")}
           ${vast.length ? `<h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${vast.map(kaartDoel).join("")}` : ""}
-          <h2 style="margin-top:22px">Klaar <span class="tel">${klaar.length}</span></h2>${lijst(klaar, "Nog niets afgerond.")}
-          ${geslotenBlok(gesloten)}</div>
+          ${inklapBlok("cc:klaar", "Klaar", klaar, "Nog niets afgerond.")}
+          ${geslotenBlok(gesloten, "cc")}</div>
         <div class="paneel">${invoerBlok(null)}</div>
       </div>`;
     koppelInvoer(null);
@@ -351,8 +371,8 @@
         <section><h2>Nu in ontwikkeling <span class="tel">${lopend.length}</span></h2>${lijst(lopend, "Niets in ontwikkeling.")}
           <h2 style="margin-top:22px">Vastgelopen <span class="tel">${vast.length}</span></h2>${lijst(vast, "Niets vastgelopen.")}</section>
         <section><h2>Recent afgerond <span class="tel">${recent.length}</span></h2>${lijst(recent, "Nog niets afgerond.")}
-          <h2 style="margin-top:22px">Historie <span class="tel">${klaar.length}</span></h2>${lijst(klaar.slice(3), "Geen oudere doelen.")}
-          ${geslotenBlok(gesloten)}</section>
+          ${inklapBlok(plek.label + ":klaar", "Historie", klaar.slice(3), "Geen oudere doelen.")}
+          ${geslotenBlok(gesloten, plek.label)}</section>
       </div>`;
     koppelInvoer(plek);
   }
@@ -390,6 +410,17 @@
   $("inhoud").addEventListener("input", (ev) => { const id = ev.target.dataset?.concept; if (id) concepten[id] = ev.target.value; });
   $("inhoud").addEventListener("click", (ev) => {
     const knop = ev.target.closest("button[data-actie]");
+    if (knop?.dataset.actie === "vouw") {
+      const blok = knop.dataset.blok;
+      if (uitgeklapt.has(blok)) uitgeklapt.delete(blok); else uitgeklapt.add(blok);
+      teken();
+      return;
+    }
+    if (knop?.dataset.actie === "pagina") {
+      paginas[knop.dataset.blok] = (paginas[knop.dataset.blok] ?? 0) + Number(knop.dataset.stap);
+      teken();
+      return;
+    }
     if (knop?.dataset.actie === "open") {
       const wie = knop.dataset.id;
       if (geopend.has(wie)) geopend.delete(wie); else geopend.add(wie);
