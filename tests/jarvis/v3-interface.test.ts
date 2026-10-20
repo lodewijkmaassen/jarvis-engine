@@ -19,12 +19,26 @@ describe("de V3-weergave", () => {
     expect(rpcs).toEqual(new Set(["doel_nieuw", "doel_reageer", "doel_sluit"]));
   });
   it("geeft een vastgelopen doel een reactieveld, 'Reageer en hervat' en 'Sluiten' (D-20261019-202736404)", () => {
-    // Alleen een vastgelopen kaart krijgt de knoppen.
-    expect(HTML).toContain('${(d.status === "vast" ? vastActies(d) : "")}');
-    expect(HTML).toContain('data-actie="reageer">Reageer en hervat</button>');
-    expect(HTML).toContain('data-actie="sluit">Sluiten</button>');
+    // Sluiten alleen bij een vastgelopen doel.
+    expect(HTML).toContain('d.status === "vast" ? `<button data-actie="sluit">Sluiten</button>`');
+    expect(HTML).toContain('data-actie="reageer">${knop}</button>');
+    expect(HTML).toContain('"Reageer en hervat"');
     expect(HTML).toContain('rpc("doel_reageer", { p_id: id, p_reactie: reactie })');
     expect(HTML).toContain('rpc("doel_sluit", { p_id: id })');
+  });
+  it("houdt kaarten compact tot ze worden aangeklikt; dan komen details, reactieveld en knoppen (D-20261020-190814438)", () => {
+    expect(HTML).toContain('${(open ? doelActies(d) : "")}');
+    expect(HTML).toContain('data-actie="open" aria-expanded="${esc(open)}"');
+    expect(HTML).not.toContain('vastActies');
+    expect(HTML).toContain('if (geopend.has(wie)) geopend.delete(wie); else geopend.add(wie);');
+  });
+  it("legt de databasekant van reageren op elk doel vast in het dossier (D-20261020-190814438)", () => {
+    const sql = readFileSync(path.join(process.cwd(), "tasks/D-20261020-190814438/0001_reageren_op_elk_doel.sql"), "utf8");
+    expect(sql).toContain("create or replace function jarvis.doel_reageer(p_id text, p_reactie text)");
+    expect(sql).toContain("if not jarvis.v3_is_eigenaar()");
+    expect(sql).toContain("d.status in ('vast', 'klaar', 'gesloten')");
+    expect(sql).toContain("old.status in ('vast', 'klaar', 'gesloten') and new.status = 'open'");
+    expect(sql).toContain("grant execute on function jarvis.doel_reageer(text, text) to authenticated");
   });
   it("telt een gesloten doel niet als lopend, vastgelopen of klaar (D-20261019-202736404)", () => {
     const bron = /const splits = (\(doelen\) => \(\{[\s\S]*?\}\));/.exec(HTML)?.[1];
