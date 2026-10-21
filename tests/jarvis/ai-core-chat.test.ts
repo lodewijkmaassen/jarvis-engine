@@ -42,7 +42,41 @@ describe("chat-kern", () => {
     expect(r.lading.doel).toEqual({ id: "D-20261020-120000", titel: "Login aanpassen" });
     const rpc = oproepen.find((o) => o.url.includes("doel_nieuw"))!;
     expect((rpc.init.headers as Record<string, string>).authorization).toBe("Bearer gebruikerstoken");
-    expect(JSON.parse(String(rpc.init.body))).toEqual({ p_titel: "Login aanpassen", p_opdracht: "Project: tovas-flow\n\nPas de loginpagina aan", p_acceptatie_url: null });
+    // De toelichting van het model en daarna altijd de letterlijke tekst van de eigenaar.
+    expect(JSON.parse(String(rpc.init.body))).toEqual({
+      p_titel: "Login aanpassen",
+      p_opdracht: "Project: tovas-flow\n\nPas de loginpagina aan\n\nOorspronkelijke opdracht van de eigenaar:\nHoe laat is het?",
+      p_acceptatie_url: null,
+    });
+  });
+  it("een opdracht wordt ook een doel als het model geen opdracht of geen titel meegeeft (\"doel mist titel of opdracht\")", async () => {
+    const lang = "Breid het Command Center uit met een weekoverzicht.\n\n" + "Eisen: ".repeat(900) + "einde";
+    const opdracht = { gesprek: [{ rol: "jij", tekst: lang }] };
+    // Afgekapte of onvolledige aanroep: alleen een titel, of helemaal niets.
+    for (const input of [{ titel: "Weekoverzicht" }, {}]) {
+      const { oproepen, fetchFn } = nep({ stop_reason: "max_tokens", content: [{ type: "tool_use", name: "maak_doel", input }] });
+      const r = await verwerk({ token: "t", body: opdracht, cfg, sleutel: "k", fetchFn });
+      expect(r.status).toBe(200);
+      const body = JSON.parse(String(oproepen.find((o) => o.url.includes("doel_nieuw"))!.init.body));
+      expect(body.p_titel).toBe("titel" in input ? "Weekoverzicht" : "Breid het Command Center uit met een weekoverzicht.");
+      // Geen toelichting van het model en geen project: dan is de opdracht precies de tekst van de eigenaar, zonder
+      // label (het label "Oorspronkelijke opdracht" komt er alleen bij als er een toelichting vóór staat) — ook voorbij
+      // de oude grens van 4000 tekens.
+      expect(body.p_opdracht).toBe(lang);
+      expect(lang.length).toBeGreaterThan(4000);
+    }
+    // Met toelichting en project: eerst het projectlabel, dan de toelichting, dan de gelabelde tekst van de eigenaar.
+    const { oproepen, fetchFn } = nep({ content: [{ type: "tool_use", name: "maak_doel", input: { titel: "Weekoverzicht", toelichting: "Zie de schets in het vorige bericht.", project: "kasboek" } }] });
+    await verwerk({ token: "t", body: opdracht, cfg, sleutel: "k", fetchFn });
+    const body = JSON.parse(String(oproepen.find((o) => o.url.includes("doel_nieuw"))!.init.body));
+    expect(body.p_opdracht).toBe(`Project: kasboek\n\nZie de schets in het vorige bericht.\n\nOorspronkelijke opdracht van de eigenaar:\n${lang}`);
+  });
+  it("doelVelden: kopieert het model de tekst van de eigenaar, dan staat die er één keer in", async () => {
+    // @ts-expect-error — gewone .mjs zonder typen
+    const { doelVelden } = await import("../../jarvis/interface/app/api/_chat-kern.mjs");
+    expect(doelVelden({ titel: "T", toelichting: "Bouw X" }, "Bouw X")).toEqual({ titel: "T", opdracht: "Bouw X" });
+    expect(doelVelden({ titel: "T", opdracht: "Zie de afbeelding: knop rechtsboven" }, "Maak dit")).toEqual({ titel: "T", opdracht: "Zie de afbeelding: knop rechtsboven\n\nOorspronkelijke opdracht van de eigenaar:\nMaak dit" });
+    expect(doelVelden({}, "")).toEqual({ titel: "", opdracht: "" });
   });
   it("weigert zonder sessie, zonder sleutel en zonder bericht, en roept dan het model niet aan", async () => {
     const { oproepen, fetchFn } = nep({ content: [] });
