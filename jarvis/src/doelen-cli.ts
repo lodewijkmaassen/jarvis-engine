@@ -13,7 +13,7 @@
 import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
-import { DOEL_WERK_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
+import { ACTIVITEIT_SQL, DOEL_WERK_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
 import { checksGroen, dispatchNodig, doelUitPrTekst, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
@@ -303,6 +303,26 @@ export async function ciDispatch(droog: boolean): Promise<number> {
   return await met((sql) => dispatchDoelen(sql, droog));
 }
 
+/**
+ * Legt een statuswisseling van de uitvoerder vast in de bestaande activiteit, zodat de AI Core later kan uitleggen
+ * wat er met een doel gebeurde (vastlopen en reden, hervatting, pull request). Best-effort: een mislukte regel
+ * breekt de statuswisseling niet.
+ */
+async function leg(sql: DbClient, id: string, van: string, naar: string, pr: string | null, uitkomst: string | null): Promise<void> {
+  const soort = naar === "vast" ? "fout" : van === "vast" || van === "klaar" ? "herstel" : naar === "review" ? "pr" : "stap";
+  let verwijzing: string | null = null;
+  try {
+    const p = pr === null ? null : (JSON.parse(pr) as { repo?: string; nummer?: number });
+    if (p?.repo && p.nummer) verwijzing = `${p.repo.split("/").pop()}#${p.nummer}`;
+  } catch { /* pr is al gevalideerd door de aanroeper */ }
+  const tekst = `Status ${van} → ${naar}${uitkomst ? `: ${uitkomst}` : ""}`.slice(0, 500);
+  try {
+    await sql.unsafe(ACTIVITEIT_SQL, [process.env.JARVIS_UITVOERDER ?? "cloud", "developer", id, null, soort, tekst, verwijzing]);
+  } catch {
+    console.error("jarvis doel: statuswisseling niet in de activiteit gelegd.");
+  }
+}
+
 /** `jarvis doel lijst | zet <id> <status> [--pr <json>] [--uitkomst <tekst>]` — voor de uitvoerder. */
 export async function voerDoelUit(argv: readonly string[]): Promise<number> {
   const { opdracht, vlaggen, losse } = leesArgumenten(argv);
@@ -319,7 +339,9 @@ export async function voerDoelUit(argv: readonly string[]): Promise<number> {
       const pr = vlaggen.get("pr");
       if (pr !== undefined) JSON.parse(pr);
       return await met(async (sql) => {
+        const voor = (await leesDoelen(sql)).find((d) => d.id === id)?.status ?? "?";
         const r = await sql.unsafe(DOEL_WERK_SQL, [id, status, pr ?? null, vlaggen.get("uitkomst") ?? null]);
+        await leg(sql, id, voor, String(r[0]?.["status"]), pr ?? null, vlaggen.get("uitkomst") ?? null);
         console.log(`jarvis doel: ${id} → ${String(r[0]?.["status"])}`);
         return 0;
       });
