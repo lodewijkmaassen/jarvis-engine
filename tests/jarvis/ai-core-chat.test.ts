@@ -185,4 +185,30 @@ describe("chat in de uitrol", () => {
     expect(await raadpleeg(cfg, "t", { id: "T-20261001-onboarding" }, stuk)).toMatchObject({ gevonden: true, activiteit: "niet leesbaar (ophalen mislukt)" });
     expect(await raadpleeg(cfg, "t", { id: "geen id" }, async () => new Response("[]", { status: 200 }))).toMatchObject({ aantal: 0 });
   });
+  it("geeft bij één doel de reviewoordelen van zijn pull request mee", async () => {
+    const urls: string[] = [];
+    const fetchFn = async (url: string) => {
+      urls.push(decodeURIComponent(url));
+      if (url.includes("/doelen")) return new Response(JSON.stringify([{ id: "D-1", titel: "T", status: "vast", pr: { repo: "o/jarvis-engine", nummer: 106 } }]), { status: 200 });
+      if (url.includes("/toetsingen")) return new Response(JSON.stringify([{ oordeel: "NO-GO", rapport: "r".repeat(2000) }]), { status: 200 });
+      return new Response("[]", { status: 200 });
+    };
+    const uit = await raadpleeg(cfg, "t", { id: "D-1" }, fetchFn);
+    expect(urls.some((u) => u.includes("pr_repo=eq.o/jarvis-engine&pr_nummer=eq.106"))).toBe(true);
+    expect(uit.reviewoordelen[0].oordeel).toBe("NO-GO");
+    expect(uit.reviewoordelen[0].rapport.length).toBeLessThan(1600);
+  });
+  it("geeft met historie de recentste vastlopers, fouten en NO-GO's over alle doelen", async () => {
+    const urls: string[] = [];
+    const fetchFn = async (url: string) => {
+      urls.push(decodeURIComponent(url));
+      return new Response(JSON.stringify([{ id: "D-1", titel: "T" }]), { status: 200 });
+    };
+    const uit = await raadpleeg(cfg, "t", { historie: true }, fetchFn);
+    expect(uit).toHaveProperty("vastgelopen");
+    expect(uit).toHaveProperty("recente_gebeurtenissen");
+    expect(uit).toHaveProperty("recente_no_go");
+    expect(urls.some((u) => u.includes("status=eq.vast"))).toBe(true);
+    expect(urls.some((u) => u.includes("oordeel=eq.NO-GO"))).toBe(true);
+  });
 });
