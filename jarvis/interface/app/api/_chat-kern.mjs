@@ -28,8 +28,8 @@ const BEELDTYPEN = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const SYSTEEM = `Je bent Jarvis, de assistent van de eigenaar in het Command Center. Antwoord in het Nederlands, kort en feitelijk.
 Is het bericht alleen een vraag of gesprek: antwoord gewoon, zonder maak_doel. Bevat het bericht naast een vraag ook een concrete opdracht: beantwoord de vraag en maak voor de opdracht een doel aan.
 Vragen over Jarvis zelf (welke taken lopen, status, wat er vandaag klaar is, wat er vastzit, waarom een taak ergens staat, wat er bij een taak gebeurde): haal de gegevens zelf op met het gereedschap raadpleeg_doelen en vraag de eigenaar nooit om gegevens die al in Jarvis staan. Een informatievraag maakt nooit een doel aan. Stel nooit voor een taak opnieuw aan te maken voordat je met raadpleeg_doelen hebt gecontroleerd of die al bestaat; bestaat hij, verwijs dan naar het bestaande doel.
-De keten van een doel: open (nieuw, wacht tot de uitvoerder het oppakt) → bezig (de uitvoerder bouwt) → review (pull request open, wacht op de reviewjob in CI) → samengevoegd (wordt uitgerold, daarna meet CI productie) → klaar. Vast = vastgelopen (veld vast_door zegt wie: uitvoerder, ci of eigenaar; de uitkomst geeft de reden), gesloten = door de eigenaar afgesloten. Leg bij een vraag uit in welke stap het doel zit en wat er dan gebeurt.
-Vragen over de historie van een taak (wat is er gebeurd, waarom liep hij vast, welke NO-GO-feedback, wat is daarna aangepast, is hij hervat, hoe is het opgelost, welke pull requests): roep raadpleeg_doelen aan met het id van het doel; dat geeft de activiteit (stappen, fouten, herstel, pull requests, merge) en de reviewoordelen met rapport per kop van de pull request. Zonder id (bijvoorbeeld "welke taak liep het laatst vast") gebruik je historie: true, dat geeft de recentste vastgelopen doelen, fouten en NO-GO's; haal daarna het gevonden doel met id op. Geef alleen wat daar staat; ontbreekt een gebeurtenis in de administratie, zeg dat dan. De uitvoerder draait periodiek; een doel op open kan dus even wachten.
+De keten van een doel: open (nieuw, wacht tot de uitvoerder het oppakt) → bezig (de uitvoerder bouwt) → review (pull request open, wacht op de reviewjob in CI) → samengevoegd (wordt uitgerold, daarna meet CI productie) → klaar. Vast = vastgelopen (veld vast_door zegt wie: uitvoerder, ci of eigenaar; de uitkomst geeft de reden; heropend_op is het moment van de laatste hervatting), gesloten = door de eigenaar afgesloten. Leg bij een vraag uit in welke stap het doel zit en wat er dan gebeurt.
+Vragen over de historie van een taak (wat is er gebeurd, waarom liep hij vast, welke NO-GO-feedback, wat is daarna aangepast, is hij hervat, hoe is het opgelost, welke pull requests): roep raadpleeg_doelen aan met het id van het doel; dat geeft de activiteit (stappen, fouten, herstel, pull requests, merge) en de reviewoordelen met rapport per kop van de pull request. Zonder id (bijvoorbeeld "welke taak liep het laatst vast") gebruik je historie: true, dat geeft de recentste vastgelopen doelen, hervatte doelen (heropend_op), statusovergangen (oud → nieuw, met reden), fouten en NO-GO's. Een doel dat is hervat staat niet meer op vast: kijk dus ook naar hervatte_doelen en statusovergangen. Haal daarna het gevonden doel met id op. Geef alleen wat daar staat; ontbreekt een gebeurtenis in de administratie, zeg dat dan. De uitvoerder draait periodiek; een doel op open kan dus even wachten.
 Is het een concrete opdracht om iets te bouwen of te wijzigen: roep het gereedschap maak_doel aan met een korte titel, en kies het project als het duidelijk is. De letterlijke tekst van de eigenaar gaat automatisch het doel in; herhaal die niet. Geef in toelichting alleen wat daar niet in staat: waar de eigenaar naar eerdere berichten verwijst, of wat er op een meegestuurde afbeelding staat.
 Projecten: tovas-flow (ToVas Flow: gemiste oproepen, offertes, reviews, inlogpagina), kasboek (Kasboek). Subprojecten van tovas-flow: gemiste-oproepen, offerte-opvolging, reviews-verzamelen.
 Bij een bericht kan een afbeelding zitten die de eigenaar ter toelichting meestuurt: kijk ernaar en gebruik wat erop staat. Neem bij een opdracht de relevante inhoud van de afbeelding in woorden op in de toelichting.
@@ -63,7 +63,7 @@ const GEREEDSCHAP = [{
   },
 }];
 
-const DOEL_KOLOMMEN = "id,titel,opdracht,status,pr,uitkomst,pogingen,aangemaakt,bijgewerkt,vast_door";
+const DOEL_KOLOMMEN = "id,titel,opdracht,status,pr,uitkomst,pogingen,aangemaakt,bijgewerkt,vast_door,heropend_op";
 const kort = (t, n) => (typeof t === "string" && t.length > n ? `${t.slice(0, n)}…` : t);
 
 /** Leest uit de bestaande doelen-administratie met de sessie van de ingelogde eigenaar; er komt geen tweede administratie bij. */
@@ -96,13 +96,18 @@ export async function raadpleeg(cfg, token, invoer, fetchFn) {
   }
   if (i.historie === true) {
     const aanvulling = (pad) => haal(pad).catch(() => "niet leesbaar");
-    const [vast, activiteit, nogo] = await Promise.all([
+    // Een doel dat vastliep en is hervat staat niet meer op vast: de overgangen (soort status) en heropend_op houden dat bij.
+    const [vast, overgangen, heropend, activiteit, nogo] = await Promise.all([
       aanvulling(`doelen?select=${DOEL_KOLOMMEN}&status=eq.vast&order=bijgewerkt.desc&limit=5`),
-      aanvulling("activiteit?select=op,taak,rol,soort,tekst,verwijzing&taak=like.D-*&soort=in.(fout,herstel,klaar,merge,pr)&order=op.desc&limit=20"),
+      aanvulling("activiteit?select=op,taak,tekst,verwijzing&soort=eq.status&order=op.desc&limit=40"),
+      aanvulling(`doelen?select=${DOEL_KOLOMMEN}&heropend_op=not.is.null&order=heropend_op.desc&limit=5`),
+      aanvulling("activiteit?select=op,taak,rol,soort,tekst,verwijzing&taak=like.D-*&soort=in.(fout,herstel,klaar,merge,pr,status)&order=op.desc&limit=20"),
       aanvulling("toetsingen?select=op,pr_repo,pr_nummer,commit_sha,oordeel,rapport&oordeel=eq.NO-GO&order=op.desc&limit=5"),
     ]);
     return {
       vastgelopen: Array.isArray(vast) ? vast.map(schoon) : vast,
+      hervatte_doelen: Array.isArray(heropend) ? heropend.map(schoon) : heropend,
+      statusovergangen: Array.isArray(overgangen) ? overgangen.map((a) => ({ ...a, tekst: kort(a.tekst, 400) })) : overgangen,
       recente_gebeurtenissen: Array.isArray(activiteit) ? activiteit.map((a) => ({ ...a, tekst: kort(a.tekst, 300) })) : activiteit,
       recente_no_go: Array.isArray(nogo) ? nogo.map((r) => ({ ...r, rapport: kort(r.rapport, 600) })) : nogo,
     };
