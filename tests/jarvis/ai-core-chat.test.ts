@@ -59,10 +59,17 @@ describe("chat-kern", () => {
       expect(r.status).toBe(200);
       const body = JSON.parse(String(oproepen.find((o) => o.url.includes("doel_nieuw"))!.init.body));
       expect(body.p_titel).toBe("titel" in input ? "Weekoverzicht" : "Breid het Command Center uit met een weekoverzicht.");
-      // De volledige tekst van de eigenaar staat letterlijk in het doel, ook voorbij de oude grens van 4000 tekens.
+      // Geen toelichting van het model en geen project: dan is de opdracht precies de tekst van de eigenaar, zonder
+      // label (het label "Oorspronkelijke opdracht" komt er alleen bij als er een toelichting vóór staat) — ook voorbij
+      // de oude grens van 4000 tekens.
       expect(body.p_opdracht).toBe(lang);
       expect(lang.length).toBeGreaterThan(4000);
     }
+    // Met toelichting en project: eerst het projectlabel, dan de toelichting, dan de gelabelde tekst van de eigenaar.
+    const { oproepen, fetchFn } = nep({ content: [{ type: "tool_use", name: "maak_doel", input: { titel: "Weekoverzicht", toelichting: "Zie de schets in het vorige bericht.", project: "kasboek" } }] });
+    await verwerk({ token: "t", body: opdracht, cfg, sleutel: "k", fetchFn });
+    const body = JSON.parse(String(oproepen.find((o) => o.url.includes("doel_nieuw"))!.init.body));
+    expect(body.p_opdracht).toBe(`Project: kasboek\n\nZie de schets in het vorige bericht.\n\nOorspronkelijke opdracht van de eigenaar:\n${lang}`);
   });
   it("doelVelden: kopieert het model de tekst van de eigenaar, dan staat die er één keer in", async () => {
     // @ts-expect-error — gewone .mjs zonder typen
