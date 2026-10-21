@@ -211,4 +211,17 @@ describe("chat in de uitrol", () => {
     expect(urls.some((u) => u.includes("status=eq.vast"))).toBe(true);
     expect(urls.some((u) => u.includes("oordeel=eq.NO-GO"))).toBe(true);
   });
+  it("neemt met historie ook statusovergangen en hervatte doelen mee, zodat een opgelost doel vindbaar blijft", async () => {
+    const urls: string[] = [];
+    const fetchFn = async (url: string) => {
+      urls.push(decodeURIComponent(url));
+      return new Response(JSON.stringify([{ id: "D-1", titel: "T", tekst: "vast → open [heropend]" }]), { status: 200 });
+    };
+    const uit = await raadpleeg(cfg, "t", { historie: true }, fetchFn);
+    expect(uit).toHaveProperty("hervatte_doelen");
+    expect(uit).toHaveProperty("statusovergangen");
+    expect(urls.some((u) => u.includes("activiteit?") && u.includes("soort=eq.status"))).toBe(true);
+    expect(urls.some((u) => u.includes("heropend_op=not.is.null"))).toBe(true);
+    expect(urls.some((u) => u.includes("soort=in.(") && u.includes("status)"))).toBe(true);
+  });
 });
