@@ -12,8 +12,11 @@
 
 export const MODEL = "claude-haiku-5-5";
 const MAX_BERICHTEN = 20;
-const MAX_TEKENS = 4000;
-const MAX_UIT = 700;
+// Een opdracht van de eigenaar kan lang zijn; ze gaat letterlijk het doel in, dus niet halverwege afkappen.
+const MAX_TEKENS = 12000;
+const MAX_OPDRACHT = 20000;
+// Ruimte voor het antwoord plus een gereedschapsaanroep; een afgekapte aanroep leverde een doel zonder velden op.
+const MAX_UIT = 2000;
 const MAX_RONDES = 4;
 const MAX_DOELEN = 25;
 // Een Vercel Function accepteert hoogstens 4,5 MB per aanvraag; de browser verkleint de afbeelding vooraf.
@@ -26,9 +29,9 @@ const SYSTEEM = `Je bent Jarvis, de assistent van de eigenaar in het Command Cen
 Is het bericht alleen een vraag of gesprek: antwoord gewoon, zonder maak_doel. Bevat het bericht naast een vraag ook een concrete opdracht: beantwoord de vraag en maak voor de opdracht een doel aan.
 Vragen over Jarvis zelf (welke taken lopen, status, wat er vandaag klaar is, wat er vastzit, waarom een taak ergens staat, wat er bij een taak gebeurde): haal de gegevens zelf op met het gereedschap raadpleeg_doelen en vraag de eigenaar nooit om gegevens die al in Jarvis staan. Een informatievraag maakt nooit een doel aan. Stel nooit voor een taak opnieuw aan te maken voordat je met raadpleeg_doelen hebt gecontroleerd of die al bestaat; bestaat hij, verwijs dan naar het bestaande doel.
 De keten van een doel: open (nieuw, wacht tot de uitvoerder het oppakt) → bezig (de uitvoerder bouwt) → review (pull request open, wacht op de reviewjob in CI) → samengevoegd (wordt uitgerold, daarna meet CI productie) → klaar. Vast = vastgelopen (veld vast_door zegt wie: uitvoerder, ci of eigenaar; de uitkomst geeft de reden), gesloten = door de eigenaar afgesloten. Leg bij een vraag uit in welke stap het doel zit en wat er dan gebeurt. De uitvoerder draait periodiek; een doel op open kan dus even wachten.
-Is het een concrete opdracht om iets te bouwen of te wijzigen: roep het gereedschap maak_doel aan met een korte titel en een volledige opdracht in gewone taal, en kies het project als het duidelijk is.
+Is het een concrete opdracht om iets te bouwen of te wijzigen: roep het gereedschap maak_doel aan met een korte titel, en kies het project als het duidelijk is. De letterlijke tekst van de eigenaar gaat automatisch het doel in; herhaal die niet. Geef in toelichting alleen wat daar niet in staat: waar de eigenaar naar eerdere berichten verwijst, of wat er op een meegestuurde afbeelding staat.
 Projecten: tovas-flow (ToVas Flow: gemiste oproepen, offertes, reviews, inlogpagina), kasboek (Kasboek). Subprojecten van tovas-flow: gemiste-oproepen, offerte-opvolging, reviews-verzamelen.
-Bij een bericht kan een afbeelding zitten die de eigenaar ter toelichting meestuurt: kijk ernaar en gebruik wat erop staat. Neem bij een opdracht de relevante inhoud van de afbeelding in woorden op in de opdracht.
+Bij een bericht kan een afbeelding zitten die de eigenaar ter toelichting meestuurt: kijk ernaar en gebruik wat erop staat. Neem bij een opdracht de relevante inhoud van de afbeelding in woorden op in de toelichting.
 Verzin geen resultaten en beloof niets over de uitkomst; de keten bouwt, beoordeelt en rolt uit.`;
 
 const GEREEDSCHAP = [{
@@ -51,10 +54,10 @@ const GEREEDSCHAP = [{
     type: "object",
     properties: {
       titel: { type: "string", description: "Korte titel, hoogstens 80 tekens" },
-      opdracht: { type: "string", description: "Wat bereikt moet worden, in gewone taal" },
+      toelichting: { type: "string", description: "Optioneel en kort: context die niet in de tekst van de eigenaar staat (verwijzing naar eerdere berichten, inhoud van een afbeelding). De tekst van de eigenaar zelf wordt automatisch toegevoegd." },
       project: { type: "string", description: "Optioneel: tovas-flow, kasboek of tovas-flow/<subproject>", pattern: "^[a-z0-9-]+(/[a-z0-9-]+)?$" },
     },
-    required: ["titel", "opdracht"],
+    required: ["titel"],
   },
 }];
 
@@ -162,9 +165,33 @@ async function gebruiker(cfg, token, fetchFn) {
   return r.ok ? await r.json() : null;
 }
 
-async function maakDoel(cfg, token, doel, fetchFn) {
-  const titel = String(doel.titel ?? "").trim().slice(0, 120);
-  let opdracht = String(doel.opdracht ?? "").trim().slice(0, MAX_TEKENS);
+/** De tekst van het laatste bericht van de eigenaar (zonder afbeelding). */
+export function laatsteTekst(berichten) {
+  const laatste = [...berichten].reverse().find((b) => b.role === "user");
+  if (!laatste) return "";
+  if (typeof laatste.content === "string") return laatste.content.trim();
+  return laatste.content.filter((c) => c.type === "text").map((c) => c.text).join("\n").trim();
+}
+
+/**
+ * Zet een gereedschapsaanroep om in de velden van een doel. De letterlijke tekst van de eigenaar gaat altijd mee,
+ * zodat niets van de opdracht verloren gaat; de titel valt terug op de eerste regel van die tekst. Zo mislukt een
+ * doel niet meer doordat het model een veld leeg liet of de aanroep werd afgekapt.
+ */
+export function doelVelden(doel, origineel) {
+  const tekst = String(origineel ?? "").trim();
+  const eerste = tekst.split("\n").map((r) => r.trim()).find(Boolean) ?? "";
+  const titel = (String(doel?.titel ?? "").trim() || (eerste.length > 80 ? `${eerste.slice(0, 77)}…` : eerste)).slice(0, 120);
+  // Oudere aanroepen gebruiken nog het veld opdracht; dat telt als toelichting.
+  const toelichting = String(doel?.toelichting ?? doel?.opdracht ?? "").trim();
+  const delen = [];
+  if (toelichting && toelichting !== tekst) delen.push(toelichting);
+  if (tekst) delen.push(delen.length ? `Oorspronkelijke opdracht van de eigenaar:\n${tekst}` : tekst);
+  return { titel, opdracht: delen.join("\n\n").slice(0, MAX_OPDRACHT) };
+}
+
+async function maakDoel(cfg, token, doel, fetchFn, origineel = "") {
+  let { titel, opdracht } = doelVelden(doel, origineel);
   if (!titel || !opdracht) throw new Error("doel mist titel of opdracht");
   const project = typeof doel.project === "string" && /^[a-z0-9-]+(\/[a-z0-9-]+)?$/.test(doel.project) ? doel.project : null;
   if (project) opdracht = `Project: ${project}\n\n${opdracht}`;
@@ -189,7 +216,7 @@ export async function verwerk({ token, body, cfg, sleutel, fetchFn = fetch }) {
     if (!(await gebruiker(cfg, token, fetchFn))) return { status: 401, lading: { fout: "Sessie ongeldig; log opnieuw in." } };
     const { tekst, doel } = await vraagModel(berichten, { sleutel, fetchFn, lees: (invoer) => raadpleeg(cfg, token, invoer, fetchFn) });
     if (doel) {
-      const nieuw = await maakDoel(cfg, token, doel, fetchFn);
+      const nieuw = await maakDoel(cfg, token, doel, fetchFn, laatsteTekst(berichten));
       return { status: 200, lading: { antwoord: tekst || `Doel gestart: ${nieuw.titel}`, doel: nieuw } };
     }
     return { status: 200, lading: { antwoord: tekst || "Ik heb daar geen antwoord op." } };
