@@ -21,7 +21,11 @@ import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledi
 import { beoordeelHttpMeting, leesBouwmerkUitPagina } from "./v3";
 
 const OORDELEN_SQL =
-  "select commit_sha as kop, oordeel, door from jarvis.toetsingen where lower(pr_repo) = lower($1) and pr_nummer = $2 order by op";
+  "select commit_sha as kop, oordeel, door, op::text as op from jarvis.toetsingen where lower(pr_repo) = lower($1) and pr_nummer = $2 order by op";
+// Wanneer de eigenaar een doel heropende (Reageer en hervat): de NO-GO-teller telt vanaf dan. Bewust een eigen
+// query van de reviewjob (directe databaseverbinding in CI), niet in DOELEN_SQL: die staat in de allowlist van de
+// Edge Function waarmee de uitvoerder leest.
+const HEROPEND_SQL = "select id, heropend_op::text as heropend_op from jarvis.doelen where heropend_op is not null";
 const REVIEW_MODEL = "gpt-5.1";
 const REVIEW_WACHT_MS = 240_000;
 
@@ -111,6 +115,7 @@ async function reviewen(sql: DbClient, token: string): Promise<number> {
     return 1;
   }
   const doelen = await leesDoelen(sql);
+  const heropend = new Map(((await sql.unsafe(HEROPEND_SQL)) as unknown as { id: string; heropend_op: string }[]).map((r) => [r.id, r.heropend_op]));
   let code = 0;
   for (const slug of alle) {
     const open = await leesAllePaginas<{ number: number; draft: boolean; user: { login: string }; head: { ref: string }; body: string | null }>(token, `/repos/${slug}/pulls?state=open`, 3);
@@ -127,9 +132,9 @@ async function reviewen(sql: DbClient, token: string): Promise<number> {
         if (typeof feiten === "string") throw new Error(feiten);
         const oordelen = (await sql.unsafe(OORDELEN_SQL, [slug, p.number])) as unknown as ReviewOordeel[];
         const groen = checksGroen(laatstePerNaam(feiten.checks), VERPLICHTE_CHECK);
-        const besluit = reviewBesluit(feiten.kop, oordelen, groen);
         const doelId = doelUitPrTekst(p.body ?? "");
         const doel = doelen.find((d) => d.id === doelId) ?? null;
+        const besluit = reviewBesluit(feiten.kop, oordelen, groen, (doel && heropend.get(doel.id)) ?? null);
         if (besluit === "vast") {
           if (doel !== null && ["open", "bezig", "review"].includes(doel.status)) {
             await sql.unsafe("select jarvis.doel_ci($1, 'vast', null, $2)", [doel.id, `de reviewer gaf ${oordelen.length} keer NO-GO op ${slug}#${p.number}`]);

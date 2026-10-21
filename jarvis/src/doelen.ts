@@ -36,23 +36,27 @@ export function doelUitPrTekst(tekst: string): string | null {
   return /^\s*Doel:\s*(D-\d{8}-\d{6}(?:\d{3})?)\s*$/m.exec(tekst.replace(/\r\n/g, "\n"))?.[1] ?? null;
 }
 
-export type ReviewOordeel = { readonly kop: string; readonly oordeel: string; readonly door: string };
+export type ReviewOordeel = { readonly kop: string; readonly oordeel: string; readonly door: string; readonly op?: string };
 
 /**
  * Wat de reviewjob met een pull request doet.
  *   - "wacht": de checks op de kop zijn nog niet allemaal groen; eerst de poort en de tests.
  *   - "klaar": de reviewer heeft deze kop al beoordeeld; niet opnieuw.
- *   - "vast": MAX_NO_GO keer NO-GO; het doel staat vast, er wordt niet verder gereviewd.
+ *   - "vast": MAX_NO_GO keer NO-GO; het doel staat vast, er wordt niet verder gereviewd. Heropende de eigenaar
+ *     het doel (`sinds`), dan tellen alleen de NO-GO's van daarna: zijn heropenen is een nieuwe kans.
  *   - "review": beoordelen.
  */
 export function reviewBesluit(
   kop: string,
   oordelen: readonly ReviewOordeel[],
   checksGroen: boolean,
+  sinds: string | null = null,
 ): "wacht" | "klaar" | "vast" | "review" {
   const vanReviewer = oordelen.filter((o) => o.door === REVIEWER_DOOR);
   if (vanReviewer.some((o) => o.kop === kop)) return "klaar";
-  if (vanReviewer.filter((o) => o.oordeel !== "GO").length >= MAX_NO_GO) return "vast";
+  const grens = sinds === null ? NaN : Date.parse(sinds);
+  const telt = (o: ReviewOordeel) => Number.isNaN(grens) || (o.op !== undefined && Date.parse(o.op) > grens);
+  if (vanReviewer.filter((o) => o.oordeel !== "GO" && telt(o)).length >= MAX_NO_GO) return "vast";
   if (!checksGroen) return "wacht";
   return "review";
 }

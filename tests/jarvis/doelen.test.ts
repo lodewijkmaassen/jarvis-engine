@@ -33,6 +33,19 @@ describe("reviewBesluit", () => {
     const nee = Array.from({ length: MAX_NO_GO }, (_, n) => ({ kop: String(n).repeat(40), oordeel: "NO-GO", door: REVIEWER_DOOR }));
     expect(reviewBesluit(KOP, nee, true)).toBe("vast");
   });
+  it("na heropenen door de eigenaar tellen alleen de NO-GO's van daarna (jarvis-engine#106)", () => {
+    const nee = [
+      { kop: "1".repeat(40), oordeel: "NO-GO", door: REVIEWER_DOOR, op: "2026-10-20 22:51:00+00" },
+      { kop: "2".repeat(40), oordeel: "NO-GO", door: REVIEWER_DOOR, op: "2026-10-20 23:14:00+00" },
+    ];
+    expect(reviewBesluit(KOP, nee, true)).toBe("vast");
+    expect(reviewBesluit(KOP, nee, true, "2026-10-21 09:00:00+00")).toBe("review");
+    // Daarna geldt de grens gewoon weer.
+    const daarna = [...nee, ...["3", "4"].map((c, n) => ({ kop: c.repeat(40), oordeel: "NO-GO", door: REVIEWER_DOOR, op: `2026-10-21 1${n}:00:00+00` }))];
+    expect(reviewBesluit(KOP, daarna, true, "2026-10-21 09:00:00+00")).toBe("vast");
+    // Zonder tijdstip bij het oordeel telt het na heropenen niet mee; zonder heropenen telt alles.
+    expect(reviewBesluit(KOP, [{ kop: OUD, oordeel: "NO-GO", door: REVIEWER_DOOR }, { kop: "5".repeat(40), oordeel: "NO-GO", door: REVIEWER_DOOR }], true, "2026-10-21 09:00:00+00")).toBe("review");
+  });
   it("telt oordelen van anderen dan de reviewjob niet mee", () => {
     expect(reviewBesluit(KOP, [{ kop: KOP, oordeel: "GO", door: "cloud" }], true)).toBe("review");
     const nee = Array.from({ length: MAX_NO_GO }, () => ({ kop: OUD, oordeel: "NO-GO", door: "laptop" }));
