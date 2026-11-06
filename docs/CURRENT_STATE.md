@@ -532,18 +532,27 @@ De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
 die dit merk verplicht stelt, is nog niet gebouwd.
 
 
-Sinds deze wijziging is "klaar" in de doelenketen een gemeten uitspraak en geen
-aanname. De eindcontrole (CI, identiteit `jarvis_ci`) doet er drie dingen voor,
-in deze volgorde: de SQL van het doel toepassen door de eigen migratielane
-(`jarvis.pas_migratie_toe`, met het ledger `jarvis.migraties`), de uitrol
-nameten op het bouwmerk, en de acceptatietests uit de opdracht uitvoeren en
-onafhankelijk laten beoordelen. Eén van de drie niet in orde betekent: terug de
-herstelketen in, nooit klaar.
+De bouwstenen voor een gemeten "klaar" staan er, nog zonder dat de eindcontrole
+ze gebruikt; dat is bewust een tweede, kleine stap (de onafhankelijke reviewer
+wees deze wijziging eerst af omdat hij te groot was om volledig te lezen).
 
-Daarbij hoort dat stilstand vier soorten heeft in plaats van één
-(`jarvis/src/blokkade.ts`): beveiliging, bevoegdheid, besluit, fout. Alleen een
-echt besluit gaat naar de eigenaar; een ontbrekend recht of een ontbrekende deur
-is werk voor Jarvis.
+- `jarvis/src/eigen-migratie.ts` — welke SQL bij welk doel hoort
+  (`tasks/<doel>/*.sql`), de naam in het ledger, en de grens van de eigen
+  migratielane: niet-destructief, geen rechten, geen `security definer`, niets
+  buiten schema `jarvis` en niets aan de administratie waarin autorisatie
+  leeft. Een spiegel van `jarvis.migratie_bezwaar` in de database, die de
+  autoriteit blijft; hier alleen om een bezwaar eerder en leesbaarder te
+  melden. Daarbij hoort het onderscheid tussen een bezwaar dat de uitvoerder
+  zelf kan oplossen en een bezwaar dat alleen met de rechten van de eigenaar
+  te nemen is.
+- `jarvis/src/acceptatie.ts` — de expliciete acceptatietests uit de opdracht
+  van een doel lezen, de vraag aan de onafhankelijke beoordelaar bouwen en zijn
+  oordeel lezen. Een test die van het toeval afhangt ("welke taak liep het
+  laatst vast") wordt als onbepaalbaar gemeld, met wat eraan moet veranderen.
+- `jarvis/src/blokkade.ts` — vier soorten stilstand in plaats van één:
+  beveiliging, bevoegdheid, besluit, fout, met die voorrang. Alleen een echt
+  besluit gaat naar de eigenaar; een ontbrekend recht of een ontbrekende deur
+  is werk voor Jarvis (`CON-0015`).
 
 ## Volgende stap
 
