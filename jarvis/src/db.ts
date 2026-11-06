@@ -334,6 +334,27 @@ export const DOELEN_SQL =
   "select id, titel, opdracht, acceptatie_url, status, pr, uitkomst, pogingen, bijgewerkt::text as bijgewerkt from jarvis.doelen order by aangemaakt";
 export const DOEL_WERK_SQL = "select jarvis.doel_werk($1, $2, $3::text::jsonb, $4) as status";
 
+/**
+ * De eigen migratielane (schema jarvis). Alleen `jarvis_ci` mag de deur
+ * gebruiken; de uitvoerder leest via de Edge Function en komt er dus niet bij.
+ * Deze statements staan daarom bewust NIET in `toegestaneSql()`.
+ */
+export const EIGEN_MIGRATIE_SQL = "select jarvis.pas_migratie_toe($1, $2, $3) as uitkomst";
+export const MIGRATIE_LEDGER_SQL =
+  "select naam, hash, uitkomst, reden, op::text as op from jarvis.migraties where doel = $1 order by op";
+/** De sleutel voor de acceptatiedeur van de AI Core; alleen jarvis_ci kan hem opvragen. */
+export const ACCEPTATIE_SLEUTEL_SQL = "select jarvis.acceptatie_sleutel() as sleutel";
+/** Wat er in het schema staat: bewijs voor een acceptatietest die over de database gaat. */
+export const SCHEMA_FEITEN_SQL =
+  "select 'tabel' as soort, c.relname as naam from pg_class c join pg_namespace n on n.oid = c.relnamespace " +
+  "where n.nspname = 'jarvis' and c.relkind in ('r', 'v') " +
+  "union all select 'functie', p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'jarvis' " +
+  "union all select 'trigger', t.tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid " +
+  "join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'jarvis' and not t.tgisinternal order by 1, 2";
+/** De activiteit van één doel: wat er werkelijk is gebeurd. */
+export const DOEL_ACTIVITEIT_SQL =
+  "select op::text as op, uitvoerder, rol, soort, tekst, verwijzing from jarvis.activiteit where taak = $1 order by op desc limit 60";
+
 export function toegestaneSql(): readonly string[] {
   return [
     DOELEN_SQL,

@@ -6,13 +6,13 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-10-20._
+_Gegenereerd op 2026-11-06._
 
 | Feit | Waarde |
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 49 |
+| Testbestanden | 50 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -531,6 +531,28 @@ pagina blijft serveren is zelf een van de manieren waarop een uitrol mislukt.
 De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
 die dit merk verplicht stelt, is nog niet gebouwd.
 
+
+De bouwstenen voor een gemeten "klaar" staan er, nog zonder dat de eindcontrole
+ze gebruikt; dat is bewust een tweede, kleine stap (de onafhankelijke reviewer
+wees deze wijziging eerst af omdat hij te groot was om volledig te lezen).
+
+- `jarvis/src/eigen-migratie.ts` — welke SQL bij welk doel hoort
+  (`tasks/<doel>/*.sql`), de naam in het ledger, en de grens van de eigen
+  migratielane: niet-destructief, geen rechten, geen `security definer`, niets
+  buiten schema `jarvis` en niets aan de administratie waarin autorisatie
+  leeft. Een spiegel van `jarvis.migratie_bezwaar` in de database, die de
+  autoriteit blijft; hier alleen om een bezwaar eerder en leesbaarder te
+  melden. Daarbij hoort het onderscheid tussen een bezwaar dat de uitvoerder
+  zelf kan oplossen en een bezwaar dat alleen met de rechten van de eigenaar
+  te nemen is.
+- `jarvis/src/acceptatie.ts` — de expliciete acceptatietests uit de opdracht
+  van een doel lezen, de vraag aan de onafhankelijke beoordelaar bouwen en zijn
+  oordeel lezen. Een test die van het toeval afhangt ("welke taak liep het
+  laatst vast") wordt als onbepaalbaar gemeld, met wat eraan moet veranderen.
+- `jarvis/src/blokkade.ts` — vier soorten stilstand in plaats van één:
+  beveiliging, bevoegdheid, besluit, fout, met die voorrang. Alleen een echt
+  besluit gaat naar de eigenaar; een ontbrekend recht of een ontbrekende deur
+  is werk voor Jarvis (`CON-0015`).
 
 ## Volgende stap
 
