@@ -79,13 +79,3 @@ export function classificeerBlokkade(tekst: string): Blokkade {
 export function rendereerBlokkade(tekst: string, blokkade: Blokkade = classificeerBlokkade(tekst)): string {
   return `[${blokkade.soort}] ${tekst.trim()} → ${blokkade.vervolg}`;
 }
-
-/**
- * Mag dit een beslissing van de eigenaar worden? Alleen een echt besluit. Een
- * bevoegdheid die werkelijk alleen de eigenaar kan verstrekken, komt als
- * handeling (met instructie), niet als vraag om goedkeuring — hij heeft het
- * "wat" al bepaald toen hij het doel gaf.
- */
-export function mag_naar_eigenaar(tekst: string): boolean {
-  return classificeerBlokkade(tekst).naarEigenaar;
-}

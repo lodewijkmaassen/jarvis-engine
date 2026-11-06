@@ -137,14 +137,39 @@ export function beoordeelEigenSql(invoer: string): readonly string[] {
 }
 
 /**
- * Hoort dit bezwaar bij een grens die alleen met de rechten van de eigenaar te
- * nemen is (een bevoegdheid), of is het iets dat de uitvoerder zelf anders kan
- * schrijven (een fout in de opdracht)? Dat onderscheid bepaalt waar het doel
- * heen gaat: terug naar de uitvoerder, of naar de eigenaar met één concrete
- * handeling. Ze verwarren is precies wat de keten eerder stillegde.
+ * Welke redenen uit de lijst hierboven een grens zijn die alleen met de rechten
+ * van de eigenaar van het schema te nemen is. De overige bezwaren (een vorm die
+ * de lane niet kent, dynamische SQL, een UPDATE zonder WHERE) kan de uitvoerder
+ * zelf anders schrijven.
+ *
+ * Een vaste lijst en geen woordenzoeker in de meldingstekst: waar een doel heen
+ * gaat — terug naar de uitvoerder of met één concrete handeling naar de
+ * eigenaar — mag niet afhangen van hoe een reden is geformuleerd.
+ */
+const BEVOEGDHEID_REDENEN: ReadonlySet<string> = new Set([
+  "iets laten vallen",
+  "leegmaken (TRUNCATE)",
+  "gegevens verwijderen (DELETE)",
+  "hernoemen",
+  "van eigenaar veranderen",
+  "een rol, database of systeeminstelling wijzigen",
+  "een rol, extensie of serverobject aanmaken",
+  "rechten uitdelen of intrekken",
+  "rij-niveaubeveiliging aan- of uitzetten",
+  "een beveiligingspolicy",
+  "SECURITY DEFINER of SECURITY LABEL",
+  "een ander schema dan jarvis",
+  "het productschema public",
+  "een beheersfunctie van de server",
+  "de administratie of de functies waarin autorisatie leeft",
+  "standaardrechten",
+]);
+
+/**
+ * Hoort een van deze bezwaren bij een grens die alleen met de rechten van de
+ * eigenaar te nemen is? Dat onderscheid bepaalt waar het doel heen gaat.
+ * Ze verwarren is precies wat de keten eerder stillegde.
  */
 export function bezwaarIsBevoegdheid(bezwaren: readonly string[]): boolean {
-  return bezwaren.some((b) =>
-    /(rechten|rol,|SECURITY DEFINER|beveiligingspolicy|rij-niveaubeveiliging|administratie of de functies|standaardrechten|ander schema|productschema|van eigenaar|hernoemen|laten vallen|leegmaken|verwijderen)/i.test(b),
-  );
+  return bezwaren.some((b) => [...BEVOEGDHEID_REDENEN].some((r) => b.startsWith(r)));
 }

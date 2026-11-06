@@ -58,7 +58,9 @@ const VOLATIEL = /\b(meest recent\w*|recentste|als laatste|het laatst|laatst\s+v
 // Zonder woordgrens aan het begin: `#` is geen woordteken, dus `#106` matcht nooit.
 const ONDERWERP = /(D-\d{8}-\d{6,9}|#\d{1,5})\b/;
 const URL = /\bhttps?:\/\/[^\s)"'<>]+/;
-const VRAAG = /[""„]([^""„"]{8,400})[""]|"([^"]{8,400})"/;
+// Een vraag staat tussen aanhalingstekens: typografisch (“…”, „…”, «…») of recht ("…"). Twee
+// alternatieven, zodat een rechte aanhaling niet door de typografische klasse wordt afgesloten.
+const VRAAG = /[“„«]([^“”„»]{8,400})[”»]|"([^"]{8,400})"/;
 
 /**
  * De acceptatietests uit de opdracht van een doel.
