@@ -25,6 +25,13 @@ export type Doel = {
   readonly bijgewerkt: string;
 };
 
+/**
+ * Het tweede model en hoeveel tijd het krijgt. Eén plek, want twee aanroepers gebruiken dezelfde
+ * voorziening: de review van een pull request en het beoordelen van een acceptatietest.
+ */
+export const REVIEW_MODEL = "gpt-5.1";
+export const REVIEW_WACHT_MS = 240_000;
+
 /** Na zoveel NO-GO's van de reviewer op een pull request staat het doel vast; geen eindeloze rondes. */
 export const MAX_NO_GO = 2;
 

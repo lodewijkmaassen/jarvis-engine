@@ -14,7 +14,11 @@ import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
 import { ACTIVITEIT_SQL, DOEL_WERK_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
-import { checksGroen, dispatchNodig, doelUitPrTekst, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { eindoordeel, leesAcceptatieTests } from "./acceptatie";
+import { classificeerBlokkade, rendereerBlokkade } from "./blokkade";
+import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
+import { pasDoelMigratiesToe } from "./doel-migratie";
+import { checksGroen, dispatchNodig, doelUitPrTekst, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -26,8 +30,8 @@ const OORDELEN_SQL =
 // query van de reviewjob (directe databaseverbinding in CI), niet in DOELEN_SQL: die staat in de allowlist van de
 // Edge Function waarmee de uitvoerder leest.
 const HEROPEND_SQL = "select id, heropend_op::text as heropend_op from jarvis.doelen where heropend_op is not null";
-const REVIEW_MODEL = "gpt-5.1";
-const REVIEW_WACHT_MS = 240_000;
+/** Een uitrol krijgt een halfuur voordat de eindcontrole tegen productie meet. */
+const UITROL_WACHT_MINUTEN = 30;
 
 async function met<T>(f: (sql: DbClient) => Promise<T>): Promise<T> {
   const v = await verbindDb();
@@ -217,39 +221,98 @@ async function isNazaat(token: string, slug: string, basis: string, kandidaat: s
   return a.status === 200 && (status === "ahead" || status === "identical");
 }
 
-/** De eindcontrole: meet productie voor elk samengevoegd doel. Een uitrol krijgt een halfuur. */
+/**
+ * De eindcontrole: voor elk samengevoegd doel eerst de database, dan de
+ * uitrol, dan de acceptatietests — en pas als alles drie klopt: klaar.
+ *
+ * Een doel dat op een van de drie struikelt, gaat terug de bestaande
+ * herstelketen in (bezig) of staat vast als er een bevoegdheid ontbreekt.
+ * Elk doel staat op zichzelf: wat bij het ene doel misgaat, legt het andere
+ * niet stil — daarom de try per doel en niet één om de lus.
+ */
 async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number> {
   const doelen = (await leesDoelen(sql)).filter((d) => d.status === "samengevoegd");
   console.log(`jarvis eindcontrole: ${doelen.length} samengevoegd doel(en).`);
+  let code = 0;
   for (const d of doelen) {
-    const merge = d.pr?.merge_sha ?? null;
-    if (d.acceptatie_url === null) {
-      await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, "samengevoegd; het doel noemt geen acceptatie-URL om te meten"]);
-      console.log(`jarvis eindcontrole: ${d.id} → klaar (geen acceptatie-URL)`);
-      continue;
-    }
-    let uitkomst: { geslaagd: boolean; bewijs: string };
     try {
-      const a = await fetch(d.acceptatie_url, { redirect: "follow", headers: { "User-Agent": "jarvis-eindcontrole", "Cache-Control": "no-cache" } });
-      const tekst = await a.text();
-      const gevonden = leesBouwmerkUitPagina(tekst);
-      const nazaat = gevonden !== null && merge !== null && d.pr?.repo ? await isNazaat(token, d.pr.repo, merge, gevonden) : false;
-      uitkomst = beoordeelHttpMeting({ soort: "http", url: d.acceptatie_url, bouwmerk: true }, { status: a.status, tekst }, merge, () => nazaat);
+      // 1. De database. Code die op een migratie leunt mag niet klaar heten terwijl die migratie er niet is.
+      const mig = await pasDoelMigratiesToe(sql, token, d);
+      if (mig.open.length > 0) {
+        const tekst = `migratie nog niet toegepast — ${mig.open.map((o) => `${o.naam}: ${o.reden}`).join(" | ")}`;
+        const bevoegdheid = mig.open.some((o) => o.bevoegdheid);
+        const naar = bevoegdheid ? "vast" : "bezig";
+        await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, rendereerBlokkade(tekst, classificeerBlokkade(bevoegdheid ? `${tekst} (ontbrekende bevoegdheid)` : tekst)).slice(0, 1800)]);
+        console.log(`jarvis eindcontrole: ${d.id} → ${naar} (${tekst.slice(0, 160)})`);
+        continue;
+      }
+      if (mig.gedaan.length > 0) await schrijfAcceptatie(sql, d.id, `migraties toegepast: ${mig.gedaan.join(", ")}`);
+
+      // 2. De uitrol, zoals altijd: draagt de pagina het bouwmerk van deze samenvoeging of later?
+      const merge = d.pr?.merge_sha ?? null;
+      const minuten = (Date.now() - Date.parse(d.bijgewerkt)) / 60_000;
+      if (d.acceptatie_url !== null) {
+        let uitkomst: { geslaagd: boolean; bewijs: string };
+        try {
+          const a = await fetch(d.acceptatie_url, { redirect: "follow", headers: { "User-Agent": "jarvis-eindcontrole", "Cache-Control": "no-cache" } });
+          const tekst = await a.text();
+          const gevonden = leesBouwmerkUitPagina(tekst);
+          const nazaat = gevonden !== null && merge !== null && d.pr?.repo ? await isNazaat(token, d.pr.repo, merge, gevonden) : false;
+          uitkomst = beoordeelHttpMeting({ soort: "http", url: d.acceptatie_url, bouwmerk: true }, { status: a.status, tekst }, merge, () => nazaat);
+        } catch (fout) {
+          uitkomst = { geslaagd: false, bewijs: `niet bereikbaar: ${fout instanceof Error ? fout.message : String(fout)}` };
+        }
+        if (!uitkomst.geslaagd) {
+          if (minuten >= 30) {
+            await sql.unsafe("select jarvis.doel_ci($1, 'bezig', null, $2)", [d.id, `productie na ${Math.round(minuten)} min niet in orde: ${uitkomst.bewijs}`]);
+            console.log(`jarvis eindcontrole: ${d.id} → terug naar de uitvoerder (${uitkomst.bewijs})`);
+          } else {
+            console.log(`jarvis eindcontrole: ${d.id} wacht op de uitrol (${Math.round(minuten)} min): ${uitkomst.bewijs}`);
+          }
+          continue;
+        }
+      }
+
+      // 3. De acceptatietests die de eigenaar in de opdracht zette. Staat er geen, dan meet de keten zoals altijd.
+      const tests = leesAcceptatieTests(d.opdracht);
+      if (tests.length === 0) {
+        const bewijs = d.acceptatie_url === null ? "samengevoegd; het doel noemt geen acceptatie-URL en geen expliciete acceptatietest" : "productie gemeten op de acceptatie-URL";
+        await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, mig.gedaan.length > 0 ? `${bewijs}; migraties toegepast: ${mig.gedaan.join(", ")}` : bewijs]);
+        console.log(`jarvis eindcontrole: ${d.id} → klaar (${bewijs})`);
+        continue;
+      }
+      // Een uitrol krijgt een halfuur voordat er wordt gemeten; anders meet de test de oude pagina.
+      if (d.acceptatie_url === null && minuten < UITROL_WACHT_MINUTEN) {
+        console.log(`jarvis eindcontrole: ${d.id} wacht op de uitrol vóór de acceptatietest (${Math.round(minuten)} van ${UITROL_WACHT_MINUTEN} min)`);
+        continue;
+      }
+      const uitkomsten = await voerAcceptatieUit(sql, d, tests);
+      const eind = eindoordeel(uitkomsten);
+      if (eind.klaar) {
+        await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, `acceptatietests geslaagd — ${eind.samenvatting}`]);
+        console.log(`jarvis eindcontrole: ${d.id} → klaar (${uitkomsten.length} acceptatietest(s) geslaagd)`);
+        continue;
+      }
+      // Niet klaar. Wat er daarna gebeurt, hangt af van wát er niet klopte:
+      //   - niet te meten (een deur, een recht): een bevoegdheid. Terug naar de uitvoerder heeft geen zin;
+      //     hij kan er niets aan herstellen. Het doel staat vast met de reden erbij.
+      //   - gezakt: de bestaande herstelketen. Pas als herstel een paar keer niet lukt, staat het vast.
+      const eerder = (await sql.unsafe(ACCEPTATIE_MISLUKT_SQL, [d.id])) as unknown as { aantal: string | number }[];
+      const rondes = Number(eerder[0]?.aantal ?? 0);
+      const tekst = eind.onmeetbaar
+        ? `acceptatietest niet te meten — ${eind.samenvatting}`
+        : `acceptatietest niet geslaagd (ronde ${rondes + 1} van ${MAX_ACCEPTATIE_RONDES}) — ${eind.samenvatting}`;
+      const blok = classificeerBlokkade(eind.onmeetbaar ? `${tekst} (ontbrekende bevoegdheid)` : tekst);
+      const naar = eind.onmeetbaar || rondes >= MAX_ACCEPTATIE_RONDES ? "vast" : "bezig";
+      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, rendereerBlokkade(tekst, blok).slice(0, 1800)]);
+      await schrijfAcceptatie(sql, d.id, `eindoordeel: ${naar} — ${tekst}`);
+      console.log(`jarvis eindcontrole: ${d.id} → ${naar} [${blok.soort}] (${tekst.slice(0, 200)})`);
     } catch (fout) {
-      uitkomst = { geslaagd: false, bewijs: `niet bereikbaar: ${fout instanceof Error ? fout.message : String(fout)}` };
-    }
-    const minuten = (Date.now() - Date.parse(d.bijgewerkt)) / 60_000;
-    if (uitkomst.geslaagd) {
-      await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, `productie gemeten: ${uitkomst.bewijs}`]);
-      console.log(`jarvis eindcontrole: ${d.id} → klaar (${uitkomst.bewijs})`);
-    } else if (minuten >= 30) {
-      await sql.unsafe("select jarvis.doel_ci($1, 'bezig', null, $2)", [d.id, `productie na ${Math.round(minuten)} min niet in orde: ${uitkomst.bewijs}`]);
-      console.log(`jarvis eindcontrole: ${d.id} → terug naar de uitvoerder (${uitkomst.bewijs})`);
-    } else {
-      console.log(`jarvis eindcontrole: ${d.id} wacht op de uitrol (${Math.round(minuten)} min): ${uitkomst.bewijs}`);
+      console.error(`jarvis eindcontrole: ${d.id}: ${fout instanceof Error ? fout.message : String(fout)}`);
+      code = 1;
     }
   }
-  return 0;
+  return code;
 }
 
 /** Start de routine via de API als er een doel zonder beweging staat. Het token gaat alleen in een header. */

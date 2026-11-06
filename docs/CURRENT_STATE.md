@@ -12,7 +12,7 @@ _Gegenereerd op 2026-11-06._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 50 |
+| Testbestanden | 51 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -532,9 +532,18 @@ De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
 die dit merk verplicht stelt, is nog niet gebouwd.
 
 
-De bouwstenen voor een gemeten "klaar" staan er, nog zonder dat de eindcontrole
-ze gebruikt; dat is bewust een tweede, kleine stap (de onafhankelijke reviewer
-wees deze wijziging eerst af omdat hij te groot was om volledig te lezen).
+"Klaar" is in de doelenketen een gemeten uitspraak geworden en geen aanname.
+De eindcontrole (CI, identiteit `jarvis_ci`) doet drie dingen voor een
+samengevoegd doel en verklaart het pas klaar als alle drie kloppen: de SQL van
+het doel toepassen door de deur in de database (`jarvis.pas_migratie_toe`, met
+het ledger `jarvis.migraties` als idempotentie), de uitrol nameten op het
+bouwmerk, en de acceptatietests uit de opdracht uitvoeren en onafhankelijk
+laten beoordelen. Eén van de drie niet in orde betekent terug de herstelketen
+in; na drie mislukte acceptatieronden staat het doel vast in plaats van
+eindeloos door te draaien. Niet kunnen meten is daarbij geen mislukte test maar
+een ontbrekende bevoegdheid.
+
+De bouwstenen eronder:
 
 - `jarvis/src/eigen-migratie.ts` — welke SQL bij welk doel hoort
   (`tasks/<doel>/*.sql`), de naam in het ledger, en de grens van de eigen
