@@ -6,13 +6,13 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-10-20._
+_Gegenereerd op 2026-11-06._
 
 | Feit | Waarde |
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 49 |
+| Testbestanden | 50 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -531,6 +531,19 @@ pagina blijft serveren is zelf een van de manieren waarop een uitrol mislukt.
 De bouw zonder `--merk` blijft werken en waarschuwt alleen; de uitrolworkflow
 die dit merk verplicht stelt, is nog niet gebouwd.
 
+
+Sinds deze wijziging is "klaar" in de doelenketen een gemeten uitspraak en geen
+aanname. De eindcontrole (CI, identiteit `jarvis_ci`) doet er drie dingen voor,
+in deze volgorde: de SQL van het doel toepassen door de eigen migratielane
+(`jarvis.pas_migratie_toe`, met het ledger `jarvis.migraties`), de uitrol
+nameten op het bouwmerk, en de acceptatietests uit de opdracht uitvoeren en
+onafhankelijk laten beoordelen. Eén van de drie niet in orde betekent: terug de
+herstelketen in, nooit klaar.
+
+Daarbij hoort dat stilstand vier soorten heeft in plaats van één
+(`jarvis/src/blokkade.ts`): beveiliging, bevoegdheid, besluit, fout. Alleen een
+echt besluit gaat naar de eigenaar; een ontbrekend recht of een ontbrekende deur
+is werk voor Jarvis.
 
 ## Volgende stap
 
