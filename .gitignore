@@ -2,3 +2,6 @@
 *.tsbuildinfo
 .env
 .env.*
+
+# De lokale projectkoppeling van de uitroldienst (bevat een project-id, geen secret maar ook geen broncode).
+.vercel/

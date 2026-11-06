@@ -135,12 +135,16 @@ export function onvolledigGelezen(diff: readonly { readonly bestand: string; rea
   return redenen;
 }
 
-/** De aanroep in het gangbare chat-completions-formaat; leveranciersonafhankelijk in vorm. */
-export function bouwAanroep(model: string, vraag: string): Record<string, unknown> {
+/**
+ * De aanroep in het gangbare chat-completions-formaat; leveranciersonafhankelijk in vorm.
+ * Met een eigen systeemtekst is dezelfde voorziening ook de beoordelaar van een
+ * acceptatietest — bewust dezelfde weg, zodat er geen tweede modelvoorziening bij komt.
+ */
+export function bouwAanroep(model: string, vraag: string, systeem: string = REVIEW_SYSTEEM): Record<string, unknown> {
   return {
     model,
     messages: [
-      { role: "system", content: REVIEW_SYSTEEM },
+      { role: "system", content: systeem },
       { role: "user", content: vraag },
     ],
     response_format: { type: "json_object" },
