@@ -63,8 +63,36 @@ const GEREEDSCHAP = [{
   },
 }];
 
+/** De acceptatiedeur ziet alleen het leesgereedschap: een acceptatietest maakt nooit een doel aan. */
+const LEESGEREEDSCHAP = GEREEDSCHAP.filter((g) => g.name === "raadpleeg_doelen");
+
 const DOEL_KOLOMMEN = "id,titel,opdracht,status,pr,uitkomst,pogingen,aangemaakt,bijgewerkt,vast_door,heropend_op";
 const kort = (t, n) => (typeof t === "string" && t.length > n ? `${t.slice(0, n)}…` : t);
+
+/**
+ * Dezelfde lezing, maar achter de acceptatiesleutel in plaats van achter de
+ * sessie van de eigenaar. Voor een acceptatietest die vanuit de eindcontrole
+ * wordt gesteld: die heeft geen sessie van de eigenaar en mag die ook niet
+ * hebben (CON-0009). De database controleert de sleutel en doet drie vaste,
+ * read-only lezingen (jarvis.acceptatie_raadpleeg); de vorm van het antwoord is
+ * dezelfde als hierboven, zodat het model geen verschil ziet.
+ */
+export async function raadpleegMetSleutel(cfg, sleutel, invoer, fetchFn) {
+  const i = invoer ?? {};
+  const vorm =
+    typeof i.id === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(i.id)
+      ? { wat: "doel", id: i.id }
+      : i.historie === true
+        ? { wat: "historie" }
+        : { wat: "lijst", status: i.status ?? null, zoek: typeof i.zoek === "string" ? i.zoek.slice(0, 80) : null, aantal: i.aantal ?? 10 };
+  const r = await fetchFn(`${cfg.url}/rest/v1/rpc/acceptatie_raadpleeg`, {
+    method: "POST",
+    headers: { apikey: cfg.key, "content-type": "application/json" },
+    body: JSON.stringify({ p_token: sleutel, p_invoer: vorm }),
+  });
+  if (!r.ok) throw new Error(`raadplegen mislukt (${r.status})`);
+  return await r.json();
+}
 
 /** Leest uit de bestaande doelen-administratie met de sessie van de ingelogde eigenaar; er komt geen tweede administratie bij. */
 export async function raadpleeg(cfg, token, invoer, fetchFn) {
@@ -127,20 +155,21 @@ export async function raadpleeg(cfg, token, invoer, fetchFn) {
 
 /** De enige plek die de aanbieder kent. Geeft { tekst, doel } terug; doel is null of { titel, opdracht, project }.
  *  Leesgereedschap (raadpleeg_doelen) wordt via `lees` uitgevoerd en het resultaat teruggegeven aan het model. */
-export async function vraagModel(berichten, { sleutel, fetchFn, lees = null }) {
+export async function vraagModel(berichten, { sleutel, fetchFn, lees = null, alleenLezen = false }) {
   const nu = new Date().toLocaleString("nl-NL", { timeZone: "Europe/Amsterdam", dateStyle: "full", timeStyle: "short" });
   const gesprek = [...berichten];
   for (let ronde = 0; ronde < MAX_RONDES; ronde += 1) {
     const r = await fetchFn("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "content-type": "application/json", "x-api-key": sleutel, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: MODEL, max_tokens: MAX_UIT, system: `${SYSTEEM}\nHet is nu ${nu} (Nederlandse tijd).`, tools: GEREEDSCHAP, messages: gesprek }),
+      body: JSON.stringify({ model: MODEL, max_tokens: MAX_UIT, system: `${SYSTEEM}\nHet is nu ${nu} (Nederlandse tijd).`, tools: alleenLezen ? LEESGEREEDSCHAP : GEREEDSCHAP, messages: gesprek }),
     });
     if (!r.ok) throw new Error(`taalmodel gaf ${r.status}`);
     const uit = await r.json();
     const blokken = Array.isArray(uit.content) ? uit.content : [];
     const tekst = blokken.filter((b) => b.type === "text").map((b) => b.text).join("\n").trim();
-    const maak = blokken.find((b) => b.type === "tool_use" && b.name === "maak_doel");
+    // In de acceptatiemodus bestaat het gereedschap om een doel te maken niet; voor de zekerheid ook hier niet.
+    const maak = alleenLezen ? undefined : blokken.find((b) => b.type === "tool_use" && b.name === "maak_doel");
     if (maak) return { tekst, doel: maak.input };
     const leesVerzoeken = blokken.filter((b) => b.type === "tool_use" && b.name === "raadpleeg_doelen");
     if (!leesVerzoeken.length || !lees) return { tekst, doel: null };
@@ -243,7 +272,19 @@ export async function verwerk({ token, body, cfg, sleutel, fetchFn = fetch }) {
   const berichten = schoon(body?.gesprek);
   if (!berichten) return { status: 400, lading: { fout: "Geen bericht." } };
   if (!Array.isArray(berichten)) return { status: 400, lading: { fout: berichten.fout } };
+  // De acceptatiedeur: een acceptatietest uit de eindcontrole heeft geen sessie van de eigenaar en
+  // stuurt in plaats daarvan de sleutel mee die de database controleert. Alleen lezen, nooit een doel.
+  const alleenLezen = body?.alleen_lezen === true;
   try {
+    if (alleenLezen) {
+      const { tekst } = await vraagModel(berichten, {
+        sleutel,
+        fetchFn,
+        lees: (invoer) => raadpleegMetSleutel(cfg, token, invoer, fetchFn),
+        alleenLezen: true,
+      });
+      return { status: 200, lading: { antwoord: tekst || "Ik heb daar geen antwoord op.", alleen_lezen: true } };
+    }
     if (!(await gebruiker(cfg, token, fetchFn))) return { status: 401, lading: { fout: "Sessie ongeldig; log opnieuw in." } };
     const { tekst, doel } = await vraagModel(berichten, { sleutel, fetchFn, lees: (invoer) => raadpleeg(cfg, token, invoer, fetchFn) });
     if (doel) {

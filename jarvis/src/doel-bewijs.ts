@@ -74,7 +74,8 @@ export async function bewijsVoorTest(
           "Content-Type": "application/json",
           "User-Agent": "jarvis-acceptatie",
         },
-        body: JSON.stringify({ bericht: vraag, alleen_lezen: true }),
+        // Dezelfde vorm die de app gebruikt: een gesprek met één bericht van de eigenaar.
+        body: JSON.stringify({ gesprek: [{ rol: "jij", tekst: vraag }], alleen_lezen: true }),
       });
       const tekst = await a.text();
       return {

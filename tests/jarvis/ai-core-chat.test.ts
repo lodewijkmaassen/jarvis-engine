@@ -225,3 +225,53 @@ describe("chat in de uitrol", () => {
     expect(urls.some((u) => u.includes("soort=in.(") && u.includes("status)"))).toBe(true);
   });
 });
+
+describe("de acceptatiedeur: alleen lezen, achter de sleutel", () => {
+  /** Een nepdienst die zowel het model als de lees-RPC voorstelt. */
+  function deur(antwoord: unknown, rpc: unknown = { gevonden: true, doel: { id: "D-1", status: "klaar" } }) {
+    const oproepen: { url: string; body: unknown }[] = [];
+    const fetchFn = async (url: string, init: RequestInit) => {
+      oproepen.push({ url, body: JSON.parse(String(init.body ?? "{}")) });
+      if (url.includes("/rest/v1/rpc/acceptatie_raadpleeg")) return new Response(JSON.stringify(rpc), { status: 200 });
+      if (url.includes("/auth/v1/user")) return new Response("{}", { status: 401 });
+      return new Response(JSON.stringify(antwoord), { status: 200 });
+    };
+    return { oproepen, fetchFn: fetchFn as unknown as typeof fetch };
+  }
+  const cfg = { url: "https://db.example", key: "publiek" };
+  const vraag = { gesprek: [{ rol: "jij", tekst: "Waarom liep D-1 vast?" }], alleen_lezen: true };
+
+  it("antwoordt zonder sessie van de eigenaar en leest via de sleutel", async () => {
+    const { oproepen, fetchFn } = deur({
+      content: [{ type: "tool_use", id: "t1", name: "raadpleeg_doelen", input: { id: "D-1" } }],
+    });
+    const r = await verwerk({ token: "acceptatiesleutel", body: vraag, cfg, sleutel: "k", fetchFn });
+    expect(r.status).toBe(200);
+    // Geen sessiecontrole: de deur gaat niet langs /auth/v1/user.
+    expect(oproepen.some((o) => o.url.includes("/auth/v1/user"))).toBe(false);
+    const rpc = oproepen.find((o) => o.url.includes("acceptatie_raadpleeg"));
+    expect(rpc).toBeDefined();
+    expect((rpc!.body as { p_token: string }).p_token).toBe("acceptatiesleutel");
+    expect((rpc!.body as { p_invoer: { wat: string; id: string } }).p_invoer).toEqual({ wat: "doel", id: "D-1" });
+  });
+
+  it("geeft het model in deze modus geen gereedschap om een doel te maken", async () => {
+    const { oproepen, fetchFn } = deur({ content: [{ type: "text", text: "D-1 liep vast op een ontbrekend recht." }] });
+    const r = await verwerk({ token: "sleutel", body: vraag, cfg, sleutel: "k", fetchFn });
+    expect(r.status).toBe(200);
+    expect((r.lading as { antwoord: string }).antwoord).toMatch(/ontbrekend recht/);
+    const model = oproepen.find((o) => o.url.includes("api.anthropic.com"));
+    const namen = ((model!.body as { tools: { name: string }[] }).tools ?? []).map((t) => t.name);
+    expect(namen).toEqual(["raadpleeg_doelen"]);
+  });
+
+  it("maakt geen doel aan, ook niet als het model dat toch vraagt", async () => {
+    const { oproepen, fetchFn } = deur({
+      content: [{ type: "tool_use", id: "t2", name: "maak_doel", input: { titel: "Iets bouwen" } }],
+    });
+    const r = await verwerk({ token: "sleutel", body: vraag, cfg, sleutel: "k", fetchFn });
+    expect(r.status).toBe(200);
+    expect((r.lading as { doel?: unknown }).doel).toBeUndefined();
+    expect(oproepen.some((o) => o.url.includes("doel_nieuw"))).toBe(false);
+  });
+});
