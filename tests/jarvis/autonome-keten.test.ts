@@ -167,12 +167,25 @@ describe("de acceptatietest uit de opdracht", () => {
   });
 
   it("laat één mislukte test het doel tegenhouden", () => {
-    const goed = [{ id: "A", geslaagd: true, bewijs: "", reden: "ok" }];
-    const gemengd = [...goed, { id: "B", geslaagd: false, bewijs: "", reden: "mist #106" }];
+    const goed = [{ id: "A", staat: "geslaagd" as const, bewijs: "", reden: "ok" }];
+    const gemengd = [...goed, { id: "B", staat: "niet-geslaagd" as const, bewijs: "", reden: "mist #106" }];
     expect(eindoordeel(goed).klaar).toBe(true);
     expect(eindoordeel(gemengd).klaar).toBe(false);
-    expect(eindoordeel(gemengd).samenvatting).toContain("B: niet geslaagd");
+    expect(eindoordeel(gemengd).samenvatting).toContain("B: niet-geslaagd");
     expect(eindoordeel([]).klaar).toBe(true);
+  });
+
+  it("scheidt niet gemeten van gezakt: beide houden tegen, maar niet op dezelfde manier", () => {
+    const onmeetbaar = [
+      { id: "A", staat: "geslaagd" as const, bewijs: "", reden: "ok" },
+      { id: "B", staat: "niet-meetbaar" as const, bewijs: "", reden: "de acceptatiedeur ontbreekt — ontbrekende bevoegdheid" },
+    ];
+    const gezakt = [{ id: "B", staat: "niet-geslaagd" as const, bewijs: "", reden: "mist #106" }];
+    expect(eindoordeel(onmeetbaar).klaar).toBe(false);
+    expect(eindoordeel(onmeetbaar).onmeetbaar).toBe(true);
+    expect(eindoordeel(gezakt).klaar).toBe(false);
+    expect(eindoordeel(gezakt).onmeetbaar).toBe(false);
+    expect(eindoordeel([]).onmeetbaar).toBe(false);
   });
 });
 

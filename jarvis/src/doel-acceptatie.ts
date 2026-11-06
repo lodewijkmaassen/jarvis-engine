@@ -34,7 +34,7 @@ const LAATST_VAST_SQL =
   "select id from jarvis.doelen where vast_door is not null or heropend_op is not null order by coalesce(heropend_op, bijgewerkt) desc limit 1";
 /** Hoe vaak een acceptatietest van dit doel al niet slaagde: daarna is herstellen geen herstellen meer. */
 export const ACCEPTATIE_MISLUKT_SQL =
-  "select count(*) as aantal from jarvis.activiteit where taak = $1 and soort = 'acceptatie' and tekst like '%niet geslaagd%'";
+  "select count(*) as aantal from jarvis.activiteit where taak = $1 and soort = 'acceptatie' and tekst like '%: niet-geslaagd%'";
 export const MAX_ACCEPTATIE_RONDES = 3;
 
 /** Eén regel in de bestaande activiteitenlog; dat is waar de AI Core en de eigenaar kijken. */
@@ -118,8 +118,13 @@ function vastgezetOnderwerp(
 
 /**
  * Voert de acceptatietests van een doel uit en laat elk oordeel vellen door het
- * tweede model. Een test die niet uit te voeren is, is niet geslaagd: niet
- * gemeten is niet bewezen.
+ * tweede model.
+ *
+ * Drie uitkomsten, niet twee: een test die niet kón worden uitgevoerd is
+ * `niet-meetbaar` en geen `niet-geslaagd`. Beide houden het doel tegen — niet
+ * gemeten is niet bewezen — maar alleen bij `niet-geslaagd` is er voor de
+ * uitvoerder iets te herstellen; `niet-meetbaar` wijst naar een bevoegdheid die
+ * ontbreekt.
  */
 export async function voerAcceptatieUit(
   sql: DbClient,
@@ -157,17 +162,9 @@ export async function voerAcceptatieUit(
       onderwerp,
     );
     if (onuitvoerbaar !== null) {
-      uit.push({
-        id: test.id,
-        geslaagd: false,
-        bewijs: "",
-        reden: onuitvoerbaar,
-      });
-      await schrijfAcceptatie(
-        sql,
-        d.id,
-        `test ${test.id}: niet geslaagd — ${onuitvoerbaar}`,
-      );
+      uit.push({ id: test.id, staat: "niet-meetbaar", bewijs: "", reden: onuitvoerbaar });
+      await schrijfAcceptatie(sql, d.id, `test ${test.id}: niet-meetbaar — ${onuitvoerbaar}`);
+      console.log(`jarvis acceptatie: ${d.id}: test ${test.id} → niet-meetbaar (${onuitvoerbaar.slice(0, 120)})`);
       continue;
     }
     const antwoord = await vraagBeoordelaar(
@@ -175,29 +172,17 @@ export async function voerAcceptatieUit(
       bouwBeoordelingsVraag(test, bewijs),
     );
     if (typeof antwoord !== "string") {
-      uit.push({
-        id: test.id,
-        geslaagd: false,
-        bewijs,
-        reden: `de beoordeling kon niet worden gevraagd: ${antwoord.fout}`,
-      });
+      // De beoordelaar niet kunnen vragen is ook niet meten: er is niets mislukt om te herstellen.
+      const reden = `de beoordeling kon niet worden gevraagd: ${antwoord.fout}`;
+      uit.push({ id: test.id, staat: "niet-meetbaar", bewijs, reden });
+      await schrijfAcceptatie(sql, d.id, `test ${test.id}: niet-meetbaar — ${reden}`);
       continue;
     }
     const oordeel = parseerBeoordeling(antwoord);
-    uit.push({
-      id: test.id,
-      geslaagd: oordeel.geslaagd,
-      bewijs,
-      reden: oordeel.reden,
-    });
-    await schrijfAcceptatie(
-      sql,
-      d.id,
-      `test ${test.id}: ${oordeel.geslaagd ? "geslaagd" : "niet geslaagd"} — ${oordeel.reden}`,
-    );
-    console.log(
-      `jarvis acceptatie: ${d.id}: test ${test.id} → ${oordeel.geslaagd ? "geslaagd" : "niet geslaagd"} (${oordeel.reden.slice(0, 120)})`,
-    );
+    const staat = oordeel.geslaagd ? "geslaagd" : "niet-geslaagd";
+    uit.push({ id: test.id, staat, bewijs, reden: oordeel.reden });
+    await schrijfAcceptatie(sql, d.id, `test ${test.id}: ${staat} — ${oordeel.reden}`);
+    console.log(`jarvis acceptatie: ${d.id}: test ${test.id} → ${staat} (${oordeel.reden.slice(0, 120)})`);
   }
   return uit;
 }

@@ -293,14 +293,20 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
         console.log(`jarvis eindcontrole: ${d.id} → klaar (${uitkomsten.length} acceptatietest(s) geslaagd)`);
         continue;
       }
-      // Mislukt: de bestaande herstelketen. Pas als herstel niet lukt, staat het doel vast — niet eerder.
+      // Niet klaar. Wat er daarna gebeurt, hangt af van wát er niet klopte:
+      //   - niet te meten (een deur, een recht): een bevoegdheid. Terug naar de uitvoerder heeft geen zin;
+      //     hij kan er niets aan herstellen. Het doel staat vast met de reden erbij.
+      //   - gezakt: de bestaande herstelketen. Pas als herstel een paar keer niet lukt, staat het vast.
       const eerder = (await sql.unsafe(ACCEPTATIE_MISLUKT_SQL, [d.id])) as unknown as { aantal: string | number }[];
       const rondes = Number(eerder[0]?.aantal ?? 0);
-      const bevoegdheid = uitkomsten.some((u) => classificeerBlokkade(u.reden).soort === "bevoegdheid");
-      const naar = bevoegdheid || rondes >= MAX_ACCEPTATIE_RONDES ? "vast" : "bezig";
-      const tekst = `acceptatietest niet geslaagd — ${eind.samenvatting}`;
-      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, rendereerBlokkade(tekst).slice(0, 1800)]);
-      console.log(`jarvis eindcontrole: ${d.id} → ${naar} (${tekst.slice(0, 200)})`);
+      const tekst = eind.onmeetbaar
+        ? `acceptatietest niet te meten — ${eind.samenvatting}`
+        : `acceptatietest niet geslaagd (ronde ${rondes + 1} van ${MAX_ACCEPTATIE_RONDES}) — ${eind.samenvatting}`;
+      const blok = classificeerBlokkade(eind.onmeetbaar ? `${tekst} (ontbrekende bevoegdheid)` : tekst);
+      const naar = eind.onmeetbaar || rondes >= MAX_ACCEPTATIE_RONDES ? "vast" : "bezig";
+      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, rendereerBlokkade(tekst, blok).slice(0, 1800)]);
+      await schrijfAcceptatie(sql, d.id, `eindoordeel: ${naar} — ${tekst}`);
+      console.log(`jarvis eindcontrole: ${d.id} → ${naar} [${blok.soort}] (${tekst.slice(0, 200)})`);
     } catch (fout) {
       console.error(`jarvis eindcontrole: ${d.id}: ${fout instanceof Error ? fout.message : String(fout)}`);
       code = 1;

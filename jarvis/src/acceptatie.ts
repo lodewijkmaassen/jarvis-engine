@@ -118,10 +118,29 @@ export function volatielBezwaar(test: AcceptatieTest): string {
   );
 }
 
-/** Wat één test opleverde. Het bewijs is wat er werkelijk is gemeten, niet een samenvatting ervan. */
+/**
+ * Wat één test opleverde. Drie uitkomsten en niet twee, omdat "niet gemeten"
+ * iets anders is dan "gemeten en niet gehaald":
+ *
+ *   geslaagd       het bewijs haalt wat de test eist;
+ *   niet-geslaagd  het bewijs haalt het niet — werk voor de uitvoerder, de
+ *                  bestaande herstelketen pakt het op;
+ *   niet-meetbaar  de test kon niet worden uitgevoerd (een deur, een recht of
+ *                  een leesrecht ontbreekt). Dat is geen mislukt werk maar een
+ *                  ontbrekende bevoegdheid: het doel wordt er niet klaar van,
+ *                  en de uitvoerder heeft er niets te herstellen.
+ *
+ * Alle drie houden een doel tegen; waar het doel daarna heen gaat, is het
+ * verschil. Ze samennemen zette een doel vast op iets wat niemand hoefde te
+ * beslissen — precies de verwarring die deze keten moest oplossen.
+ */
+export const ACCEPTATIE_UITKOMSTEN = ["geslaagd", "niet-geslaagd", "niet-meetbaar"] as const;
+export type AcceptatieStaat = (typeof ACCEPTATIE_UITKOMSTEN)[number];
+
 export type AcceptatieUitkomst = {
   readonly id: string;
-  readonly geslaagd: boolean;
+  readonly staat: AcceptatieStaat;
+  /** Het bewijs is wat er werkelijk is gemeten, niet een samenvatting ervan. */
   readonly bewijs: string;
   /** De reden van de beoordelaar, of van de meting zelf. */
   readonly reden: string;
@@ -171,12 +190,20 @@ export function parseerBeoordeling(tekst: string): { readonly geslaagd: boolean;
 
 /**
  * Het eindoordeel over een doel: alleen klaar als elke test is uitgevoerd en
- * geslaagd. Eén mislukte of niet-uitvoerbare test houdt het doel tegen; dat is
- * het hele punt.
+ * geslaagd. Eén test die het niet haalt of niet te meten was, houdt het doel
+ * tegen; dat is het hele punt. `onmeetbaar` zegt waar het daarna heen moet —
+ * naar de bevoegdheid die ontbreekt, niet naar de uitvoerder.
  */
-export function eindoordeel(uitkomsten: readonly AcceptatieUitkomst[]): { readonly klaar: boolean; readonly samenvatting: string } {
-  if (uitkomsten.length === 0) return { klaar: true, samenvatting: "geen expliciete acceptatietest in het doel" };
-  const gezakt = uitkomsten.filter((u) => !u.geslaagd);
-  const regels = uitkomsten.map((u) => `${u.id}: ${u.geslaagd ? "geslaagd" : "niet geslaagd"} — ${u.reden}`);
-  return { klaar: gezakt.length === 0, samenvatting: regels.join(" | ").slice(0, 1800) };
+export function eindoordeel(uitkomsten: readonly AcceptatieUitkomst[]): {
+  readonly klaar: boolean;
+  readonly onmeetbaar: boolean;
+  readonly samenvatting: string;
+} {
+  if (uitkomsten.length === 0) return { klaar: true, onmeetbaar: false, samenvatting: "geen expliciete acceptatietest in het doel" };
+  const regels = uitkomsten.map((u) => `${u.id}: ${u.staat} — ${u.reden}`);
+  return {
+    klaar: uitkomsten.every((u) => u.staat === "geslaagd"),
+    onmeetbaar: uitkomsten.some((u) => u.staat === "niet-meetbaar"),
+    samenvatting: regels.join(" | ").slice(0, 1800),
+  };
 }
