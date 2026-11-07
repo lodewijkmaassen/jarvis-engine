@@ -153,13 +153,37 @@ export const BEOORDELAAR_SYSTEEM =
   "geslaagd. Verzin geen feiten en vul niets aan uit eigen kennis. Antwoord uitsluitend met één JSON-object, zonder tekst eromheen: " +
   '{"geslaagd": true|false, "reden": "<één of twee zinnen, concreet, met wat wel en niet in het bewijs staat>"}';
 
-/** De vraag aan de onafhankelijke beoordelaar: de test, en wat de uitvoering werkelijk opleverde. */
-export function bouwBeoordelingsVraag(test: AcceptatieTest, bewijs: string): string {
+/** Zoveel van de opdracht gaat als context mee; genoeg voor waar een test naar verwijst. */
+export const OPDRACHT_CONTEXT_TEKENS = 8_000;
+
+/**
+ * De vraag aan de onafhankelijke beoordelaar: de test, en wat de uitvoering werkelijk opleverde.
+ *
+ * De opdracht gaat als context mee, en alleen als context. Een test verwijst
+ * ernaar zonder het te herhalen — "controleer dat de eerder ontbrekende SQL is
+ * toegepast" is zonder de opdracht niet te beantwoorden, want daar staat wélke
+ * SQL dat is. Gemeten op 2026-11-07 aan D-20261021-161119608: dezelfde
+ * beoordelaar zakte op hetzelfde bewijs zonder die context en slaagde ermee.
+ * Het oordeel blijft over de test en blijft op het bewijs; de opdracht is er om
+ * te kunnen lezen waar de test over gaat.
+ */
+export function bouwBeoordelingsVraag(test: AcceptatieTest, bewijs: string, opdracht: string | null = null): string {
+  const context = (opdracht ?? "").trim();
   return [
     `# Acceptatietest ${test.id}`,
     "",
     test.tekst,
     "",
+    ...(context === ""
+      ? []
+      : [
+          "# De opdracht waar deze test bij hoort",
+          "",
+          "Alleen als context, om te kunnen zien waar de test naar verwijst. Je beoordeelt uitsluitend de test hierboven, en uitsluitend op het bewijs hieronder.",
+          "",
+          context.length > OPDRACHT_CONTEXT_TEKENS ? `${context.slice(0, OPDRACHT_CONTEXT_TEKENS)}\n… [afgekapt]` : context,
+          "",
+        ]),
     "# Wat de uitvoering heeft opgeleverd (het bewijs)",
     "",
     bewijs.length > 24_000 ? `${bewijs.slice(0, 24_000)}\n… [afgekapt]` : bewijs,

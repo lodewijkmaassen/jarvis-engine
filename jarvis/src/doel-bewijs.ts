@@ -133,13 +133,19 @@ export async function bewijsVoorTest(
       onuitvoerbaar: `het bewijs is niet te lezen: ${fout instanceof Error ? fout.message : String(fout)} — ontbrekende bevoegdheid, geen besluit`,
     };
   }
+  // De uitkomst van dit doel is het OORDEEL van de vorige meting, niet wat er is gebouwd. Stond zij in
+  // het bewijs, dan las de beoordelaar haar eigen vorige oordeel terug en herhaalde het: "de eindcontrole
+  // zegt zelf dat nergens wordt aangetoond dat ...". Eén keer zakken hield zichzelf zo in stand. Gemeten
+  // op 2026-11-07 aan D-20261021-161119608 (RSK-0043); dezelfde beoordelaar sloeg om naar geslaagd zodra
+  // zij haar eigen oordeel niet meer terugzag. Dit is dezelfde regel als die de activiteit al filtert.
+  const DOEL_ZELF = "(de lopende meting van dit doel zelf; geen bewijs)";
   const delen = [
-    `doel ${d.id} (${d.titel}) staat op ${d.status}; uitkomst: ${d.uitkomst ?? "(geen)"}`,
+    `doel ${d.id} (${d.titel}) staat op ${d.status}`,
     `pull request: ${d.pr?.repo ?? "-"}#${d.pr?.nummer ?? "-"} kop ${String(d.pr?.kop ?? "-").slice(0, 7)} merge ${String(d.pr?.merge_sha ?? "-").slice(0, 7)}`,
     `migratieledger van dit doel (alleen migraties die ONDER doel-id ${d.id} zijn toegepast):\n${ledger.length === 0 ? "(geen regels; dat zegt niets over SQL die onder een ANDER doel-id is toegepast - zie het ledger van de lane hieronder)" : JSON.stringify(ledger).slice(0, 4000)}`,
     `migratieledger van de hele lane (alle doelen, nieuwste eerst):\n${ledgerAlles.length === 0 ? "(geen regels)" : JSON.stringify(ledgerAlles).slice(0, 4000)}`,
     `activiteit van ${taak}:\n${activiteit.length === 0 ? "(geen regels)" : JSON.stringify(activiteit).slice(0, 8000)}`,
-    `doelen van de lane (nieuwste eerst, met uitkomst):\n${doelen.length === 0 ? "(geen regels)" : JSON.stringify(doelen).slice(0, 6000)}`,
+    `doelen van de lane (nieuwste eerst, met uitkomst):\n${doelen.length === 0 ? "(geen regels)" : JSON.stringify(doelen.map((r) => (r["id"] === d.id ? { ...r, uitkomst: DOEL_ZELF } : r))).slice(0, 6000)}`,
   ];
   if (prNummer !== null)
     delen.push(
