@@ -131,6 +131,67 @@ export function checksGroen(
 }
 
 /** Moet de dispatcher de uitvoerder starten? Ja als er een doel open, bezig of in review staat zonder recente beweging. */
+/** Toestanden waarin een doel op de keten wacht: dan hoort er een ronde te komen. */
+export const WACHTENDE_TOESTANDEN: readonly string[] = ["open", "bezig", "review", "samengevoegd"];
+
+/** Een gat tussen twee ronden dat groter is dan dit heet stilstand, als er werk stond te wachten. */
+export const KETEN_STILSTAND_MINUTEN = 30;
+
+/** Niet vaker dan dit een spoor schrijven: een ronde elke twee minuten hoeft niet elke keer in de activiteit. */
+export const KETEN_SPOOR_MINUTEN = 10;
+
+export type KetenSpoor = {
+  /** Moet deze ronde een regel schrijven? */
+  readonly schrijven: boolean;
+  /** Is dit stilstand: te lang geleden, terwijl er werk wachtte? */
+  readonly stilstand: boolean;
+  /** De regel zoals hij in de activiteit komt. */
+  readonly tekst: string;
+};
+
+/**
+ * Wat de keten over haar eigen ronde vastlegt, en of zij stilstand ziet.
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * De keten wordt vanuit de database gestart: `jarvis.doel_ronde()` draait op
+ * een rooster in Postgres en stuurt een dispatch zodra er werk is. Gemeten op
+ * 2026-11-07: tijdens werk kwam er elke twee minuten een ronde, en zodra er
+ * een GO lag ook de attestatie. Het rooster van GitHub zelf is onbetrouwbaar
+ * (vier tot acht uur ertussen gemeten, in drie repositories gelijk) en is de
+ * reserve, niet de motor.
+ *
+ * Wat ontbrak, was niet het starten maar het ZIEN. Valt die starter weg — een
+ * token dat verloopt, een rooster dat verdwijnt, een netwerkroute die dicht
+ * gaat — dan gebeurt er niets, en meldt niets dat er niets gebeurt. Elke ronde
+ * laat daarom een spoor na met hoe lang geleden de vorige draaide. Stond er
+ * werk te wachten en is dat gat te groot, dan heet dat stilstand; de ronde die
+ * het opmerkt is tegelijk het herstel, want zij doet alsnog wat er lag.
+ *
+ * Niet elke ronde schrijft: tijdens druk werk zou dat elke twee minuten een
+ * regel zijn. Eén regel per tien minuten laat elk gat zien dat ertoe doet, en
+ * een gat dat stilstand heet wordt altijd geschreven.
+ */
+export function ketenSpoor(o: {
+  readonly nu: Date;
+  /** Wanneer de vorige ronde een spoor naliet, of null als er nog geen is. */
+  readonly vorige: string | null;
+  /** Waardoor deze ronde startte (het event van de workflow). */
+  readonly oorzaak: string;
+  /** Hoeveel doelen op de keten wachtten. */
+  readonly wachtend: number;
+}): KetenSpoor {
+  const minuten = o.vorige === null ? null : Math.round((o.nu.getTime() - Date.parse(o.vorige)) / 60_000);
+  const stilstand = minuten !== null && minuten >= KETEN_STILSTAND_MINUTEN && o.wachtend > 0;
+  const hoelang = minuten === null ? "eerste spoor" : `vorige ronde ${minuten} min geleden`;
+  const werk = o.wachtend === 0 ? "niets te doen" : `${o.wachtend} doel(en) wachtend`;
+  return {
+    schrijven: minuten === null || minuten >= KETEN_SPOOR_MINUTEN || stilstand,
+    stilstand,
+    tekst: `ketenronde (${o.oorzaak || "onbekend"}) — ${hoelang}; ${werk}${stilstand ? "; STILSTAND: er stond werk te wachten" : ""}`,
+  };
+}
+
 export function dispatchNodig(doelen: readonly Pick<Doel, "id" | "status" | "bijgewerkt">[], nu: Date): { readonly start: boolean; readonly reden: string } {
   const werk = doelen.filter((d) => d.status === "open" || d.status === "bezig" || d.status === "review");
   if (werk.length === 0) return { start: false, reden: "geen doel in uitvoering" };
