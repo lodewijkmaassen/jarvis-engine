@@ -100,11 +100,15 @@ export async function bewijsVoorTest(
     activiteit = (await sql.unsafe(DOEL_ACTIVITEIT_SQL, [
       onderwerp ?? d.id,
     ])) as unknown as Record<string, unknown>[];
-    if (test.soort === "sql")
-      feiten = (await sql.unsafe(SCHEMA_FEITEN_SQL)) as unknown as Record<
-        string,
-        unknown
-      >[];
+    // Altijd meegeleverd, niet alleen bij een test die als `sql` is herkend. Gemeten op 2026-11-07 in
+    // de end-tot-endproef: test A vroeg om het bestaan van een view én om het migratieledger, werd als
+    // soort `bewijs` herkend, en de beoordeelaar zag daardoor het ledger wél en de view niet. Terecht
+    // niet-geslaagd, maar om de verkeerde reden. De feiten zijn een korte read-only lijst namen; die
+    // hoort bij elk bewijs, zodat geen test faalt op wat er niet in het bewijs stond.
+    feiten = (await sql.unsafe(SCHEMA_FEITEN_SQL)) as unknown as Record<
+      string,
+      unknown
+    >[];
   } catch (fout) {
     // Niet kunnen lezen is geen mislukte test: het is een ontbrekend leesrecht van de eindcontrole.
     return {
