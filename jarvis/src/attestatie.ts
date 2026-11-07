@@ -70,51 +70,89 @@ export function scopeHash(inhoud: string): string {
 }
 
 /**
- * Paden waarvan een wijziging altijd een aparte autorisatie vraagt
- * (DEC-0043 §2: productie, secrets, externe accounts, beveiliging,
- * governance). Bewust een korte, harde lijst en geen oordeel per geval.
+ * Paden waarvan een wijziging niet onder het gewone werk valt (DEC-0043 §2).
+ *
+ * `doelDekt: true`: een doel van de eigenaar dekt dit. Alleen hij maakt een
+ * doel aan en Jarvis kan de tekst ervan niet wijzigen, dus is het bestaan
+ * ervan zijn mandaat — een steviger anker dan een hash over een bestand. Het
+ * dekt wat hij op 2026-11-07 opsomde: code, niet-destructieve migraties,
+ * documentatie, infrastructuur, reviews, samenvoegen, uitrollen en tests.
+ *
+ * `doelDekt: false` blijft van hem: wat bepaalt WAT Jarvis mag en WIE hem
+ * beoordeelt, en waar geheimen staan. Een agent die zijn eigen rechter of zijn
+ * eigen plafond mag herschrijven, heeft geen van beide.
+ *
+ * De eerste treffer bepaalt, dus staan die paden bovenaan: `.github/CODEOWNERS`
+ * is van hem, ook al valt het ook onder `.github/`.
  */
-export const HARDE_UITZONDERINGEN: readonly { readonly patroon: RegExp; readonly waarom: string }[] = [
-  { patroon: /^\.github\//, waarom: "workflows en repository-automatisering" },
-  { patroon: /(^|\/)CODEOWNERS$/, waarom: "wie wat mag beoordelen" },
-  { patroon: /(^|\/)migrations\//, waarom: "databasemigraties (productiedata)" },
-  { patroon: /(^|\/)\.env(\.|$)/, waarom: "omgevingsbestanden" },
-  { patroon: /^jarvis\.config\.yml$/, waarom: "governanceconfiguratie" },
-  { patroon: /^jarvis\/allowlist\.yml$/, waarom: "de allowlist van de sanitizer" },
-  { patroon: /(^|\/)constraints\//i, waarom: "harde randvoorwaarden" },
-  { patroon: /(^|\/)CON-[^/]*\.md$/i, waarom: "een randvoorwaarde-record, waar het ook staat" },
-  { patroon: /^jarvis\/roles\//, waarom: "rolcontracten (mandaat)" },
-  { patroon: /^jarvis\/canonical\//, waarom: "de canonieke poort- en attestatieworkflow" },
-  { patroon: /^\.claude\//, waarom: "agentconfiguratie" },
+export type HardeUitzondering = {
+  readonly patroon: RegExp;
+  readonly waarom: string;
+  /** Dekt een doel van de eigenaar deze wijziging, of blijft zij van hem? */
+  readonly doelDekt: boolean;
+};
+
+export const HARDE_UITZONDERINGEN: readonly HardeUitzondering[] = [
+  // Blijft van de eigenaar: wie beoordeelt, wat mag, en waar geheimen staan.
+  { patroon: /(^|\/)CODEOWNERS$/, waarom: "wie wat mag beoordelen", doelDekt: false },
+  { patroon: /^jarvis\.config\.yml$/, waarom: "governanceconfiguratie (de noodstop en de plafonds)", doelDekt: false },
+  { patroon: /^jarvis\/allowlist\.yml$/, waarom: "de allowlist van de sanitizer", doelDekt: false },
+  { patroon: /^jarvis\/roles\//, waarom: "rolcontracten (mandaat)", doelDekt: false },
+  { patroon: /^jarvis\/canonical\//, waarom: "de canonieke poort-, attestatie- en ketenworkflow", doelDekt: false },
+  { patroon: /^\.claude\//, waarom: "agentconfiguratie", doelDekt: false },
+  { patroon: /(^|\/)\.env(\.|$)/, waarom: "omgevingsbestanden", doelDekt: false },
   // .npmrc bepaalt waar pakketten vandaan komen (toeleveringsketen en tokens).
-  { patroon: /(^|\/)\.npmrc$/, waarom: "waar pakketten vandaan komen" },
+  { patroon: /(^|\/)\.npmrc$/, waarom: "waar pakketten vandaan komen", doelDekt: false },
+  { patroon: /(^|\/)constraints\//i, waarom: "harde randvoorwaarden", doelDekt: false },
+  { patroon: /(^|\/)CON-[^/]*\.md$/i, waarom: "een randvoorwaarde-record, waar het ook staat", doelDekt: false },
+  // Gedekt door een doel van de eigenaar.
+  { patroon: /^\.github\//, waarom: "workflows en repository-automatisering", doelDekt: true },
+  { patroon: /(^|\/)migrations\//, waarom: "databasemigraties (productiedata)", doelDekt: true },
   // De code van Jarvis zelf (jarvis/src, jarvis/edge, bin, tsconfig) en de engine-pin staan hier bewust niet
   // (eigenaarsmodel 2026-10-20: de eigenaar bepaalt wat, Jarvis bepaalt hoe). Een doel van de eigenaar geeft
   // mandaat voor de technisch nodige wijzigingen daaraan. De onafhankelijkheid van de controle hangt niet aan een
   // pad maar aan wie oordeelt: review en attestatie draaien altijd vanaf main met de engine die in die repository
   // is vastgepind, nooit met code uit de pull request. Een wijziging van die code wordt dus eerst door de vorige
-  // versie beoordeeld, en wordt pas zelf rechter na samenvoegen én een pin-update met een eigen review.
+  // versie beoordeeld, en wordt pas zelf rechter na samenvoegen en een pin-update met een eigen review.
 ];
 
+/** Eén geraakte uitzondering: welk bestand, waarom, en of een doel haar dekt. */
+export type Uitzonderingstreffer = { readonly pad: string; readonly waarom: string; readonly doelDekt: boolean };
+
 /**
- * Welke gewijzigde bestanden onder een harde uitzondering vallen, met reden.
- * `extraPaden` komt uit jarvis.config.yml (attestatie.extra_paden): paden of
- * mapvoorvoegsels die in dít project productie, deployment of secrets raken
- * (de engine kent geen leveranciers, het project wel).
+ * Welke gewijzigde bestanden onder een harde uitzondering vallen. `extraPaden`
+ * komt uit jarvis.config.yml: paden die in dít project productie, deployment
+ * of secrets raken. Zo'n projectregel telt alleen als geen regel hierboven al
+ * gold, en blijft van de eigenaar — het project noemt haar niet voor niets.
  */
-export function raaktHardeUitzondering(bestanden: readonly string[], extraPaden: readonly string[] = []): readonly string[] {
-  const treffers: string[] = [];
+export function uitzonderingstreffers(
+  bestanden: readonly string[],
+  extraPaden: readonly string[] = [],
+): readonly Uitzonderingstreffer[] {
+  const treffers: Uitzonderingstreffer[] = [];
   for (const bestand of bestanden) {
     const pad = bestand.replace(/\\/g, "/");
     const regel = HARDE_UITZONDERINGEN.find((h) => h.patroon.test(pad));
     if (regel) {
-      treffers.push(`${pad} (${regel.waarom})`);
+      treffers.push({ pad, waarom: regel.waarom, doelDekt: regel.doelDekt });
       continue;
     }
     const extra = extraPaden.find((e) => pad === e || pad.startsWith(e.endsWith("/") ? e : `${e}/`));
-    if (extra !== undefined) treffers.push(`${pad} (projectregel: ${extra})`);
+    if (extra !== undefined) treffers.push({ pad, waarom: `projectregel: ${extra}`, doelDekt: false });
   }
   return treffers;
+}
+
+/** Dezelfde treffers als tekst, zoals ze in een melding staan. */
+export function raaktHardeUitzondering(bestanden: readonly string[], extraPaden: readonly string[] = []): readonly string[] {
+  return uitzonderingstreffers(bestanden, extraPaden).map((t) => `${t.pad} (${t.waarom})`);
+}
+
+/** De treffers die een doel van de eigenaar NIET dekt; die vragen nog steeds zijn akkoord op deze kop. */
+export function uitzonderingenBuitenDoel(bestanden: readonly string[], extraPaden: readonly string[] = []): readonly string[] {
+  return uitzonderingstreffers(bestanden, extraPaden)
+    .filter((t) => !t.doelDekt)
+    .map((t) => `${t.pad} (${t.waarom})`);
 }
 
 /**
@@ -198,6 +236,14 @@ export type AttestatieFeiten = {
   readonly repo: string;
   readonly taken: readonly TaakFeiten[];
   readonly taakRedenen: readonly string[];
+  /**
+   * De doelen van de eigenaar achter de taak-id's van deze pull request, als
+   * `id -> toestand`. Alleen de eigenaar maakt een doel aan, dus is het
+   * bestaan van zo'n rij zijn mandaat. Ontbreekt de kaart (een omgeving zonder
+   * leesweg), dan telt er geen enkel mandaat: onbekend mag nooit de soepelste
+   * uitkomst geven.
+   */
+  readonly doelen?: ReadonlyMap<string, string>;
   /** De toetsing met oordeel GO op de kop, of null. */
   readonly toetsing: Toetsing | null;
   readonly gewijzigdeBestanden: readonly string[];
@@ -381,6 +427,16 @@ export const REVIEWER_DOOR = "ci-review";
  * een pull request nu draagt, is de onafhankelijke review in CI (REVIEWER_DOOR) op precies de kop. De
  * harde uitzonderingen — workflows, governance, migraties — vragen nog steeds een apart akkoord.
  */
+/** De taken van deze pull request die een lopend doel van de eigenaar zijn. Een gesloten doel geeft geen mandaat meer. */
+export function doelenMetMandaat(f: AttestatieFeiten): readonly string[] {
+  const kaart = f.doelen;
+  if (kaart === undefined) return [];
+  return f.taken.map((t) => t.taak).filter((taak) => {
+    const toestand = kaart.get(taak);
+    return toestand !== undefined && toestand !== "gesloten";
+  });
+}
+
 export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   const redenen: string[] = [];
 
@@ -410,15 +466,26 @@ export function beoordeelAttestatie(f: AttestatieFeiten): readonly string[] {
   }
 
   const treffers = raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
+  const buitenDoel = uitzonderingenBuitenDoel(f.gewijzigdeBestanden, f.extraPaden ?? []);
   const verklaring = leesUitzonderingenRegel(f.prTekst);
   const uitzondering = treffers.length > 0 || (verklaring !== null && verklaring !== "geen");
   if (verklaring === null) {
     redenen.push('de PR-tekst verklaart niets over uitzonderingen; zet er een regel "Uitzonderingen: geen" of "Uitzonderingen: <welke>" in');
   }
   if (uitzondering) {
-    if (!akkoordOpDezeKop(f)) {
-      const wat = [...treffers, ...(verklaring !== null && verklaring !== "geen" ? [`verklaard: ${verklaring}`] : [])];
-      redenen.push(`harde uitzondering (DEC-0043 §2) zonder apart akkoord van de eigenaar op deze kop: ${wat.join("; ")}`);
+    // Een doel van de eigenaar dekt het werk dat hij heeft opgesomd; wat het niet dekt, vraagt nog steeds zijn
+    // akkoord op precies deze kop. Zonder doel verandert er niets aan de oude regel.
+    const gedekt = doelenMetMandaat(f).length > 0 && buitenDoel.length === 0;
+    if (!akkoordOpDezeKop(f) && !gedekt) {
+      const wat = [
+        ...(buitenDoel.length > 0 ? buitenDoel : treffers),
+        ...(verklaring !== null && verklaring !== "geen" ? [`verklaard: ${verklaring}`] : []),
+      ];
+      const waarom =
+        doelenMetMandaat(f).length > 0
+          ? "harde uitzondering die een doel niet dekt, zonder apart akkoord van de eigenaar op deze kop"
+          : "harde uitzondering (DEC-0043 §2) zonder doel van de eigenaar en zonder apart akkoord op deze kop";
+      redenen.push(`${waarom}: ${wat.join("; ")}`);
     }
   }
 
@@ -455,8 +522,17 @@ export function attestatieInhoud(f: AttestatieFeiten): AttestatieInhoud {
     scope: "-",
     toetsing: administratief ? "-" : (f.toetsing?.id ?? "?"),
     kop: f.kop,
-    uitzonderingen: f.autorisatiePr === null ? "geen" : `apart akkoord ${f.autorisatiePr.id}`,
+    uitzonderingen: uitzonderingenTekst(f),
   };
+}
+
+/** Waarop deze attestatie leunt bij een harde uitzondering: zijn aparte akkoord, of het mandaat van zijn doel. */
+function uitzonderingenTekst(f: AttestatieFeiten): string {
+  if (f.autorisatiePr !== null) return `apart akkoord ${f.autorisatiePr.id}`;
+  const treffers = raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
+  if (treffers.length === 0) return "geen";
+  const doelen = doelenMetMandaat(f);
+  return doelen.length > 0 ? `mandaat van doel ${doelen.join("+")}` : "geen";
 }
 
 /** De reviewtekst: één regel, machinaal te lezen en voor mensen leesbaar. */

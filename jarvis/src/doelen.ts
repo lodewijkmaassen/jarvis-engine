@@ -39,6 +39,9 @@ export const MAX_NO_GO = 2;
 export const STIL_MINUTEN = 20;
 
 /** Het doel dat een pull request dient: een regel "Doel: D-…" in de PR-tekst. */
+/** De vorm van een doel-id zoals jarvis.doel_nieuw ze uitgeeft. Alles anders is geen doel en gaat niet in een filter. */
+export const DOEL_VORM = /^D-[0-9]{8}-[0-9]{6}(?:[0-9]{3})?$/;
+
 export function doelUitPrTekst(tekst: string): string | null {
   return /^\s*Doel:\s*(D-\d{8}-\d{6}(?:\d{3})?)\s*$/m.exec(tekst.replace(/\r\n/g, "\n"))?.[1] ?? null;
 }

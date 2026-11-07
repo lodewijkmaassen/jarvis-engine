@@ -70,6 +70,33 @@ export function canoniekeAttestatiePad(modus: "engine" | "consumer"): string {
   return modus === "engine" ? CANONIEKE_ATTESTATIE : CANONIEKE_ATTESTATIE_CONSUMER;
 }
 
+/**
+ * De ketenworkflow (jarvis-v3): de poort binnen het mandaat, de dispatcher en
+ * de migratieroute. Niet verplicht in elke repository, maar als hij er staat
+ * moet hij byte-identiek zijn aan de canonieke bron.
+ *
+ * WAAROM DIT ER SINDS 2026-11-07 BIJ STAAT
+ *
+ * Een doel van de eigenaar dekt sindsdien ook wijzigingen in `.github/`, zodat
+ * Jarvis zijn eigen infrastructuur kan onderhouden zonder per pull request om
+ * een akkoord te vragen. Juist dán moet deze workflow vastliggen: hij is de
+ * enige plek waar de productiegeheimen van de keten in de omgeving komen
+ * (`JARVIS_CI_DB_URL`, `JARVIS_MIGRATIE_DB_URL`, `JARVIS_ROUTINE_TOKEN`).
+ * Wie hem wil wijzigen, wijzigt de canonieke bron — en die ligt onder
+ * `jarvis/canonical/`, dat van de eigenaar blijft.
+ *
+ * De bron stond al in de lijst hieronder genoemd; alleen werd er niet op
+ * vergeleken. Gemeten op 2026-11-07: de drie repositories dragen alle drie
+ * exact de canonieke versie, dus deze controle verandert vandaag niets.
+ */
+export const ACTIEVE_KETEN = ".github/workflows/jarvis-v3.yml";
+export const CANONIEKE_KETEN = "jarvis/canonical/jarvis-v3.yml";
+export const CANONIEKE_KETEN_CONSUMER = "node_modules/jarvis-engine/jarvis/canonical/jarvis-v3.yml";
+
+export function canoniekeKetenPad(modus: "engine" | "consumer"): string {
+  return modus === "engine" ? CANONIEKE_KETEN : CANONIEKE_KETEN_CONSUMER;
+}
+
 /** De governanceconfiguratie zelf. Niet instelbaar. */
 export const GOVERNANCE_CONFIG = "jarvis.config.yml";
 
@@ -153,6 +180,8 @@ export type GovernanceInvoer = {
    * byte-identiek zijn aan de bron.
    */
   readonly attestatie?: { readonly actief: BestandsFeiten; readonly canoniek: BestandsFeiten };
+  /** De ketenworkflow en zijn canonieke bron; zelfde regel als bij de attestatie. */
+  readonly keten?: { readonly actief: BestandsFeiten; readonly canoniek: BestandsFeiten };
   /** Bestandsnamen in de workflowmap, of null wanneer die niet te lezen is. */
   readonly workflowMapInhoud: readonly string[] | null;
   /** Per verplicht governance-testbestand: het aantal bytes, of null als het ontbreekt. */
@@ -273,6 +302,20 @@ export function controleerGovernance(invoer: GovernanceInvoer): readonly string[
     if (!a.actief.viaSymlink && !a.canoniek.viaSymlink) {
       const uitkomst = vergelijkWorkflow(a.actief.bytes, a.canoniek.bytes);
       if (!uitkomst.gelijk) redenen.push(`${ACTIEVE_ATTESTATIE} ${uitkomst.reden}`);
+    }
+  }
+
+  if (invoer.keten !== undefined && invoer.keten.actief.bytes !== null) {
+    const k = invoer.keten;
+    const bronPad = canoniekeKetenPad(modus);
+    if (k.actief.viaSymlink) redenen.push(`${ACTIEVE_KETEN} is een symbolische link of ligt achter een link`);
+    if (k.canoniek.viaSymlink) redenen.push(`${bronPad} is een symbolische link of ligt achter een link`);
+    if (k.actief.echtPad !== null && k.canoniek.echtPad === k.actief.echtPad) {
+      redenen.push(`${ACTIEVE_KETEN} en ${bronPad} zijn hetzelfde bestand`);
+    }
+    if (!k.actief.viaSymlink && !k.canoniek.viaSymlink) {
+      const uitkomst = vergelijkWorkflow(k.actief.bytes, k.canoniek.bytes);
+      if (!uitkomst.gelijk) redenen.push(`${ACTIEVE_KETEN} ${uitkomst.reden}`);
     }
   }
 
