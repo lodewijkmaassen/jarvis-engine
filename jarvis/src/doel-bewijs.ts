@@ -136,7 +136,7 @@ export async function bewijsVoorTest(
   const delen = [
     `doel ${d.id} (${d.titel}) staat op ${d.status}; uitkomst: ${d.uitkomst ?? "(geen)"}`,
     `pull request: ${d.pr?.repo ?? "-"}#${d.pr?.nummer ?? "-"} kop ${String(d.pr?.kop ?? "-").slice(0, 7)} merge ${String(d.pr?.merge_sha ?? "-").slice(0, 7)}`,
-    `migratieledger van dit doel:\n${ledger.length === 0 ? "(geen regels)" : JSON.stringify(ledger).slice(0, 4000)}`,
+    `migratieledger van dit doel (alleen migraties die ONDER doel-id ${d.id} zijn toegepast):\n${ledger.length === 0 ? "(geen regels; dat zegt niets over SQL die onder een ANDER doel-id is toegepast - zie het ledger van de lane hieronder)" : JSON.stringify(ledger).slice(0, 4000)}`,
     `migratieledger van de hele lane (alle doelen, nieuwste eerst):\n${ledgerAlles.length === 0 ? "(geen regels)" : JSON.stringify(ledgerAlles).slice(0, 4000)}`,
     `activiteit van ${taak}:\n${activiteit.length === 0 ? "(geen regels)" : JSON.stringify(activiteit).slice(0, 8000)}`,
     `doelen van de lane (nieuwste eerst, met uitkomst):\n${doelen.length === 0 ? "(geen regels)" : JSON.stringify(doelen).slice(0, 6000)}`,

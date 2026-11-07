@@ -83,3 +83,21 @@ describe("het bewijs van een acceptatietest gaat over het onderwerp", () => {
       expect(q.trim().toLowerCase().startsWith("select ")).toBe(true);
   });
 });
+
+describe("een leeg ledger van dit doel is geen bewijs van afwezigheid", () => {
+  it("zegt erbij waar de lege lijst over gaat en waar de rest staat", async () => {
+    const gezien: { q: string }[] = [];
+    const sql = {
+      unsafe: async (q: string) => {
+        gezien.push({ q });
+        return [];
+      },
+    } as unknown as DbClient;
+    const uit = await bewijsVoorTest(sql, DOEL, TEST, "#106");
+    // De SQL die dit doel moest toepassen, is onder de dossiers geschreven waarin zij
+    // stond - niet onder dit doel. "(geen regels)" las daardoor als "niets toegepast".
+    expect(uit.bewijs).toContain(`ONDER doel-id ${DOEL.id}`);
+    expect(uit.bewijs).toContain("dat zegt niets over SQL die onder een ANDER doel-id is toegepast");
+    expect(uit.bewijs).toContain("migratieledger van de hele lane");
+  });
+});
