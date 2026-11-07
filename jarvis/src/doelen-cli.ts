@@ -22,7 +22,7 @@ import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
-import { ketenSpoor, magVastleggen, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { ketenSpoor, maaktDezeKetenAf, magVastleggen, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -299,6 +299,13 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
   return code;
 }
 
+/** Kan deze run de samenvoeging van een doel in een andere repository lezen? Bij twijfel nee. */
+async function leestSamenvoeging(token: string, slug: string, sha: string): Promise<boolean> {
+  const pad = sha === "" ? `/repos/${slug}` : `/repos/${slug}/commits/${sha}`;
+  const a = await github(token, "GET", pad);
+  return a.status === 200;
+}
+
 /** Staat `kandidaat` op of na `basis`? Via de compare-API; bij twijfel nee. */
 async function isNazaat(token: string, slug: string, basis: string, kandidaat: string): Promise<boolean> {
   const a = await github(token, "GET", `/repos/${slug}/compare/${basis}...${kandidaat}`);
@@ -323,13 +330,19 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
   const eigenRepo = (process.env.GITHUB_REPOSITORY ?? "").trim().toLowerCase();
   for (const d of doelen) {
     try {
-      // Staat de samenvoeging van dit doel in een ANDERE repository, dan kan deze keten haar niet lezen: het
-      // GITHUB_TOKEN van een run reikt niet buiten de eigen repository. Dat is geen fout van het doel, en het
-      // als fout wegschrijven liet het doel heen en weer gaan tussen samengevoegd en bezig (RSK-0036, gemeten
-      // 2026-11-07). De keten van die andere repository maakt het af; hier gebeurt niets.
-      const vanAnder = (d.pr?.repo ?? "").toLowerCase();
-      if (eigenRepo !== "" && vanAnder !== "" && vanAnder !== eigenRepo) {
-        console.log(`jarvis eindcontrole: ${d.id} hoort bij ${d.pr?.repo}; die keten maakt het af`);
+      // Een doel raakt vaak meer dan één repository. Welke samenvoeging het draagt zegt dus niets over wie
+      // het mag afmaken: wie haar kan LEZEN maakt het af (maaktDezeKetenAf, RSK-0042). Alleen voor een
+      // samenvoeging in een andere repository kost dat een leesproef; kan deze keten er niet bij, dan laat
+      // zij het doel met rust — geen oordeel, en geen fout (RSK-0036).
+      const vanRepo = (d.pr?.repo ?? "").trim();
+      const anders = vanRepo !== "" && eigenRepo !== "" && vanRepo.toLowerCase() !== eigenRepo;
+      const wissel = maaktDezeKetenAf({
+        eigen: eigenRepo,
+        repo: vanRepo,
+        leesbaar: anders ? await leestSamenvoeging(token, vanRepo, (d.pr?.merge_sha ?? "").trim()) : false,
+      });
+      if (!wissel.maakAf) {
+        console.log(`jarvis eindcontrole: ${d.id} overgeslagen — ${wissel.reden}`);
         continue;
       }
       // 1. De database. Code die op een migratie leunt mag niet klaar heten terwijl die migratie er niet is.

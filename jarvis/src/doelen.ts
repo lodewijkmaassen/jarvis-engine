@@ -238,6 +238,48 @@ export function magVastleggen(o: {
   return { mag: true, reden: "de nieuwste samenvoeging van dit doel" };
 }
 
+/**
+ * Maakt DEZE keten dit samengevoegde doel af?
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * Een doel raakt vaak meer dan één repository: de engine én de app. De
+ * samenvoeging die het doel draagt is er één van, en welke dat is hangt af van
+ * welke pull request het eerst werd samengevoegd — toeval dus, en het mag niet
+ * bepalen of het doel ooit wordt afgemaakt.
+ *
+ * De vorige regel vergeleek alleen de namen: staat de samenvoeging in een
+ * andere repository, dan doet deze keten niets en "maakt die keten het af".
+ * Maar de keten van de engine-repository wordt met opzet niet gewekt (de
+ * dispatcher in de database slaat haar over) en haar eigen uurwerk bij GitHub
+ * draait hooguit een paar keer per dag. Gemeten op 2026-11-07 aan
+ * D-20261021-161119608: de keten van de consument legde zélf de samenvoeging
+ * in de engine-repository vast, weigerde daarna 79 minuten lang haar eigen
+ * vastlegging te beoordelen, en niemand anders kwam langs (RSK-0042).
+ *
+ * De regel is daarom niet de naam maar het lezen: wie de samenvoeging kan
+ * lezen, maakt het doel af. De engine is openbaar en elke keten leest haar al
+ * bij het reviewen, dus de actieve keten kan erbij. Kan zij de commit niet
+ * lezen — een andere besloten repository — dan laat zij het doel met rust:
+ * geen oordeel, en vooral geen fout, want dat liet het doel heen en weer gaan
+ * tussen samengevoegd en bezig (RSK-0036).
+ */
+export function maaktDezeKetenAf(o: {
+  /** GITHUB_REPOSITORY van deze run. */
+  readonly eigen: string;
+  /** De repository van de vastgelegde samenvoeging. */
+  readonly repo: string;
+  /** Is die samenvoeging vanuit deze run te lezen? Alleen gevraagd als de repository een andere is. */
+  readonly leesbaar: boolean;
+}): { readonly maakAf: boolean; readonly reden: string } {
+  const eigen = o.eigen.trim().toLowerCase();
+  const repo = o.repo.trim().toLowerCase();
+  if (repo === "") return { maakAf: true, reden: "het doel draagt geen samenvoeging" };
+  if (eigen === "" || repo === eigen) return { maakAf: true, reden: "de samenvoeging staat in de repository van deze run" };
+  if (o.leesbaar) return { maakAf: true, reden: `de samenvoeging staat in ${o.repo} en is vanuit deze keten te lezen` };
+  return { maakAf: false, reden: `de samenvoeging staat in ${o.repo} en is vanuit deze keten niet te lezen` };
+}
+
 export function dispatchNodig(doelen: readonly Pick<Doel, "id" | "status" | "bijgewerkt">[], nu: Date): { readonly start: boolean; readonly reden: string } {
   const werk = doelen.filter((d) => d.status === "open" || d.status === "bezig" || d.status === "review");
   if (werk.length === 0) return { start: false, reden: "geen doel in uitvoering" };
