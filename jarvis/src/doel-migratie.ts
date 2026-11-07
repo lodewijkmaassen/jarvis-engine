@@ -21,7 +21,7 @@ import {
   hashSql,
   migratieNaam,
 } from "./eigen-migratie";
-import { github, leesAllePaginas, type DbClient } from "./opdrachten";
+import { github, type DbClient } from "./opdrachten";
 
 /** Eén migratie uit een doeldossier, met zijn inhoud op de samenvoegcommit. */
 export type DoelMigratie = {
@@ -55,11 +55,18 @@ const doelMigratieBestanden: MigratieLezer =
     ref: string,
     doel: string,
   ): Promise<readonly DoelMigratie[] | string> {
-    const bestanden = await leesAllePaginas<{
+    // De bestanden van de samenvoegcommit, niet die van de pull request. `/pulls/<n>/files` vraagt het recht
+    // `pull-requests: read`, dat de eindcontrole niet heeft — gemeten op 2026-11-07 in de end-to-endproef:
+    // 403 "Resource not accessible by integration", waarna het doel terecht niet klaar werd maar ook niet
+    // verder kwam. `/commits/<sha>` komt met `contents: read`, hetzelfde recht dat het lezen van de inhoud al
+    // nodig heeft, en geeft voor een samenvoegcommit precies wat die commit heeft gebracht. Zo blijft de
+    // workflow ongewijzigd — en dat is de bedoeling: `.github/` is een harde uitzondering.
+    const commit = await github(token, "GET", `/repos/${slug}/commits/${ref}`);
+    if (commit.status !== 200) return `de samenvoegcommit ${ref.slice(0, 7)} van #${nummer} is niet te lezen (HTTP ${commit.status})`;
+    const bestanden = ((commit.lading as { files?: { filename: string; status: string }[] } | null)?.files ?? []) as {
       filename: string;
       status: string;
-    }>(token, `/repos/${slug}/pulls/${nummer}/files`, 5);
-    if (typeof bestanden === "string") return bestanden;
+    }[];
     const uit: DoelMigratie[] = [];
     for (const b of bestanden) {
       const hoort = doelVanMigratie(b.filename);
