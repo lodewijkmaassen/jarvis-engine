@@ -75,6 +75,20 @@ export function classificeerBlokkade(tekst: string): Blokkade {
   return { soort: "fout", vervolg: "onderzoeken, herstellen en opnieuw proberen in de bestaande herstelketen.", naarEigenaar: false };
 }
 
+/**
+ * Hoort deze stilstand bij de eigenaar?
+ *
+ * Alleen een besluit is van hem, en een beveiligingsgrens moet hij weten. Een
+ * ontbrekende bevoegdheid en een fout zijn werk van Jarvis (CON-0015): die
+ * horen in de herstelketen en niet in een toestand waar alleen de eigenaar ze
+ * weer in beweging kan krijgen. Dat was het tweede deel van RSK-0033 — een
+ * doel dat door een technisch gebrek in de keten stil kwam te staan, wachtte
+ * op een mens die er niets aan hoefde te beslissen.
+ */
+export function vanDeEigenaar(blokkade: Blokkade): boolean {
+  return blokkade.soort === "besluit" || blokkade.soort === "beveiliging";
+}
+
 /** Eén regel voor het ledger en de uitkomst van een doel: wat het is, en wat er nu gebeurt. */
 export function rendereerBlokkade(tekst: string, blokkade: Blokkade = classificeerBlokkade(tekst)): string {
   return `[${blokkade.soort}] ${tekst.trim()} → ${blokkade.vervolg}`;
