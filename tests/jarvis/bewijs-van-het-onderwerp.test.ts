@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DOELEN_LEDGER_SQL, DOEL_BEWIJS_ACTIVITEIT_SQL, PR_TOETSINGEN_SQL } from "@/jarvis/src/db";
+import { DB_MIGRATIES_SQL, DOELEN_LEDGER_SQL, DOEL_BEWIJS_ACTIVITEIT_SQL, PR_ACTIVITEIT_SQL, PR_TOETSINGEN_SQL } from "@/jarvis/src/db";
 import { bewijsVoorTest } from "@/jarvis/src/doel-bewijs";
 import type { AcceptatieTest } from "@/jarvis/src/acceptatie";
 import type { Doel } from "@/jarvis/src/doelen";
@@ -48,7 +48,7 @@ describe("het bewijs van een acceptatietest gaat over het onderwerp", () => {
     });
     const uit = await bewijsVoorTest(sql, DOEL, TEST, "#106");
     expect(uit.onuitvoerbaar).toBeNull();
-    expect(uit.bewijs).toContain("toetsingen van #106");
+    expect(uit.bewijs).toContain("historie van #106 zoals de database haar bewaart");
     expect(uit.bewijs).toContain("NO-GO");
     const toets = gezien.find((g) => g.q === PR_TOETSINGEN_SQL);
     expect(toets?.p).toEqual([106]);
@@ -99,5 +99,64 @@ describe("een leeg ledger van dit doel is geen bewijs van afwezigheid", () => {
     expect(uit.bewijs).toContain(`ONDER doel-id ${DOEL.id}`);
     expect(uit.bewijs).toContain("dat zegt niets over SQL die onder een ANDER doel-id is toegepast");
     expect(uit.bewijs).toContain("migratieledger van de hele lane");
+  });
+});
+
+/**
+ * De historie van een pull request staat op twee plekken (verduidelijking van
+ * acceptatietest A door de eigenaar, 2026-11-07): de oordelen in de toetsingen,
+ * en wat er in de activiteit aan het nummer hangt - het openen, het samenvoegen
+ * en de regels die een doel over die pull request heeft teruggeschreven.
+ */
+describe("het bewijs van een pull request bevat ook de activiteit die eraan hangt", () => {
+  it("zoekt de activiteit op de verwijzing die op dat nummer eindigt", async () => {
+    const { sql, gezien } = nepSql({
+      [PR_ACTIVITEIT_SQL]: [
+        { op: "2026-10-20T22:51:03Z", soort: "status", tekst: "(afgeleid uit toetsingen) review NO-GO op 0538f3b", verwijzing: "org/engine#106" },
+        { op: "2026-10-21T09:22:29Z", soort: "status", tekst: "(afgeleid uit toetsingen) review GO op 204a9fc", verwijzing: "org/engine#106" },
+      ],
+    });
+    const uit = await bewijsVoorTest(sql, DOEL, TEST, "#106");
+    expect(uit.onuitvoerbaar).toBeNull();
+    expect(uit.bewijs).toContain("historie van #106 zoals de database haar bewaart");
+    expect(uit.bewijs).toContain("afgeleid uit toetsingen");
+    // "%#106" en niet "%106%": #1106 is een andere pull request.
+    expect(gezien.find((g) => g.q === PR_ACTIVITEIT_SQL)?.p).toEqual(["%#106"]);
+  });
+
+  it("vraagt die activiteit niet op voor een onderwerp dat geen pull request is", async () => {
+    const { gezien, sql } = nepSql({});
+    await bewijsVoorTest(sql, DOEL, { ...TEST, onderwerp: "D-20261107-000000001" }, "D-20261107-000000001");
+    expect(gezien.find((g) => g.q === PR_ACTIVITEIT_SQL)).toBeUndefined();
+  });
+});
+
+/**
+ * De migratietabel van de database is een leesrecht dat een keten kan missen.
+ * Heeft zij het, dan staat erin welke objecten een migratie aanbrengt (eis (b)
+ * van acceptatietest A); heeft zij het niet, dan is dat een blok minder bewijs
+ * en geen onmeetbare test.
+ */
+describe("wat de database zelf als toegepaste migratie registreert", () => {
+  it("staat in het bewijs wanneer de keten die view mag lezen", async () => {
+    const { sql } = nepSql({
+      [DB_MIGRATIES_SQL]: [{ version: "20261106230712", name: "doel_overgangen", sql: "create or replace function jarvis.doel_overgang() returns trigger" }],
+    });
+    const uit = await bewijsVoorTest(sql, DOEL, TEST, null);
+    expect(uit.bewijs).toContain("view jarvis.db_migraties");
+    expect(uit.bewijs).toContain("doel_overgangen");
+  });
+
+  it("laat het blok weg wanneer dat leesrecht ontbreekt, zonder de test onmeetbaar te maken", async () => {
+    const sql = {
+      unsafe: async (q: string) => {
+        if (q === DB_MIGRATIES_SQL) throw new Error("permission denied for view db_migraties");
+        return [];
+      },
+    } as unknown as DbClient;
+    const uit = await bewijsVoorTest(sql, DOEL, TEST, null);
+    expect(uit.onuitvoerbaar).toBeNull();
+    expect(uit.bewijs).not.toContain("db_migraties");
+    expect(uit.bewijs).toContain(`doel ${DOEL.id}`);
   });
 });
