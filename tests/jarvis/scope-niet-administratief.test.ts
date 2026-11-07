@@ -42,6 +42,8 @@ const bron = {
     commit_sha: null,
     op: "2026-09-13T10:00:00Z",
   }),
+  // Geen doel van de eigenaar in deze proef: deze taak is een T-dossier, en dan telt alleen de oude weg.
+  doelen: async () => new Map<string, string>(),
   pr: async () => null,
   toetsing: async () => null,
   opId: async () => ({ autorisaties: new Map(), toetsing: null }),

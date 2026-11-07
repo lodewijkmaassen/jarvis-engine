@@ -407,8 +407,12 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
     const attestatie = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-attestatie.yml"));
     await writeFile(path.join(map, ".github/workflows/jarvis-attestatie.yml"), attestatie);
     await writeFile(path.join(map, "jarvis/canonical/jarvis-attestatie.yml"), attestatie);
+    // En de ketenworkflow, sinds 2026-11-07 met dezelfde regel: hij draagt de productiegeheimen van de keten.
+    const keten = readFileSync(path.join(process.cwd(), "jarvis/canonical/jarvis-v3.yml"));
+    await writeFile(path.join(map, ".github/workflows/jarvis-v3.yml"), keten);
+    await writeFile(path.join(map, "jarvis/canonical/jarvis-v3.yml"), keten);
     for (const naam of TOEGESTANE_WORKFLOWS) {
-      if (naam !== "jarvis-lint.yml" && naam !== "jarvis-attestatie.yml") {
+      if (naam !== "jarvis-lint.yml" && naam !== "jarvis-attestatie.yml" && naam !== "jarvis-v3.yml") {
         await writeFile(path.join(map, ".github/workflows", naam), "op: {}\n");
       }
     }
@@ -423,6 +427,15 @@ describe("controleerWorkflow geeft werkelijk een foutcode", () => {
   it("geeft 0 op een gezonde repository", async () => {
     const map = await repoMet(async () => {});
     await expect(controleerWorkflow(map)).resolves.toBe(0);
+  });
+
+  it("weigert een ketenworkflow die afwijkt van zijn canonieke bron", async () => {
+    // De ketenworkflow is de enige plek waar de productiegeheimen van de keten in de omgeving komen. Een doel
+    // van de eigenaar dekt wijzigingen in .github/, dus moet juist dit bestand aan zijn bron vastliggen.
+    const map = await repoMet(async (m) => {
+      await writeFile(path.join(m, ".github/workflows/jarvis-v3.yml"), "name: iets anders\n");
+    });
+    await expect(controleerWorkflow(map)).resolves.not.toBe(0);
   });
 
   it("geeft niet-nul wanneer de workflow afwijkt van de canonieke bron", async () => {

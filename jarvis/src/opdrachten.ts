@@ -51,7 +51,7 @@ import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit,
 import { laadKennis, type KennisLading } from "./store";
 import { controleerUitrol } from "./uitrol";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
-import {
+import { ACTIEVE_KETEN, canoniekeKetenPad,
   ACTIEVE_ATTESTATIE,
   ACTIEVE_WORKFLOW,
   canoniekeAttestatiePad,
@@ -80,6 +80,7 @@ import {
   AUTORISATIE_ID_SQL,
   AUTORISATIE_PR_SQL,
   AUTORISATIE_TAAK_SQL,
+  DOELEN_SQL,
   AUTORISATIES_SINDS_SQL,
   AUTORISATIES_SQL,
   berichtId,
@@ -98,6 +99,7 @@ import {
   restPadAutorisatiePr,
   restPadAutorisatiesOpId,
   restPadAutorisatieTaak,
+  restPadDoelMandaat,
   restPadToetsingKop,
   restPadToetsingOpId,
   RUN_OORZAKEN,
@@ -114,6 +116,7 @@ import {
   LEES_REVIEW_SQL,
   WIE_SQL,
 } from "./db";
+import { DOEL_VORM } from "./doelen";
 import { randomBytes } from "node:crypto";
 import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, duidRechten, eigenaarVan, SAMENVOEGMETHODE, uniekeHerkomstPerNaam, VERPLICHTE_CHECK, type PullRequestFeiten, type WorkflowBestand } from "./pr";
 import { homedir, tmpdir } from "node:os";
@@ -306,6 +309,10 @@ export async function controleerWorkflow(wortel: string): Promise<number> {
     attestatie: {
       actief: await feitenOver(wortelEchtPad, ACTIEVE_ATTESTATIE),
       canoniek: await feitenOver(wortelEchtPad, canoniekeAttestatiePad(modus)),
+    },
+    keten: {
+      actief: await feitenOver(wortelEchtPad, ACTIEVE_KETEN),
+      canoniek: await feitenOver(wortelEchtPad, canoniekeKetenPad(modus)),
     },
     workflowMapInhoud,
     testGroottes,
@@ -2800,6 +2807,8 @@ type PgClient = DbClient;
 /** Waar akkoorden en toetsingen vandaan komen: de leesbeelden (REST) of de rol (SQL). */
 type AttestatieBron = {
   readonly taak: (taak: string) => Promise<Autorisatie | null>;
+  /** Per taak-id de toestand van het doel met die naam; ontbreekt het doel, dan staat het id er niet in. */
+  readonly doelen: (taken: readonly string[]) => Promise<ReadonlyMap<string, string>>;
   readonly pr: (repo: string, nummer: number, kop: string) => Promise<Autorisatie | null>;
   readonly toetsing: (repo: string, nummer: number, kop: string) => Promise<Toetsing | null>;
   readonly opId: (autorisaties: readonly string[], toetsing: string) => Promise<{ autorisaties: ReadonlyMap<string, Autorisatie | null>; toetsing: Toetsing | null }>;
@@ -2858,6 +2867,15 @@ async function leesViaRest(url: string, sleutel: string, pad: string): Promise<r
 function restBron(url: string, sleutel: string): AttestatieBron {
   return {
     taak: async (taak) => alsAutorisatie((await leesViaRest(url, sleutel, restPadAutorisatieTaak(taak)))[0]),
+    doelen: async (taken) => {
+      const uit = new Map<string, string>();
+      for (const taak of taken) {
+        if (!DOEL_VORM.test(taak)) continue;
+        const rij = (await leesViaRest(url, sleutel, restPadDoelMandaat(taak)))[0];
+        if (rij && typeof rij["status"] === "string") uit.set(taak, rij["status"]);
+      }
+      return uit;
+    },
     pr: async (repo, nummer, kop) => alsAutorisatie((await leesViaRest(url, sleutel, restPadAutorisatiePr(repo, nummer, kop)))[0]),
     toetsing: async (repo, nummer, kop) => alsToetsing((await leesViaRest(url, sleutel, restPadToetsingKop(repo, nummer, kop)))[0]),
     // Opzoeking op id. Dit was een stub die een lege uitkomst teruggaf, en
@@ -2887,6 +2905,18 @@ function restBron(url: string, sleutel: string): AttestatieBron {
 function sqlBron(sql: PgClient): AttestatieBron {
   return {
     taak: async (taak) => alsAutorisatie((await sql.unsafe(AUTORISATIE_TAAK_SQL, [taak]))[0]),
+    // Bewust DOELEN_SQL en geen eigen statement: dat staat al in de allowlist van de Edge Function, zodat deze
+    // lezing ook werkt in een omgeving zonder directe databaserol (de cloud-uitvoerder).
+    doelen: async (taken) => {
+      const gevraagd = new Set(taken.filter((t) => DOEL_VORM.test(t)));
+      const uit = new Map<string, string>();
+      if (gevraagd.size === 0) return uit;
+      for (const rij of await sql.unsafe(DOELEN_SQL)) {
+        const id = String(rij["id"] ?? "");
+        if (gevraagd.has(id) && typeof rij["status"] === "string") uit.set(id, rij["status"]);
+      }
+      return uit;
+    },
     pr: async (repo, nummer, kop) => alsAutorisatie((await sql.unsafe(AUTORISATIE_PR_SQL, [repo, nummer, kop]))[0]),
     toetsing: async (repo, nummer, kop) => alsToetsing((await sql.unsafe(TOETSING_KOP_SQL, [repo, nummer, kop]))[0]),
     opId: async (ids, t) => {
@@ -3040,6 +3070,7 @@ export async function verzamelAttestatieFeiten(
     repo: slug,
     taken,
     taakRedenen,
+    doelen: await bron.doelen(taakIds),
     toetsing: await bron.toetsing(slug, nummer, feiten.kop),
     gewijzigdeBestanden: bestanden,
     extraPaden: config.attestatie.extra_paden,

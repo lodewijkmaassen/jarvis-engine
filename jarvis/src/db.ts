@@ -146,6 +146,15 @@ export function restPadAutorisatiePr(repo: string, nummer: number, kop: string):
     `&commit_sha=eq.${encodeURIComponent(kop)}&order=op.desc&limit=1`
   );
 }
+/**
+ * Het mandaat van een doel: bestaat het, en in welke toestand staat het? Uit
+ * het leesbeeld `doelen_mandaat` — alleen id en toestand, geen opdrachttekst.
+ * De attestatie heeft geen databaserol en leest met de publieke sleutel.
+ */
+export function restPadDoelMandaat(id: string): string {
+  return `doelen_mandaat?id=eq.${encodeURIComponent(id)}&limit=1`;
+}
+
 export function restPadToetsingKop(repo: string, nummer: number, kop: string): string {
   return (
     `toetsingen_open?pr_repo=eq.${encodeURIComponent(repo)}&pr_nummer=eq.${nummer}` +
