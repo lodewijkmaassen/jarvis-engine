@@ -275,6 +275,20 @@ describe("de acceptatiedeur: alleen lezen, achter de sleutel", () => {
     expect((r.lading as { doel?: unknown }).doel).toBeUndefined();
     expect(oproepen.some((o) => o.url.includes("doel_nieuw"))).toBe(false);
   });
+  it("noemt het schema in de RPC-aanroepen: anders bestaat de functie niet", async () => {
+    const kopjes: Record<string, string>[] = [];
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      if (String(url).includes("/rest/v1/rpc/")) {
+        kopjes.push(init.headers as Record<string, string>);
+        return new Response(JSON.stringify(String(url).includes("geldig") ? true : { gevonden: false }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await verwerk({ token: "sleutel", body: vraag, cfg, sleutel: "k", fetchFn });
+    expect(kopjes.length).toBeGreaterThan(0);
+    for (const k of kopjes) expect(k["content-profile"]).toBe("jarvis");
+  });
+
   it("antwoordt niet zonder geldige sleutel, en vraagt het model dan niet eens", async () => {
     const { oproepen, fetchFn } = deur({ content: [{ type: "text", text: "zou niet moeten antwoorden" }] }, {}, false);
     const r = await verwerk({ token: "verkeerd", body: vraag, cfg, sleutel: "k", fetchFn });

@@ -86,7 +86,8 @@ const kort = (t, n) => (typeof t === "string" && t.length > n ? `${t.slice(0, n)
 export async function sleutelGeldig(cfg, sleutel, fetchFn) {
   const r = await fetchFn(`${cfg.url}/rest/v1/rpc/acceptatie_geldig`, {
     method: "POST",
-    headers: { apikey: cfg.key, "content-type": "application/json" },
+    // content-profile: anders zoekt de REST-laag de functie in public en vindt haar niet (404 → false → 401).
+    headers: { apikey: cfg.key, "content-type": "application/json", "content-profile": "jarvis" },
     body: JSON.stringify({ p_token: sleutel }),
   });
   if (!r.ok) return false;
@@ -103,7 +104,7 @@ export async function raadpleegMetSleutel(cfg, sleutel, invoer, fetchFn) {
         : { wat: "lijst", status: i.status ?? null, zoek: typeof i.zoek === "string" ? i.zoek.slice(0, 80) : null, aantal: i.aantal ?? 10 };
   const r = await fetchFn(`${cfg.url}/rest/v1/rpc/acceptatie_raadpleeg`, {
     method: "POST",
-    headers: { apikey: cfg.key, "content-type": "application/json" },
+    headers: { apikey: cfg.key, "content-type": "application/json", "content-profile": "jarvis" },
     body: JSON.stringify({ p_token: sleutel, p_invoer: vorm }),
   });
   if (!r.ok) throw new Error(`raadplegen mislukt (${r.status})`);
