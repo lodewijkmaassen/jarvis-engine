@@ -49,6 +49,7 @@ import {
   dispatchBesluit,
   magUitrollen,
   beoordeelMigraties,
+  ketenOverslaan,
   normaliseerMigratie,
   MIGRATIE_PAD,
   type Criterium,
@@ -704,6 +705,15 @@ export async function voerV3Uit(argv: readonly string[]): Promise<number> {
     if (!stand.aan) {
       console.error(`jarvis v3: ${stand.reden}.`);
       return 1;
+    }
+    // Een gespiegelde ketenworkflow in een repository zonder databasecredential hoort niets te doen en niet te
+    // falen (RSK-0030). De uitspraak zelf staat in v3.ts; hier staat alleen de omgeving en de melding.
+    const overslaan = ketenOverslaan({ opdracht: wat, inCi: (process.env.GITHUB_ACTIONS ?? "") === "true", dbUrl: process.env.JARVIS_DB_URL });
+    if (overslaan !== null) {
+      // Als annotatie, zodat de run het toont zonder rood te zijn: groen dat niets deed, is geen groen dat werkte.
+      console.log(`::warning title=keten overgeslagen::jarvis v3 ${wat}: ${overslaan}`);
+      console.log(`jarvis v3 ${wat}: ${overslaan}`);
+      return 0;
     }
     const taak = losse[0] ?? "";
     switch (wat) {
