@@ -200,6 +200,15 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
       // Alleen werk dat de reviewer op precies die kop goedkeurde, telt voor een doel. Een administratieve
       // pull request (zonder review samengevoegd) brengt een doel nergens (QA-bevinding B2 op jarvis-engine#88).
       // doel_ci in de database eist hetzelfde.
+      // Eén samenvoeging wordt één keer vastgelegd. Zonder deze regel haalde de sweep een doel dat de
+      // eindcontrole net terug in de herstelketen had gezet meteen weer naar samengevoegd, waarna de
+      // eindcontrole het opnieuw terugzette: de twee stappen bleven elkaar overschrijven (gemeten
+      // 2026-11-07 op D-20261107-010000001, tien keer in één uur). Herstel vraagt dus een nieuwe
+      // samenvoeging — precies wat een hersteld doel ook oplevert.
+      if ((d.pr?.merge_sha ?? "").toLowerCase() === p.merge_commit_sha.toLowerCase()) {
+        console.log(`jarvis doel: ${slug}#${p.number} is voor ${d.id} al vastgelegd op ${p.merge_commit_sha.slice(0, 7)}; niet opnieuw`);
+        continue;
+      }
       const oordelen = (await sql.unsafe(OORDELEN_SQL, [slug, p.number])) as unknown as (ReviewOordeel & { op?: string })[];
       const opKop = oordelen.filter((o) => o.door === REVIEWER_DOOR && o.kop === p.head.sha);
       if (opKop.length === 0 || opKop[opKop.length - 1]!.oordeel !== "GO") {
