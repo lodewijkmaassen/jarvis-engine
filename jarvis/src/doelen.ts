@@ -43,6 +43,59 @@ export function doelUitPrTekst(tekst: string): string | null {
   return /^\s*Doel:\s*(D-\d{8}-\d{6}(?:\d{3})?)\s*$/m.exec(tekst.replace(/\r\n/g, "\n"))?.[1] ?? null;
 }
 
+/**
+ * De versie van de keten waarmee de eindcontrole een uitkomst schreef, als
+ * sluitstuk achter die uitkomst: ` [keten 1a2b3c4]`.
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * Eén samenvoeging wordt één keer vastgelegd. Die regel is er met reden: zonder
+ * haar haalde de sweep een doel dat de eindcontrole net in de herstelketen had
+ * gezet meteen weer naar `samengevoegd`, waarna de eindcontrole het opnieuw
+ * terugzette — tien keer in één uur. Maar zij heeft een prijs: lag de fout in
+ * de keten zélf, dan was er na het herstel geen weg terug naar `samengevoegd`,
+ * en moest er een nieuwe samenvoeging op het eigen dossier worden gemaakt om
+ * een doel opnieuw te laten meten. Dat is een kunstmatige handeling van een
+ * mens (RSK-0033, gemeten 2026-11-07).
+ *
+ * Met deze markering is er een derde mogelijkheid: niet "altijd opnieuw" en
+ * niet "nooit meer", maar "opnieuw zodra de keten zelf is veranderd". De
+ * versie is de commit van de engine die in deze repository is vastgepind — en
+ * die wijzigt precies dan, en alleen dan, wanneer er aan de keten is gewerkt.
+ */
+export function metKetenVersie(tekst: string, versie: string | null): string {
+  const kort = (versie ?? "").trim().slice(0, 12);
+  return kort === "" ? tekst : `${tekst} [keten ${kort}]`;
+}
+
+/** De versie uit zo'n uitkomst, of null als er geen in staat. */
+export function ketenVersieUit(uitkomst: string | null): string | null {
+  return /\[keten ([0-9a-zA-Z._-]{1,12})\]\s*$/.exec((uitkomst ?? "").trim())?.[1] ?? null;
+}
+
+/**
+ * Mag dit doel opnieuw gemeten worden op de samenvoeging die er al is?
+ *
+ * Alleen wanneer alles hieronder klopt:
+ *   - het doel loopt (`bezig`) en heeft een vastgelegde samenvoeging;
+ *   - de laatste uitkomst is een blokkade die van Jarvis zélf is — `[fout]` of
+ *     `[bevoegdheid]`. Een besluit of een beveiligingsgrens is niet van de
+ *     keten en wordt hier niet overgedaan;
+ *   - die uitkomst is gemeten met een andere versie van de keten dan de
+ *     huidige. Is de keten niet veranderd, dan is er niets om opnieuw te
+ *     meten en zou hetzelfde antwoord nog een keer komen.
+ */
+export function hermeetbaar(
+  d: Pick<Doel, "status" | "pr" | "uitkomst">,
+  huidigeVersie: string | null,
+): boolean {
+  if (d.status !== "bezig" || !d.pr?.merge_sha) return false;
+  if (!/^\[(fout|bevoegdheid)\]/.test((d.uitkomst ?? "").trim())) return false;
+  const gemetenMet = ketenVersieUit(d.uitkomst);
+  if (gemetenMet === null || huidigeVersie === null) return false;
+  return gemetenMet !== huidigeVersie.trim().slice(0, 12);
+}
+
 export type ReviewOordeel = { readonly kop: string; readonly oordeel: string; readonly door: string; readonly op?: string };
 
 /**

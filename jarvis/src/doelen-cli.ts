@@ -10,15 +10,19 @@
 //   dispatch        start de routine van de uitvoerder als er een doel zonder beweging staat.
 // En één opdracht voor de uitvoerder: `jarvis doel lijst | zet <id> <status> [--pr <json>] [--uitkomst <t>]`.
 
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+
 import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
 import { ACTIVITEIT_SQL, DOEL_WERK_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
 import { eindoordeel, leesAcceptatieTests } from "./acceptatie";
-import { classificeerBlokkade, rendereerBlokkade } from "./blokkade";
+import { leesEngineStand } from "./engine";
+import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
-import { checksGroen, dispatchNodig, doelUitPrTekst, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -41,6 +45,36 @@ async function met<T>(f: (sql: DbClient) => Promise<T>): Promise<T> {
   } finally {
     await v.sql.end({ timeout: 2 });
   }
+}
+
+/**
+ * De versie van de keten die nu draait: de engine-commit die in deze
+ * repository is vastgepind. Die verandert precies dan wanneer er aan de keten
+ * is gewerkt, en is daarmee het antwoord op "is er sinds die blokkade iets
+ * veranderd?" (RSK-0033).
+ *
+ * Geen pin te lezen (de engine-repository zelf), dan de commit van deze
+ * repository: grover, maar nooit verkeerd — hij wijzigt ook bij een wijziging
+ * aan de keten.
+ */
+async function ketenVersie(): Promise<string | null> {
+  const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
+  const lees = async (...delen: string[]): Promise<string | null> => {
+    try {
+      return await readFile(path.join(wortel, ...delen), "utf8");
+    } catch {
+      return null;
+    }
+  };
+  const stand = leesEngineStand(
+    await lees("package.json"),
+    await lees("package-lock.json"),
+    await lees("node_modules", ".package-lock.json"),
+    false,
+  );
+  const uitPin = stand.modus === "consumer" ? (stand.shaGeinstalleerd ?? stand.shaLock) : null;
+  const versie = uitPin ?? (process.env.GITHUB_SHA ?? "").trim();
+  return versie === "" ? null : versie.slice(0, 7);
 }
 
 async function leesDoelen(sql: DbClient): Promise<Doel[]> {
@@ -178,6 +212,7 @@ async function reviewen(sql: DbClient, token: string): Promise<number> {
 /** Samengevoegde pull requests van de bot met "Doel: D-…": het doel gaat naar samengevoegd. */
 async function vastleggen(sql: DbClient, token: string): Promise<number> {
   const { alle, bot } = await reviewRepos();
+  const versie = await ketenVersie();
   const doelen = await leesDoelen(sql);
   const lopend = doelen.filter((d) => d.status === "bezig" || d.status === "review");
   if (lopend.length === 0) return 0;
@@ -205,9 +240,19 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
       // eindcontrole het opnieuw terugzette: de twee stappen bleven elkaar overschrijven (gemeten
       // 2026-11-07 op D-20261107-010000001, tien keer in één uur). Herstel vraagt dus een nieuwe
       // samenvoeging — precies wat een hersteld doel ook oplevert.
+      // Eén uitzondering op "één keer vastleggen", en met opzet een smalle: lag de fout in de keten zelf, dan
+      // is er na het herstel geen weg terug naar `samengevoegd` en moest een mens een kunstmatige samenvoeging
+      // op het eigen dossier maken om een doel opnieuw te laten meten (RSK-0033). `hermeetbaar` staat in
+      // doelen.ts en eist drie dingen: het doel loopt met een vastgelegde samenvoeging, de laatste uitkomst is
+      // een blokkade van Jarvis zélf ([fout] of [bevoegdheid]), en zij is gemeten met een ANDERE versie van de
+      // keten dan de huidige. Is de keten niet veranderd, dan gebeurt er niets — en dat is wat het ping-pong
+      // van 2026-11-07 tegenhoudt.
       if ((d.pr?.merge_sha ?? "").toLowerCase() === p.merge_commit_sha.toLowerCase()) {
-        console.log(`jarvis doel: ${slug}#${p.number} is voor ${d.id} al vastgelegd op ${p.merge_commit_sha.slice(0, 7)}; niet opnieuw`);
-        continue;
+        if (!hermeetbaar(d, versie)) {
+          console.log(`jarvis doel: ${slug}#${p.number} is voor ${d.id} al vastgelegd op ${p.merge_commit_sha.slice(0, 7)}; niet opnieuw`);
+          continue;
+        }
+        console.log(`jarvis doel: ${d.id} is gemeten met een andere versie van de keten dan de huidige (${versie}); opnieuw beoordelen op ${p.merge_commit_sha.slice(0, 7)}`);
       }
       const oordelen = (await sql.unsafe(OORDELEN_SQL, [slug, p.number])) as unknown as (ReviewOordeel & { op?: string })[];
       const opKop = oordelen.filter((o) => o.door === REVIEWER_DOOR && o.kop === p.head.sha);
@@ -240,6 +285,7 @@ async function isNazaat(token: string, slug: string, basis: string, kandidaat: s
  * niet stil — daarom de try per doel en niet één om de lus.
  */
 async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number> {
+  const versie = await ketenVersie();
   const doelen = (await leesDoelen(sql)).filter((d) => d.status === "samengevoegd");
   console.log(`jarvis eindcontrole: ${doelen.length} samengevoegd doel(en).`);
   let code = 0;
@@ -250,8 +296,9 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       if (mig.open.length > 0) {
         const tekst = `migratie nog niet toegepast — ${mig.open.map((o) => `${o.naam}: ${o.reden}`).join(" | ")}`;
         const bevoegdheid = mig.open.some((o) => o.bevoegdheid);
-        const naar = bevoegdheid ? "vast" : "bezig";
-        await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, rendereerBlokkade(tekst, classificeerBlokkade(bevoegdheid ? `${tekst} (ontbrekende bevoegdheid)` : tekst)).slice(0, 1800)]);
+        const blok = classificeerBlokkade(bevoegdheid ? `${tekst} (ontbrekende bevoegdheid)` : tekst);
+        const naar = vanDeEigenaar(blok) ? "vast" : "bezig";
+        await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(rendereerBlokkade(tekst, blok).slice(0, 1700), versie)]);
         console.log(`jarvis eindcontrole: ${d.id} → ${naar} (${tekst.slice(0, 160)})`);
         continue;
       }
@@ -312,8 +359,8 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
         ? `acceptatietest niet te meten — ${eind.samenvatting}`
         : `acceptatietest niet geslaagd (ronde ${rondes + 1} van ${MAX_ACCEPTATIE_RONDES}) — ${eind.samenvatting}`;
       const blok = classificeerBlokkade(eind.onmeetbaar ? `${tekst} (ontbrekende bevoegdheid)` : tekst);
-      const naar = eind.onmeetbaar || rondes >= MAX_ACCEPTATIE_RONDES ? "vast" : "bezig";
-      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, rendereerBlokkade(tekst, blok).slice(0, 1800)]);
+      const naar = vanDeEigenaar(blok) || rondes >= MAX_ACCEPTATIE_RONDES ? "vast" : "bezig";
+      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(rendereerBlokkade(tekst, blok).slice(0, 1700), versie)]);
       await schrijfAcceptatie(sql, d.id, `eindoordeel: ${naar} — ${tekst}`);
       console.log(`jarvis eindcontrole: ${d.id} → ${naar} [${blok.soort}] (${tekst.slice(0, 200)})`);
     } catch (fout) {
