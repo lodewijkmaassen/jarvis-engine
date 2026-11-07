@@ -346,7 +346,11 @@ export const MIGRATIE_LEDGER_SQL =
 export const ACCEPTATIE_SLEUTEL_SQL = "select jarvis.acceptatie_sleutel() as sleutel";
 /** Wat er in het schema staat: bewijs voor een acceptatietest die over de database gaat. */
 export const SCHEMA_FEITEN_SQL =
-  "select 'tabel' as soort, c.relname as naam from pg_class c join pg_namespace n on n.oid = c.relnamespace " +
+  // Een view heet een view en een tabel een tabel. Stond er 'tabel' boven beide, dan las een
+  // beoordelaar in het bewijs een tabel waar de opdracht om een view vroeg - gemeten op 2026-11-07,
+  // toen acceptatietest A van D-20261107-010000001 om het bestaan van jarvis.doel_duur vroeg.
+  "select case c.relkind when 'v' then 'view' else 'tabel' end as soort, c.relname as naam " +
+  "from pg_class c join pg_namespace n on n.oid = c.relnamespace " +
   "where n.nspname = 'jarvis' and c.relkind in ('r', 'v') " +
   "union all select 'functie', p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'jarvis' " +
   "union all select 'trigger', t.tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid " +
