@@ -10,7 +10,7 @@
 // de database gaat, krijgt vast omschreven, read-only bewijs.
 
 import type { AcceptatieTest } from "./acceptatie";
-import { ACCEPTATIE_SLEUTEL_SQL, DOELEN_LEDGER_SQL, DOEL_BEWIJS_ACTIVITEIT_SQL, MIGRATIE_LEDGER_ALLES_SQL, MIGRATIE_LEDGER_SQL, PR_TOETSINGEN_SQL, SCHEMA_FEITEN_SQL } from "./db";
+import { ACCEPTATIE_SLEUTEL_SQL, DB_MIGRATIES_SQL, DOELEN_LEDGER_SQL, DOEL_BEWIJS_ACTIVITEIT_SQL, MIGRATIE_LEDGER_ALLES_SQL, MIGRATIE_LEDGER_SQL, PR_ACTIVITEIT_SQL, PR_TOETSINGEN_SQL, SCHEMA_FEITEN_SQL } from "./db";
 import type { Doel } from "./doelen";
 import type { DbClient } from "./opdrachten";
 
@@ -95,6 +95,7 @@ export async function bewijsVoorTest(
   let activiteit: Record<string, unknown>[] = [];
   let feiten: Record<string, unknown>[] = [];
   let toetsingen: Record<string, unknown>[] = [];
+  let prActiviteit: Record<string, unknown>[] = [];
   let doelen: Record<string, unknown>[] = [];
   // Een onderwerp als "#106" is een pull request en geen dossier: activiteit
   // hangt aan een dossier en levert dan altijd "(geen regels)". De historie van
@@ -110,10 +111,16 @@ export async function bewijsVoorTest(
     activiteit = (await sql.unsafe(DOEL_BEWIJS_ACTIVITEIT_SQL, [
       taak,
     ])) as unknown as Record<string, unknown>[];
-    if (prNummer !== null)
+    if (prNummer !== null) {
       toetsingen = (await sql.unsafe(PR_TOETSINGEN_SQL, [
         Number(prNummer),
       ])) as unknown as Record<string, unknown>[];
+      // En wat er in de activiteit aan dat nummer hangt: openen, samenvoegen, en de
+      // regels die een doel over deze pull request heeft teruggeschreven.
+      prActiviteit = (await sql.unsafe(PR_ACTIVITEIT_SQL, [
+        `%#${prNummer}`,
+      ])) as unknown as Record<string, unknown>[];
+    }
     // Een test vraagt vaak naar wat er met een ÁNDER doel is gebeurd ("bewijs met
     // een gecontroleerde test dat ..."). Dat staat in het doelenregister.
     doelen = (await sql.unsafe(DOELEN_LEDGER_SQL)) as unknown as Record<string, unknown>[];
@@ -133,6 +140,14 @@ export async function bewijsVoorTest(
       onuitvoerbaar: `het bewijs is niet te lezen: ${fout instanceof Error ? fout.message : String(fout)} — ontbrekende bevoegdheid, geen besluit`,
     };
   }
+  // Apart, en met opzet buiten de lus hierboven: de migratietabel van de database is een leesrecht dat
+  // een keten kan missen. Mist zij het, dan is dat geen onmeetbare test maar een blok minder bewijs.
+  let dbMigraties: Record<string, unknown>[] = [];
+  try {
+    dbMigraties = (await sql.unsafe(DB_MIGRATIES_SQL)) as unknown as Record<string, unknown>[];
+  } catch {
+    dbMigraties = [];
+  }
   // De uitkomst van dit doel is het OORDEEL van de vorige meting, niet wat er is gebouwd. Stond zij in
   // het bewijs, dan las de beoordelaar haar eigen vorige oordeel terug en herhaalde het: "de eindcontrole
   // zegt zelf dat nergens wordt aangetoond dat ...". Eén keer zakken hield zichzelf zo in stand. Gemeten
@@ -140,17 +155,45 @@ export async function bewijsVoorTest(
   // zij haar eigen oordeel niet meer terugzag. Dit is dezelfde regel als die de activiteit al filtert.
   const DOEL_ZELF = "(de lopende meting van dit doel zelf; geen bewijs)";
   const delen = [
+    // Hoe dit bewijs tot stand kwam. Het is geen samenvatting en geen opslag van eerder werk: elk blok
+    // hieronder is zojuist read-only uit de productiedatabase gelezen. Dat staat erbij omdat een
+    // acceptatietest kan vragen of gegevens "beschikbaar en raadpleegbaar" zijn - en het antwoord daarop
+    // is dat zij zojuist zijn opgevraagd (gemeten op 2026-11-07, acceptatietest A van dit doel).
+    "herkomst: elk blok hieronder is zojuist read-only uit de productiedatabase opgevraagd met een query op de genoemde tabel; wat hier staat, is dus op dit moment in de database aanwezig en raadpleegbaar.",
     `doel ${d.id} (${d.titel}) staat op ${d.status}`,
     `pull request: ${d.pr?.repo ?? "-"}#${d.pr?.nummer ?? "-"} kop ${String(d.pr?.kop ?? "-").slice(0, 7)} merge ${String(d.pr?.merge_sha ?? "-").slice(0, 7)}`,
-    `migratieledger van dit doel (alleen migraties die ONDER doel-id ${d.id} zijn toegepast):\n${ledger.length === 0 ? "(geen regels; dat zegt niets over SQL die onder een ANDER doel-id is toegepast - zie het ledger van de lane hieronder)" : JSON.stringify(ledger).slice(0, 4000)}`,
-    `migratieledger van de hele lane (alle doelen, nieuwste eerst):\n${ledgerAlles.length === 0 ? "(geen regels)" : JSON.stringify(ledgerAlles).slice(0, 4000)}`,
-    `activiteit van ${taak}:\n${activiteit.length === 0 ? "(geen regels)" : JSON.stringify(activiteit).slice(0, 8000)}`,
-    `doelen van de lane (nieuwste eerst, met uitkomst):\n${doelen.length === 0 ? "(geen regels)" : JSON.stringify(doelen.map((r) => (r["id"] === d.id ? { ...r, uitkomst: DOEL_ZELF } : r))).slice(0, 6000)}`,
+    `migratieledger van dit doel (tabel jarvis.migraties; alleen migraties die ONDER doel-id ${d.id} zijn toegepast):\n${ledger.length === 0 ? "(geen regels; dat zegt niets over SQL die onder een ANDER doel-id is toegepast - zie het ledger van de lane hieronder)" : JSON.stringify(ledger).slice(0, 4000)}`,
+    `migratieledger van de hele lane (tabel jarvis.migraties; alle doelen, nieuwste eerst, met het doel en de pull request waar elke migratie vandaan komt):\n${ledgerAlles.length === 0 ? "(geen regels)" : JSON.stringify(ledgerAlles).slice(0, 6000)}`,
+    ...(dbMigraties.length === 0
+      ? []
+      : [
+          `migraties die de database zelf als toegepast registreert (view jarvis.db_migraties; met het begin van de SQL, zodat te zien is welke objecten elke migratie aanbrengt):\n${JSON.stringify(dbMigraties).slice(0, 6000)}`,
+        ]),
+    `activiteit van ${taak} (tabel jarvis.activiteit):\n${activiteit.length === 0 ? "(geen regels)" : JSON.stringify(activiteit).slice(0, 8000)}`,
+    `doelen van de lane (tabel jarvis.doelen; nieuwste eerst, met titel, pull request en uitkomst):\n${doelen.length === 0 ? "(geen regels)" : JSON.stringify(doelen.map((r) => (r["id"] === d.id ? { ...r, uitkomst: DOEL_ZELF } : r))).slice(0, 8000)}`,
   ];
-  if (prNummer !== null)
+  if (prNummer !== null) {
+    // Eén chronologische lijst uit beide tabellen, een gebeurtenis per regel. De historie van een pull
+    // request staat verdeeld over de oordelen (jarvis.toetsingen) en de regels eromheen
+    // (jarvis.activiteit); los van elkaar en als JSON op één rij las de beoordelaar er regels in over het
+    // hoofd en noemde ze afwezig terwijl ze er stonden (gemeten op 2026-11-07, acceptatietest A).
+    const historie = [
+      ...toetsingen.map((r) => ({
+        op: String(r["op"] ?? ""),
+        regel: `jarvis.toetsingen | ${String(r["pr_repo"] ?? "")}#${String(r["pr_nummer"] ?? "")} | review ${String(r["oordeel"] ?? "")} door ${String(r["door"] ?? "")} op commit ${String(r["commit_sha"] ?? "").slice(0, 7)}`,
+      })),
+      ...prActiviteit.map((r) => ({
+        op: String(r["op"] ?? ""),
+        regel: `jarvis.activiteit | doel ${String(r["taak"] ?? "-")} | ${String(r["soort"] ?? "")} | ${String(r["tekst"] ?? "")}`,
+      })),
+    ].sort((a, b) => a.op.localeCompare(b.op));
     delen.push(
-      `toetsingen van ${onderwerp} (de historie van deze pull request):\n${toetsingen.length === 0 ? "(geen regels)" : JSON.stringify(toetsingen).slice(0, 4000)}`,
+      [
+        `historie van ${onderwerp} zoals de database haar bewaart (uit jarvis.toetsingen en jarvis.activiteit samen, een gebeurtenis per regel, oudste eerst):`,
+        historie.length === 0 ? "(geen regels)" : historie.map((r) => `${r.op} | ${r.regel}`).join("\n").slice(0, 7000),
+      ].join("\n"),
     );
+  }
   if (feiten.length > 0)
     delen.push(
       `wat er in het schema jarvis staat:\n${JSON.stringify(feiten).slice(0, 6000)}`,

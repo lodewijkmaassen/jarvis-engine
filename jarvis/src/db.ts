@@ -360,7 +360,28 @@ export const MIGRATIE_LEDGER_SQL =
  * stonden).
  */
 export const MIGRATIE_LEDGER_ALLES_SQL =
-  "select naam, doel, uitkomst, op::text as op from jarvis.migraties order by op desc limit 50";
+  // Met de titel en het pull-requestnummer van het doel waaronder de migratie liep: een acceptatietest
+  // noemt zo'n migratie bij het doel waar zij vandaan komt ("de SQL uit het doel rond PR #111"), niet bij
+  // haar bestandsnaam. Gemeten op 2026-11-07 aan acceptatietest A van D-20261021-161119608.
+  // Met wat de migratie behelst (de kolom statements): daar staat welke objecten zij aanbrengt. Zonder die
+  // kolom is uit het ledger niet te zien welke databaseobjecten bij welke migratie horen - precies wat
+  // acceptatietest A van D-20261021-161119608 als tweede eis stelt (gemeten op 2026-11-07).
+  "select m.naam, m.doel, d.titel as doel_titel, d.pr->>'nummer' as doel_pr_nummer, m.uitkomst, " +
+  "left(coalesce(m.statements, ''), 400) as behelst, m.op::text as op " +
+  "from jarvis.migraties m left join jarvis.doelen d on d.id = m.doel " +
+  "order by m.op desc limit 50";
+
+/**
+ * Wat de database zelf als toegepaste migratie registreert, met het begin van de SQL erbij.
+ *
+ * Het eigen ledger (jarvis.migraties) kent alleen wat de keten zelf heeft toegepast. Wat
+ * daarvoor is aangebracht, en welke objecten een migratie maakt, staat in de view
+ * jarvis.db_migraties, die de lane zelf ontsluit. Een leesrecht dat een keten kan missen:
+ * de eindcontrole leest dit apart en gaat zonder door als het er niet is.
+ */
+export const DB_MIGRATIES_SQL =
+  "select version, name, left(array_to_string(statements, ' ; '), 200) as sql " +
+  "from jarvis.db_migraties order by version desc limit 25";
 
 /** De sleutel voor de acceptatiedeur van de AI Core; alleen jarvis_ci kan hem opvragen. */
 export const ACCEPTATIE_SLEUTEL_SQL = "select jarvis.acceptatie_sleutel() as sleutel";
@@ -398,7 +419,15 @@ export const DOEL_ACTIVITEIT_SQL =
  * over het onderwerp en niet over de uitslag.
  */
 export const DOEL_BEWIJS_ACTIVITEIT_SQL =
-  "select op::text as op, uitvoerder, rol, soort, tekst, verwijzing from jarvis.activiteit " +
+  // De overgangsregel van de eindcontrole draagt haar hele oordeel mee ("samengevoegd → vast: [fout]
+  // acceptatietest niet geslaagd — A: niet-geslaagd — ..."). Die tekst hoort niet in het bewijs: de
+  // beoordelaar las daar haar eigen vorige oordeel terug en herhaalde het woord voor woord, tot in de
+  // eigen woordkeus toe (gemeten op 2026-11-07 aan D-20261021-161119608; RSK-0043). De overgang zelf
+  // blijft staan, het oordeel wordt afgekapt bij het woord waar het begint.
+  "select op::text as op, uitvoerder, rol, soort, " +
+  "case when uitvoerder = 'systeem' and soort = 'status' " +
+  "then left(tekst, coalesce(nullif(position('acceptatietest' in tekst), 0) - 1, length(tekst))) " +
+  "else tekst end as tekst, verwijzing from jarvis.activiteit " +
   "where taak = $1 and not (uitvoerder = 'ci' and soort = 'acceptatie' " +
   "and (tekst like 'test %' or tekst like 'eindoordeel:%')) order by op desc limit 60";
 
@@ -412,10 +441,32 @@ export const PR_TOETSINGEN_SQL =
   "select pr_repo, pr_nummer, commit_sha, oordeel, door, op::text as op from jarvis.toetsingen " +
   "where pr_nummer = $1 order by op";
 
-/** De doelen van de lane, nieuwste eerst: wat er met elk doel is gebeurd en hoe het afliep. */
+/**
+ * De tweede helft van die historie: wat er in de activiteit aan een pull
+ * request hangt. Daar staat het openen, het samenvoegen en - voor een doel dat
+ * die historie heeft teruggeschreven - de afgeleide regels per oordeel. De
+ * parameter is een patroon dat eindigt op het nummer ("%#106"), want de
+ * verwijzing draagt ook de repository.
+ */
+export const PR_ACTIVITEIT_SQL =
+  // Ook de regels van het doel waar die pull request bij hoort, en dus zonder verwijzing: het heropenen
+  // staat daar. Zonder die regel mist de historie van een pull request precies de hervatting tussen de
+  // afkeuring en de goedkeuring (gemeten op 2026-11-07 aan acceptatietest A van D-20261021-161119608).
+  "select op::text as op, taak, uitvoerder, soort, tekst, verwijzing from jarvis.activiteit " +
+  "where verwijzing like $1 or taak in (select distinct taak from jarvis.activiteit " +
+  "where verwijzing like $1 and taak is not null) order by op limit 60";
+
+/**
+ * De doelen van de lane, nieuwste eerst: wat er met elk doel is gebeurd en hoe
+ * het afliep. Met de titel en het nummer van de pull request erbij, want een
+ * acceptatietest noemt een doel zelden bij zijn id: zij schrijft "het doel rond
+ * PR #111" of noemt het onderwerp. Zonder die twee kolommen is een id in dit
+ * register een reeks cijfers waar niets aan te herkennen valt - gemeten op
+ * 2026-11-07 aan acceptatietest A van D-20261021-161119608.
+ */
 export const DOELEN_LEDGER_SQL =
-  "select id, status, left(coalesce(uitkomst, ''), 300) as uitkomst, bijgewerkt::text as bijgewerkt " +
-  "from jarvis.doelen order by bijgewerkt desc limit 25";
+  "select id, titel, status, pr->>'nummer' as pr_nummer, left(coalesce(uitkomst, ''), 300) as uitkomst, " +
+  "bijgewerkt::text as bijgewerkt from jarvis.doelen order by bijgewerkt desc limit 25";
 
 export function toegestaneSql(): readonly string[] {
   return [

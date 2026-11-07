@@ -150,7 +150,11 @@ export const BEOORDELAAR_SYSTEEM =
   "Je beoordeelt één functionele acceptatietest van een softwaretaak. Je krijgt de test zoals de eigenaar hem schreef en het " +
   "bewijs dat de uitvoering heeft opgeleverd. Werk in het Nederlands. Beoordeel uitsluitend op het bewijs: staat er niet in wat de " +
   "test eist, dan is de test niet geslaagd — ook niet 'waarschijnlijk wel'. Een antwoord dat de gevraagde feiten niet noemt, is niet " +
-  "geslaagd. Verzin geen feiten en vul niets aan uit eigen kennis. Antwoord uitsluitend met één JSON-object, zonder tekst eromheen: " +
+  "geslaagd. Verzin geen feiten en vul niets aan uit eigen kennis. Toets precies wat de test eist en niet meer: een eis die de " +
+  "test niet stelt, voeg je er niet aan toe. Wat als gegeven in het bewijs staat, is daarmee aangetoond: een regel uit een tabel " +
+  "telt als bewijs van die regel, ook als geen enkele zin haar nog eens samenvat of benoemt. Stelt de test meer dan één eis, " +
+  "loop ze dan één voor één langs en wijs per eis de regel uit het bewijs aan die haar aantoont, of zeg welke regel ontbreekt. " +
+  "Antwoord uitsluitend met één JSON-object, zonder tekst eromheen: " +
   '{"geslaagd": true|false, "reden": "<één of twee zinnen, concreet, met wat wel en niet in het bewijs staat>"}';
 
 /** Zoveel van de opdracht gaat als context mee; genoeg voor waar een test naar verwijst. */
