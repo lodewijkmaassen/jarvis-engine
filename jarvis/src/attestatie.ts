@@ -70,33 +70,20 @@ export function scopeHash(inhoud: string): string {
 }
 
 /**
- * Paden waarvan een wijziging niet onder het gewone werk valt (DEC-0043 §2:
- * productie, secrets, externe accounts, beveiliging, governance).
+ * Paden waarvan een wijziging niet onder het gewone werk valt (DEC-0043 §2).
  *
- * WAT `doelDekt` BETEKENT
+ * `doelDekt: true`: een doel van de eigenaar dekt dit. Alleen hij maakt een
+ * doel aan en Jarvis kan de tekst ervan niet wijzigen, dus is het bestaan
+ * ervan zijn mandaat — een steviger anker dan een hash over een bestand. Het
+ * dekt wat hij op 2026-11-07 opsomde: code, niet-destructieve migraties,
+ * documentatie, infrastructuur, reviews, samenvoegen, uitrollen en tests.
  *
- * Een doel in `jarvis.doelen` kan alleen door de ingelogde eigenaar worden
- * aangemaakt; Jarvis heeft geen insert-recht op die tabel en kan de tekst er
- * niet van wijzigen. Het bestaan van een doel is dus zijn mandaat, en het is
- * een steviger anker dan een hash over een bestand in de repository: het
- * staat in gegevens die alleen hij schrijft.
+ * `doelDekt: false` blijft van hem: wat bepaalt WAT Jarvis mag en WIE hem
+ * beoordeelt, en waar geheimen staan. Een agent die zijn eigen rechter of zijn
+ * eigen plafond mag herschrijven, heeft geen van beide.
  *
- * `doelDekt: true` zegt dat dat mandaat deze soort wijziging dekt — het werk
- * dat de eigenaar op 2026-11-07 opsomde: code, niet-destructieve
- * databasemigraties, documentatie, infrastructuur, reviews, samenvoegen,
- * uitrollen en acceptatietests. Daar hoort geen aparte goedkeuring per pull
- * request meer bij.
- *
- * `doelDekt: false` blijft van hem, en dat is geen formaliteit: het zijn de
- * bestanden die bepalen WAT Jarvis mag en WIE hem beoordeelt (de poort en de
- * attestatie zelf, de rolcontracten, de randvoorwaarden, wie reviewt, de
- * noodstop en de plafonds) en de bestanden waarin geheimen of de herkomst van
- * pakketten staan. Een agent die zijn eigen rechter of zijn eigen plafond mag
- * herschrijven, heeft geen van beide.
- *
- * De volgorde telt: de eerste treffer bepaalt, dus staan de paden die van de
- * eigenaar blijven bovenaan. `.github/CODEOWNERS` is daarmee van hem, ook al
- * valt het ook onder `.github/`.
+ * De eerste treffer bepaalt, dus staan die paden bovenaan: `.github/CODEOWNERS`
+ * is van hem, ook al valt het ook onder `.github/`.
  */
 export type HardeUitzondering = {
   readonly patroon: RegExp;
@@ -133,12 +120,10 @@ export const HARDE_UITZONDERINGEN: readonly HardeUitzondering[] = [
 export type Uitzonderingstreffer = { readonly pad: string; readonly waarom: string; readonly doelDekt: boolean };
 
 /**
- * Welke gewijzigde bestanden onder een harde uitzondering vallen.
- * `extraPaden` komt uit jarvis.config.yml (attestatie.extra_paden): paden of
- * mapvoorvoegsels die in dít project productie, deployment of secrets raken
- * (de engine kent geen leveranciers, het project wel). Een projectregel telt
- * alleen wanneer geen enkele regel hierboven al gold, en blijft van de
- * eigenaar: het project noemt haar niet voor niets apart.
+ * Welke gewijzigde bestanden onder een harde uitzondering vallen. `extraPaden`
+ * komt uit jarvis.config.yml: paden die in dít project productie, deployment
+ * of secrets raken. Zo'n projectregel telt alleen als geen regel hierboven al
+ * gold, en blijft van de eigenaar — het project noemt haar niet voor niets.
  */
 export function uitzonderingstreffers(
   bestanden: readonly string[],
@@ -442,11 +427,7 @@ export const REVIEWER_DOOR = "ci-review";
  * een pull request nu draagt, is de onafhankelijke review in CI (REVIEWER_DOOR) op precies de kop. De
  * harde uitzonderingen — workflows, governance, migraties — vragen nog steeds een apart akkoord.
  */
-/**
- * De taken van deze pull request die een doel van de eigenaar zijn en nog
- * lopen. Een gesloten doel geeft geen mandaat meer: de eigenaar heeft het
- * afgesloten, en wat daarna nog komt is nieuw werk.
- */
+/** De taken van deze pull request die een lopend doel van de eigenaar zijn. Een gesloten doel geeft geen mandaat meer. */
 export function doelenMetMandaat(f: AttestatieFeiten): readonly string[] {
   const kaart = f.doelen;
   if (kaart === undefined) return [];
@@ -545,12 +526,7 @@ export function attestatieInhoud(f: AttestatieFeiten): AttestatieInhoud {
   };
 }
 
-/**
- * Waarop deze attestatie leunt als de pull request een harde uitzondering
- * raakt: een apart akkoord van de eigenaar, of het mandaat van zijn doel. Dat
- * hoort in de tekst, want wie haar later naleest moet kunnen zien waarom zij
- * mocht.
- */
+/** Waarop deze attestatie leunt bij een harde uitzondering: zijn aparte akkoord, of het mandaat van zijn doel. */
 function uitzonderingenTekst(f: AttestatieFeiten): string {
   if (f.autorisatiePr !== null) return `apart akkoord ${f.autorisatiePr.id}`;
   const treffers = raaktHardeUitzondering(f.gewijzigdeBestanden, f.extraPaden ?? []);
