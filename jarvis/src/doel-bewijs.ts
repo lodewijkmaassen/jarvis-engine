@@ -10,7 +10,7 @@
 // de database gaat, krijgt vast omschreven, read-only bewijs.
 
 import type { AcceptatieTest } from "./acceptatie";
-import { ACCEPTATIE_SLEUTEL_SQL, DOEL_ACTIVITEIT_SQL, MIGRATIE_LEDGER_SQL, SCHEMA_FEITEN_SQL } from "./db";
+import { ACCEPTATIE_SLEUTEL_SQL, DOEL_ACTIVITEIT_SQL, MIGRATIE_LEDGER_ALLES_SQL, MIGRATIE_LEDGER_SQL, SCHEMA_FEITEN_SQL } from "./db";
 import type { Doel } from "./doelen";
 import type { DbClient } from "./opdrachten";
 
@@ -91,12 +91,15 @@ export async function bewijsVoorTest(
   }
   // sql en bewijs: wat de administratie zelf vastlegt. Read-only en vast omschreven.
   let ledger: Record<string, unknown>[] = [];
+  let ledgerAlles: Record<string, unknown>[] = [];
   let activiteit: Record<string, unknown>[] = [];
   let feiten: Record<string, unknown>[] = [];
   try {
     ledger = (await sql.unsafe(MIGRATIE_LEDGER_SQL, [
       d.id,
     ])) as unknown as Record<string, unknown>[];
+    // Ook het hele ledger: een acceptatietest vraagt vaak naar SQL die onder een ánder doel is toegepast.
+    ledgerAlles = (await sql.unsafe(MIGRATIE_LEDGER_ALLES_SQL)) as unknown as Record<string, unknown>[];
     activiteit = (await sql.unsafe(DOEL_ACTIVITEIT_SQL, [
       onderwerp ?? d.id,
     ])) as unknown as Record<string, unknown>[];
@@ -120,6 +123,7 @@ export async function bewijsVoorTest(
     `doel ${d.id} (${d.titel}) staat op ${d.status}; uitkomst: ${d.uitkomst ?? "(geen)"}`,
     `pull request: ${d.pr?.repo ?? "-"}#${d.pr?.nummer ?? "-"} kop ${String(d.pr?.kop ?? "-").slice(0, 7)} merge ${String(d.pr?.merge_sha ?? "-").slice(0, 7)}`,
     `migratieledger van dit doel:\n${ledger.length === 0 ? "(geen regels)" : JSON.stringify(ledger).slice(0, 4000)}`,
+    `migratieledger van de hele lane (alle doelen, nieuwste eerst):\n${ledgerAlles.length === 0 ? "(geen regels)" : JSON.stringify(ledgerAlles).slice(0, 4000)}`,
     `activiteit van ${onderwerp ?? d.id}:\n${activiteit.length === 0 ? "(geen regels)" : JSON.stringify(activiteit).slice(0, 8000)}`,
   ];
   if (feiten.length > 0)

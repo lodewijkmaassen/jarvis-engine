@@ -351,6 +351,17 @@ export const DOEL_WERK_SQL = "select jarvis.doel_werk($1, $2, $3::text::jsonb, $
 export const EIGEN_MIGRATIE_SQL = "select jarvis.pas_migratie_toe($1, $2, $3) as uitkomst";
 export const MIGRATIE_LEDGER_SQL =
   "select naam, hash, uitkomst, reden, op::text as op from jarvis.migraties where doel = $1 order by op";
+/**
+ * Het hele ledger van de eigen migratielane, nieuwste eerst. Naast het ledger
+ * van één doel, want een acceptatietest vraagt vaak naar SQL die onder een
+ * ÁNDER doel is toegepast — "is de eerder ontbrekende migratie nu toegepast?"
+ * is niet te beantwoorden met alleen de regels van dit doel (gemeten
+ * 2026-11-07: test A zakte op een leeg ledger terwijl de migraties er al
+ * stonden).
+ */
+export const MIGRATIE_LEDGER_ALLES_SQL =
+  "select naam, doel, uitkomst, op::text as op from jarvis.migraties order by op desc limit 50";
+
 /** De sleutel voor de acceptatiedeur van de AI Core; alleen jarvis_ci kan hem opvragen. */
 export const ACCEPTATIE_SLEUTEL_SQL = "select jarvis.acceptatie_sleutel() as sleutel";
 /** Wat er in het schema staat: bewijs voor een acceptatietest die over de database gaat. */
