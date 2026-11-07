@@ -22,7 +22,7 @@ import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
-import { ketenSpoor, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { ketenSpoor, magVastleggen, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -230,10 +230,20 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
       continue;
     }
     const gesloten = antwoord.lading as { number: number; merged_at: string | null; merge_commit_sha: string | null; body: string | null; user: { login: string }; head: { sha: string }; base: { ref: string } }[];
+    // Per doel de NIEUWSTE samenvoeging uit deze lijst, niet de eerste die we tegenkomen. Een doel dat weken
+    // loopt wordt in meer dan één samengevoegde pull request genoemd; de eerste kan er een van weken geleden
+    // zijn, en dan beoordeelt de eindcontrole het verkeerde werk (RSK-0036, gemeten 2026-11-07).
+    const nieuwste = new Map<string, (typeof gesloten)[number]>();
     for (const p of gesloten) {
       if (p.merged_at === null || p.merge_commit_sha === null || p.base.ref !== "main" || p.user.login.toLowerCase() !== bot.toLowerCase()) continue;
-      const d = lopend.find((x) => x.id === doelUitPrTekst(p.body ?? ""));
-      if (d === undefined) continue;
+      const id = doelUitPrTekst(p.body ?? "");
+      if (id === null || !lopend.some((x) => x.id === id)) continue;
+      const vorige = nieuwste.get(id);
+      if (vorige === undefined || String(p.merged_at) > String(vorige.merged_at)) nieuwste.set(id, p);
+    }
+    for (const [doelId, p] of nieuwste) {
+      const d = lopend.find((x) => x.id === doelId);
+      if (d === undefined || p.merge_commit_sha === null || p.merged_at === null) continue;
       // Alleen werk dat de reviewer op precies die kop goedkeurde, telt voor een doel. Een administratieve
       // pull request (zonder review samengevoegd) brengt een doel nergens (QA-bevinding B2 op jarvis-engine#88).
       // doel_ci in de database eist hetzelfde.
@@ -249,9 +259,12 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
       // een blokkade van Jarvis zélf ([fout] of [bevoegdheid]), en zij is gemeten met een ANDERE versie van de
       // keten dan de huidige. Is de keten niet veranderd, dan gebeurt er niets — en dat is wat het ping-pong
       // van 2026-11-07 tegenhoudt.
-      if ((d.pr?.merge_sha ?? "").toLowerCase() === p.merge_commit_sha.toLowerCase()) {
-        if (!hermeetbaar(d, versie)) {
-          console.log(`jarvis doel: ${slug}#${p.number} is voor ${d.id} al vastgelegd op ${p.merge_commit_sha.slice(0, 7)}; niet opnieuw`);
+      const mag = magVastleggen({ huidig: d.pr, kandidaat: { merge_sha: p.merge_commit_sha, merged_at: p.merged_at } });
+      if (!mag.mag) {
+        // Dezelfde samenvoeging: alleen opnieuw beoordelen als de keten zelf is veranderd (RSK-0033).
+        const zelfde = (d.pr?.merge_sha ?? "").toLowerCase() === p.merge_commit_sha.toLowerCase();
+        if (!zelfde || !hermeetbaar(d, versie)) {
+          console.log(`jarvis doel: ${slug}#${p.number} wordt voor ${d.id} niet vastgelegd — ${mag.reden}`);
           continue;
         }
         console.log(`jarvis doel: ${d.id} is gemeten met een andere versie van de keten dan de huidige (${versie}); opnieuw beoordelen op ${p.merge_commit_sha.slice(0, 7)}`);
@@ -262,7 +275,7 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
         console.log(`jarvis doel: ${slug}#${p.number} noemt ${d.id} maar heeft geen GO van de reviewer op ${p.head.sha.slice(0, 7)}; niet vastgelegd`);
         continue;
       }
-      const pr = { repo: slug, nummer: p.number, kop: p.head.sha, merge_sha: p.merge_commit_sha };
+      const pr = { repo: slug, nummer: p.number, kop: p.head.sha, merge_sha: p.merge_commit_sha, merged_at: p.merged_at };
       // Per ronde legt een doel hoogstens één samenvoeging vast. Een doel dat in meer dan één samengevoegde
       // pull request is genoemd (en dat gebeurt: een doel dat weken loopt wordt vaker genoemd) leverde anders
       // bij de tweede een weigering van de database op — "samengevoegd -> samengevoegd is niet toegestaan" —
@@ -307,8 +320,18 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
   const doelen = (await leesDoelen(sql)).filter((d) => d.status === "samengevoegd");
   console.log(`jarvis eindcontrole: ${doelen.length} samengevoegd doel(en).`);
   let code = 0;
+  const eigenRepo = (process.env.GITHUB_REPOSITORY ?? "").trim().toLowerCase();
   for (const d of doelen) {
     try {
+      // Staat de samenvoeging van dit doel in een ANDERE repository, dan kan deze keten haar niet lezen: het
+      // GITHUB_TOKEN van een run reikt niet buiten de eigen repository. Dat is geen fout van het doel, en het
+      // als fout wegschrijven liet het doel heen en weer gaan tussen samengevoegd en bezig (RSK-0036, gemeten
+      // 2026-11-07). De keten van die andere repository maakt het af; hier gebeurt niets.
+      const vanAnder = (d.pr?.repo ?? "").toLowerCase();
+      if (eigenRepo !== "" && vanAnder !== "" && vanAnder !== eigenRepo) {
+        console.log(`jarvis eindcontrole: ${d.id} hoort bij ${d.pr?.repo}; die keten maakt het af`);
+        continue;
+      }
       // 1. De database. Code die op een migratie leunt mag niet klaar heten terwijl die migratie er niet is.
       const mig = await pasDoelMigratiesToe(sql, token, d);
       if (mig.open.length > 0) {

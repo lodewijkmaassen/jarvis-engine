@@ -19,7 +19,14 @@ export type Doel = {
   readonly opdracht: string;
   readonly acceptatie_url: string | null;
   readonly status: DoelStatus;
-  readonly pr: { readonly repo?: string; readonly nummer?: number; readonly kop?: string; readonly merge_sha?: string } | null;
+  readonly pr: {
+    readonly repo?: string;
+    readonly nummer?: number;
+    readonly kop?: string;
+    readonly merge_sha?: string;
+    /** Wanneer die samenvoeging plaatsvond (ISO). Vanaf 2026-11-07 meegeschreven; bij oudere doelen afwezig. */
+    readonly merged_at?: string;
+  } | null;
   readonly uitkomst: string | null;
   readonly pogingen: number;
   readonly bijgewerkt: string;
@@ -193,6 +200,42 @@ export function ketenSpoor(o: {
     stilstand,
     tekst: `ketenronde (${o.oorzaak || "onbekend"}) — ${hoelang}; ${werk}${stilstand ? "; STILSTAND: er stond werk te wachten" : ""}`,
   };
+}
+
+/**
+ * Mag deze samenvoeging als DE samenvoeging van dit doel worden vastgelegd?
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * Een doel dat weken loopt wordt in meer dan één samengevoegde pull request
+ * genoemd. De sweep legde de eerste vast die zij tegenkwam, en dat kon er een
+ * van weken geleden zijn. De eindcontrole beoordeelde daarna de verkeerde
+ * samenvoeging: zij las het bewijs van oud werk, en zette het doel terecht
+ * niet klaar — om de verkeerde reden. Gemeten op 2026-11-07 aan
+ * D-20261021-161119608: acceptatietest A zakte op een leeg ledger en een
+ * uitkomst over een commit uit oktober.
+ *
+ * De regel is daarom: alleen de NIEUWSTE samenvoeging telt, en een oudere
+ * verdringt nooit een nieuwere. Weet het doel niet wanneer zijn huidige
+ * samenvoeging plaatsvond (vastgelegd vóór deze regel bestond), dan mag de
+ * nieuwste kandidaat hem één keer vervangen; daarna staat de tijd er wel bij
+ * en gaat het vanzelf goed.
+ */
+export function magVastleggen(o: {
+  /** De samenvoeging die het doel nu draagt, of null. */
+  readonly huidig: { readonly merge_sha?: string; readonly merged_at?: string } | null;
+  /** De nieuwste kandidaat uit deze ronde. */
+  readonly kandidaat: { readonly merge_sha: string; readonly merged_at: string };
+}): { readonly mag: boolean; readonly reden: string } {
+  const huidigSha = (o.huidig?.merge_sha ?? "").toLowerCase();
+  if (huidigSha === o.kandidaat.merge_sha.toLowerCase()) {
+    return { mag: false, reden: "dezelfde samenvoeging als die het doel al draagt" };
+  }
+  const huidigOp = o.huidig?.merged_at ?? null;
+  if (huidigOp !== null && o.kandidaat.merged_at <= huidigOp) {
+    return { mag: false, reden: `ouder dan de vastgelegde samenvoeging (${o.kandidaat.merged_at} tegen ${huidigOp})` };
+  }
+  return { mag: true, reden: "de nieuwste samenvoeging van dit doel" };
 }
 
 export function dispatchNodig(doelen: readonly Pick<Doel, "id" | "status" | "bijgewerkt">[], nu: Date): { readonly start: boolean; readonly reden: string } {
