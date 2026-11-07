@@ -9,6 +9,47 @@
 import { HARDE_UITZONDERINGEN } from "./attestatie";
 import { beoordeelSql, lexSql as lexSqlIntern, normaliseerMigratie as normaliseerIntern } from "./v3-sql";
 
+/**
+ * De opdrachten van de keten: ze draaien in CI met een eigen
+ * databasecredential (`JARVIS_CI_DB_URL` als `JARVIS_DB_URL`) en doen zonder
+ * dat credential niets zinnigs.
+ */
+export const KETEN_OPDRACHTEN: readonly string[] = ["sweep", "eindcontrole", "dispatch", "migreer"];
+
+/**
+ * Waarom deze ketenopdracht in deze omgeving wordt overgeslagen, of null als
+ * hij hoort te draaien.
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * De ketenworkflow staat in meer dan één repository: hij is gespiegeld, zodat
+ * hij overal hetzelfde is. Maar maar één repository heeft de database. In de
+ * andere viel de engine terug op de Edge Function, die buiten de proxy van het
+ * uitvoeringsplatform met 401 antwoordt — en dus faalde daar elke ronde, elke
+ * vijf uur, maanden achtereen (RSK-0030). Rood dat altijd rood is, verbergt
+ * rood dat iets betekent.
+ *
+ * Wat deze functie NIET doet: een falende verbinding wegpoetsen. Staat het
+ * credential er wel en werkt het niet, dan blijft de run rood. Alleen de
+ * afwezigheid van het credential is hier een uitspraak over de omgeving: deze
+ * repository draait de keten niet. En alleen in CI — op een werkplek blijven
+ * het bestand en de Edge Function gewoon geldige wegen.
+ */
+export function ketenOverslaan(o: {
+  readonly opdracht: string;
+  readonly inCi: boolean;
+  readonly dbUrl: string | undefined;
+}): string | null {
+  if (!o.inCi || !KETEN_OPDRACHTEN.includes(o.opdracht)) return null;
+  if ((o.dbUrl ?? "").trim() !== "") return null;
+  return (
+    "deze omgeving draagt geen databasecredential voor de keten (JARVIS_DB_URL is leeg): " +
+    "deze repository draait de keten niet, dus er is hier niets te doen. " +
+    "Staat het credential er wel en werkt het niet, dan faalt de run — dat onderscheid is het punt."
+  );
+}
+
+
 export type Meting =
   | { readonly soort: "http"; readonly url: string; readonly bevat?: string; readonly bouwmerk?: boolean }
   | { readonly soort: "ci"; readonly check: string }
