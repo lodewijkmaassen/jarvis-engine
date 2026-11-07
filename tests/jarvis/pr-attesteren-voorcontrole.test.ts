@@ -1,3 +1,5 @@
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { voerUit } from "../../jarvis/src/opdrachten.js";
 
@@ -181,7 +183,12 @@ async function attesteer(): Promise<{ code: number; overgeslagen: boolean; meldi
 
 describe("jarvis pr attesteren — voorcontrole vóór de dispatch", () => {
   const origineel = globalThis.fetch;
-  const bewaard = { token: process.env.JARVIS_BOT_TOKEN, api: process.env.JARVIS_DB_API, url: process.env.JARVIS_DB_URL };
+  const bewaard = {
+    token: process.env.JARVIS_BOT_TOKEN,
+    api: process.env.JARVIS_DB_API,
+    url: process.env.JARVIS_DB_URL,
+    bestand: process.env.JARVIS_DB_URL_BESTAND,
+  };
 
   beforeEach(() => {
     process.env.JARVIS_BOT_TOKEN = "token-voor-de-test";
@@ -189,6 +196,11 @@ describe("jarvis pr attesteren — voorcontrole vóór de dispatch", () => {
     // Een verbindingsreeks zou een echte postgres-client openen; die weg is
     // in deze tests nadrukkelijk niet aan de orde.
     delete process.env.JARVIS_DB_URL;
+    // En niet alleen de variabele: zonder reeks leest de engine het bestand in
+    // de thuismap. Op een werkplek waar dat bestand bestaat, verbond deze test
+    // met de echte database en faalde — zonder dat bestand slaagde hij
+    // (RSK-0031). Een pad dat niet bestaat maakt de uitkomst overal gelijk.
+    process.env.JARVIS_DB_URL_BESTAND = path.join(tmpdir(), "jarvis-test-geen-verbindingsreeks");
   });
 
   afterEach(() => {
@@ -198,6 +210,8 @@ describe("jarvis pr attesteren — voorcontrole vóór de dispatch", () => {
     if (bewaard.api === undefined) delete process.env.JARVIS_DB_API;
     else process.env.JARVIS_DB_API = bewaard.api;
     if (bewaard.url !== undefined) process.env.JARVIS_DB_URL = bewaard.url;
+    if (bewaard.bestand === undefined) delete process.env.JARVIS_DB_URL_BESTAND;
+    else process.env.JARVIS_DB_URL_BESTAND = bewaard.bestand;
   });
 
   it("zonder taakakkoord gaat de dispatch gewoon uit: de review draagt de pull request (T-20261017-jarvis-vereenvoudigen)", async () => {
