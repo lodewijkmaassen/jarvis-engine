@@ -181,7 +181,7 @@ export async function voerAcceptatieUit(
     }
     const antwoord = await vraagBeoordelaar(
       sql,
-      bouwBeoordelingsVraag(test, bewijs),
+      bouwBeoordelingsVraag(test, bewijs, `${d.titel}\n\n${d.opdracht}`),
     );
     if (typeof antwoord !== "string") {
       // De beoordelaar niet kunnen vragen is ook niet meten: er is niets mislukt om te herstellen.
