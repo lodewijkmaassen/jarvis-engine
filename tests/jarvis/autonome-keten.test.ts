@@ -156,7 +156,7 @@ describe("de acceptatietest uit de opdracht", () => {
     const vraag = bouwBeoordelingsVraag(tests[0]!, "ledger: 2 regels toegepast");
     expect(vraag).toContain("# Acceptatietest A");
     expect(vraag).toContain("ledger: 2 regels toegepast");
-    expect(bouwBeoordelingsVraag(tests[0]!, "x".repeat(30_000))).toContain("[afgekapt]");
+    expect(bouwBeoordelingsVraag(tests[0]!, "x".repeat(40_000))).toContain("[afgekapt]");
   });
 
   it("leest het oordeel, en noemt een onleesbaar oordeel niet geslaagd", () => {

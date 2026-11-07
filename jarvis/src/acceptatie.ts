@@ -157,6 +157,15 @@ export const BEOORDELAAR_SYSTEEM =
   "Antwoord uitsluitend met één JSON-object, zonder tekst eromheen: " +
   '{"geslaagd": true|false, "reden": "<één of twee zinnen, concreet, met wat wel en niet in het bewijs staat>"}';
 
+/**
+ * Zoveel van het bewijs gaat mee. Ruimer dan de 24.000 waarmee dit begon: het bewijs draagt
+ * sinds 2026-11-07 de feiten die een test noemt, en de afkapping viel toen midden in de historie
+ * van het onderwerp — de beoordelaar meldde een "afgekapt overzicht" van de historie van #106 en
+ * zakte daarop, terwijl die historie zeven regels is. Het onderwerp staat nu vooraan in het
+ * bewijs én de grens ligt ruimer; wat als eerste wegvalt zijn de algemene lijsten achteraan.
+ */
+export const BEWIJS_TEKENS = 30_000;
+
 /** Zoveel van de opdracht gaat als context mee; genoeg voor waar een test naar verwijst. */
 export const OPDRACHT_CONTEXT_TEKENS = 8_000;
 
@@ -190,7 +199,7 @@ export function bouwBeoordelingsVraag(test: AcceptatieTest, bewijs: string, opdr
         ]),
     "# Wat de uitvoering heeft opgeleverd (het bewijs)",
     "",
-    bewijs.length > 24_000 ? `${bewijs.slice(0, 24_000)}\n… [afgekapt]` : bewijs,
+    bewijs.length > BEWIJS_TEKENS ? `${bewijs.slice(0, BEWIJS_TEKENS)}\n… [afgekapt]` : bewijs,
     "",
     "# Je oordeel",
     "",
