@@ -22,7 +22,7 @@ import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
-import { ketenSpoor, maaktDezeKetenAf, magVastleggen, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -57,7 +57,8 @@ async function met<T>(f: (sql: DbClient) => Promise<T>): Promise<T> {
  * repository: grover, maar nooit verkeerd — hij wijzigt ook bij een wijziging
  * aan de keten.
  */
-async function ketenVersie(): Promise<string | null> {
+/** De engine-pin van deze run: de volledige sha die zij heeft geïnstalleerd, of null (in de engine zelf). */
+async function ketenPin(): Promise<string | null> {
   const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
   const lees = async (...delen: string[]): Promise<string | null> => {
     try {
@@ -72,8 +73,11 @@ async function ketenVersie(): Promise<string | null> {
     await lees("node_modules", ".package-lock.json"),
     false,
   );
-  const uitPin = stand.modus === "consumer" ? (stand.shaGeinstalleerd ?? stand.shaLock) : null;
-  const versie = uitPin ?? (process.env.GITHUB_SHA ?? "").trim();
+  return stand.modus === "consumer" ? (stand.shaGeinstalleerd ?? stand.shaLock) : null;
+}
+
+async function ketenVersie(): Promise<string | null> {
+  const versie = (await ketenPin()) ?? (process.env.GITHUB_SHA ?? "").trim();
   return versie === "" ? null : versie.slice(0, 7);
 }
 
@@ -82,7 +86,7 @@ async function leesDoelen(sql: DbClient): Promise<Doel[]> {
 }
 
 /** De repositories die de reviewjob leest: deze, en de engine als de configuratie die noemt. */
-async function reviewRepos(): Promise<{ readonly eigen: string; readonly alle: readonly string[]; readonly bot: string }> {
+async function reviewRepos(): Promise<{ readonly eigen: string; readonly alle: readonly string[]; readonly bot: string; readonly engine: string }> {
   const eigen = (process.env.GITHUB_REPOSITORY ?? "").trim();
   const wortel = (await vindWortel(process.cwd())) ?? process.cwd();
   const config = await laadConfig(wortel);
@@ -90,8 +94,8 @@ async function reviewRepos(): Promise<{ readonly eigen: string; readonly alle: r
   const engine = config.ok ? config.config.engine_repository : "";
   // In de engine-repository zelf (geen engine_repository) reviewt niemand: dat doet de consument, die de engine
   // ook leest. Twee sweeps op dezelfde kop gaven anders twee oordelen (QA ronde 1 op jarvis-engine#88).
-  if (!engine) return { eigen, alle: [], bot };
-  return { eigen, alle: [eigen, ...(engine !== eigen ? [engine] : [])].filter(Boolean), bot };
+  if (!engine) return { eigen, alle: [], bot, engine: "" };
+  return { eigen, alle: [eigen, ...(engine !== eigen ? [engine] : [])].filter(Boolean), bot, engine };
 }
 
 /** Het tweede model leest één pull request. Geeft het oordeel, of een foutmelding. */
@@ -328,6 +332,11 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
   console.log(`jarvis eindcontrole: ${doelen.length} samengevoegd doel(en).`);
   let code = 0;
   const eigenRepo = (process.env.GITHUB_REPOSITORY ?? "").trim().toLowerCase();
+  // Waarmee deze run kan aantonen dat zij het werk van een samenvoeging draait: de commit die zij
+  // uitvoert, en de engine-pin die zij heeft geïnstalleerd (uitrolProef, RSK-0045).
+  const engineRepo = (await reviewRepos()).engine;
+  const draaiendeCommit = (process.env.GITHUB_SHA ?? "").trim();
+  const enginePin = await ketenPin();
   for (const d of doelen) {
     try {
       // Een doel raakt vaak meer dan één repository. Welke samenvoeging het draagt zegt dus niets over wie
@@ -391,10 +400,34 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
         console.log(`jarvis eindcontrole: ${d.id} → klaar (${bewijs})`);
         continue;
       }
-      // Een uitrol krijgt een halfuur voordat er wordt gemeten; anders meet de test de oude pagina.
-      if (d.acceptatie_url === null && minuten < UITROL_WACHT_MINUTEN) {
-        console.log(`jarvis eindcontrole: ${d.id} wacht op de uitrol vóór de acceptatietest (${Math.round(minuten)} van ${UITROL_WACHT_MINUTEN} min)`);
-        continue;
+      // Niet de klok maar de versie. Een uitrol kreeg een vast halfuur voordat er werd gemeten, omdat
+      // een test anders de oude pagina meet. Meet een doel geen pagina maar de keten zelf, dan is er
+      // geen pagina om op te wachten maar een versie om te controleren — en die kent deze run precies:
+      // de commit die zij uitvoert en de engine-pin die zij heeft geïnstalleerd. Staat de samenvoeging
+      // van het doel daarin, dan meet zij het juiste werk en hoeft er niet gewacht te worden.
+      // Valt het niet vast te stellen, dan geldt de wachttijd onverkort (RSK-0045).
+      if (d.acceptatie_url === null) {
+        const proef = uitrolProef({
+          eigen: eigenRepo,
+          engine: engineRepo,
+          repo: vanRepo,
+          merge,
+          draaiend: draaiendeCommit,
+          pin: enginePin,
+        });
+        const bewezen = proef.soort === "vergelijk" && (await isNazaat(token, proef.repo, proef.basis, proef.kandidaat));
+        const waarom =
+          proef.soort === "onbepaald"
+            ? proef.reden
+            : `${proef.wat} (${proef.kandidaat.slice(0, 7)}) staat ${bewezen ? "op of na" : "nog niet op"} de samenvoeging ${proef.basis.slice(0, 7)}`;
+        if (bewezen) {
+          console.log(`jarvis eindcontrole: ${d.id} uitrol vastgesteld — ${waarom}; geen wachttijd nodig`);
+        } else if (minuten < UITROL_WACHT_MINUTEN) {
+          console.log(`jarvis eindcontrole: ${d.id} wacht op de uitrol vóór de acceptatietest (${Math.round(minuten)} van ${UITROL_WACHT_MINUTEN} min) — ${waarom}`);
+          continue;
+        } else {
+          console.log(`jarvis eindcontrole: ${d.id} meet na ${Math.round(minuten)} min zonder uitrolbewijs — ${waarom}`);
+        }
       }
       const uitkomsten = await voerAcceptatieUit(sql, d, tests);
       const eind = eindoordeel(uitkomsten);

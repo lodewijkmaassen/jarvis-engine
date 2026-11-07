@@ -280,6 +280,72 @@ export function maaktDezeKetenAf(o: {
   return { maakAf: false, reden: `de samenvoeging staat in ${o.repo} en is vanuit deze keten niet te lezen` };
 }
 
+/** Hoe de eindcontrole kan vaststellen dat de samenvoeging van een doel in de draaiende versie zit. */
+export type Uitrolproef =
+  /** Vergelijk twee commits in `repo`: staat `kandidaat` op of na `basis`? */
+  | { readonly soort: "vergelijk"; readonly repo: string; readonly basis: string; readonly kandidaat: string; readonly wat: string }
+  /** Niet vast te stellen; de bestaande wachttijd geldt. */
+  | { readonly soort: "onbepaald"; readonly reden: string };
+
+/**
+ * Welke vergelijking bewijst dat de samenvoeging van dit doel zit in wat er NU meet?
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * De eindcontrole wachtte na een samenvoeging een vast halfuur voordat zij de
+ * acceptatietests uitvoerde. Die wachttijd is een gok op de klok: hij bestaat
+ * omdat een test die een webpagina meet zonder wachttijd de oude pagina meet.
+ * Voor een doel zonder acceptatie-URL meet de keten echter zichzelf, en dan is
+ * er geen pagina maar een versie — en die kent de run precies. Gemeten op
+ * 2026-11-07 aan D-20261021-161119608: elke correctie kostte ruim dertig
+ * minuten wachten op een uitrol die al lang klaar was (RSK-0045).
+ *
+ * Twee vergelijkingen, beide met gegevens die de run al heeft:
+ *
+ * 1. Staat de samenvoeging in de repository van deze run, dan is de commit die
+ *    de run uitvoert (GITHUB_SHA) het bewijs: staat die op of na de
+ *    samenvoeging, dan draait dit werk hier.
+ * 2. Staat zij in de engine-repository, dan is de engine-pin van deze run het
+ *    bewijs: die zegt welke engine-commit de run heeft geïnstalleerd.
+ *
+ * Elk ander geval is `onbepaald`: een derde repository draait deze run niet, en
+ * zonder samenvoeging, commit of pin valt er niets te vergelijken. Dan blijft
+ * de bestaande wachttijd staan — liever een halfuur wachten dan meten op werk
+ * dat er misschien nog niet is.
+ */
+export function uitrolProef(o: {
+  /** GITHUB_REPOSITORY van deze run. */
+  readonly eigen: string;
+  /** De engine-repository uit de configuratie, of "" in de engine zelf. */
+  readonly engine: string;
+  /** De repository van de vastgelegde samenvoeging. */
+  readonly repo: string;
+  /** De merge-commit van die samenvoeging. */
+  readonly merge: string | null;
+  /** De commit die deze run uitvoert. */
+  readonly draaiend: string | null;
+  /** De engine-pin die deze run heeft geïnstalleerd. */
+  readonly pin: string | null;
+}): Uitrolproef {
+  const repo = o.repo.trim();
+  const merge = (o.merge ?? "").trim();
+  if (repo === "" || merge === "") return { soort: "onbepaald", reden: "het doel draagt geen samenvoeging om tegen te vergelijken" };
+  const klein = repo.toLowerCase();
+  const eigen = o.eigen.trim().toLowerCase();
+  const engine = o.engine.trim().toLowerCase();
+  if (eigen !== "" && klein === eigen) {
+    const draaiend = (o.draaiend ?? "").trim();
+    if (draaiend === "") return { soort: "onbepaald", reden: "deze run weet niet welke commit zij uitvoert" };
+    return { soort: "vergelijk", repo, basis: merge, kandidaat: draaiend, wat: "de commit die deze run uitvoert" };
+  }
+  if (engine !== "" && klein === engine) {
+    const pin = (o.pin ?? "").trim();
+    if (pin === "") return { soort: "onbepaald", reden: "deze run leest geen engine-pin" };
+    return { soort: "vergelijk", repo, basis: merge, kandidaat: pin, wat: "de engine-pin van deze run" };
+  }
+  return { soort: "onbepaald", reden: `de samenvoeging staat in ${repo}, en die repository draait deze run niet` };
+}
+
 export function dispatchNodig(doelen: readonly Pick<Doel, "id" | "status" | "bijgewerkt">[], nu: Date): { readonly start: boolean; readonly reden: string } {
   const werk = doelen.filter((d) => d.status === "open" || d.status === "bezig" || d.status === "review");
   if (werk.length === 0) return { start: false, reden: "geen doel in uitvoering" };
