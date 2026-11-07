@@ -356,6 +356,15 @@ export const SCHEMA_FEITEN_SQL =
   "union all select 'trigger', t.tgname from pg_trigger t join pg_class c on c.oid = t.tgrelid " +
   "join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'jarvis' and not t.tgisinternal order by 1, 2";
 /** De activiteit van één doel: wat er werkelijk is gebeurd. */
+/**
+ * Het laatste spoor van een ketenronde. Draait alleen in CI, met de eigen
+ * databaserol; daarom staat dit statement bewust niet in de allowlist van de
+ * Edge Function (de uitvoerder heeft er niets te zoeken).
+ */
+export const KETEN_SPOOR_SQL =
+  "select op::text as op, tekst from jarvis.activiteit where soort = 'regie' and uitvoerder = 'ci' " +
+  "and tekst like 'ketenronde%' order by op desc limit 1";
+
 export const DOEL_ACTIVITEIT_SQL =
   "select op::text as op, uitvoerder, rol, soort, tekst, verwijzing from jarvis.activiteit where taak = $1 order by op desc limit 60";
 

@@ -16,13 +16,13 @@ import path from "node:path";
 import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
-import { ACTIVITEIT_SQL, DOEL_WERK_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
+import { ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
 import { eindoordeel, leesAcceptatieTests } from "./acceptatie";
 import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
-import { checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { ketenSpoor, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -397,6 +397,37 @@ async function dispatchDoelen(sql: DbClient, droog: boolean): Promise<number> {
   return antwoord.ok ? 0 : 1;
 }
 
+/**
+ * Laat na dat deze ronde heeft gedraaid, en meldt het wanneer de vorige te
+ * lang geleden was terwijl er werk stond. De regel zelf (wanneer schrijven,
+ * wanneer stilstand) staat in doelen.ts; hier staat alleen de I/O.
+ *
+ * Best-effort: een spoor dat niet lukt, mag een ronde nooit tegenhouden.
+ */
+async function legKetenSpoorVast(sql: DbClient): Promise<void> {
+  try {
+    const vorige = (await sql.unsafe(KETEN_SPOOR_SQL)) as unknown as { op: string }[];
+    const doelen = await leesDoelen(sql);
+    const spoor = ketenSpoor({
+      nu: new Date(),
+      vorige: vorige[0]?.op ?? null,
+      oorzaak: (process.env.GITHUB_EVENT_NAME ?? "").trim(),
+      wachtend: doelen.filter((d) => WACHTENDE_TOESTANDEN.includes(d.status)).length,
+    });
+    if (spoor.stilstand) {
+      console.log(`::warning title=keten stond stil::${spoor.tekst}`);
+      console.log(
+        `jarvis keten: ${spoor.tekst}. Deze ronde doet alsnog wat er lag; blijft dit gebeuren, dan is de ` +
+          `starter in de database (jarvis.doel_ronde op het rooster) niet meer aan het werk.`,
+      );
+    }
+    if (!spoor.schrijven) return;
+    await sql.unsafe(ACTIVITEIT_SQL, ["ci", "systeem", null, null, "regie", spoor.tekst.slice(0, 500), null]);
+  } catch (fout) {
+    console.error(`jarvis keten: spoor niet vastgelegd: ${fout instanceof Error ? fout.message : String(fout)}`);
+  }
+}
+
 /** `jarvis v3 sweep` in de bestaande workflow: reviewen en samenvoegingen vastleggen. */
 export async function ciSweep(): Promise<number> {
   const token = (process.env.GITHUB_TOKEN ?? "").trim();
@@ -405,6 +436,8 @@ export async function ciSweep(): Promise<number> {
     return 1;
   }
   return await met(async (sql) => {
+    // Het spoor eerst: het zegt iets over de ronde die nu begint, niet over wat zij deed.
+    await legKetenSpoorVast(sql);
     const a = await vastleggen(sql, token);
     const b = await reviewen(sql, token);
     return a || b;
