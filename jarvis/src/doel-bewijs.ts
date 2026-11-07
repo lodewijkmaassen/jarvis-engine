@@ -10,7 +10,7 @@
 // de database gaat, krijgt vast omschreven, read-only bewijs.
 
 import type { AcceptatieTest } from "./acceptatie";
-import { ACCEPTATIE_SLEUTEL_SQL, DOEL_ACTIVITEIT_SQL, MIGRATIE_LEDGER_ALLES_SQL, MIGRATIE_LEDGER_SQL, SCHEMA_FEITEN_SQL } from "./db";
+import { ACCEPTATIE_SLEUTEL_SQL, DOELEN_LEDGER_SQL, DOEL_BEWIJS_ACTIVITEIT_SQL, MIGRATIE_LEDGER_ALLES_SQL, MIGRATIE_LEDGER_SQL, PR_TOETSINGEN_SQL, SCHEMA_FEITEN_SQL } from "./db";
 import type { Doel } from "./doelen";
 import type { DbClient } from "./opdrachten";
 
@@ -94,15 +94,29 @@ export async function bewijsVoorTest(
   let ledgerAlles: Record<string, unknown>[] = [];
   let activiteit: Record<string, unknown>[] = [];
   let feiten: Record<string, unknown>[] = [];
+  let toetsingen: Record<string, unknown>[] = [];
+  let doelen: Record<string, unknown>[] = [];
+  // Een onderwerp als "#106" is een pull request en geen dossier: activiteit
+  // hangt aan een dossier en levert dan altijd "(geen regels)". De historie van
+  // een pull request staat in de toetsingen.
+  const prNummer = /^#([0-9]{1,5})$/.exec(onderwerp ?? "")?.[1] ?? null;
+  const taak = prNummer === null ? (onderwerp ?? d.id) : d.id;
   try {
     ledger = (await sql.unsafe(MIGRATIE_LEDGER_SQL, [
       d.id,
     ])) as unknown as Record<string, unknown>[];
     // Ook het hele ledger: een acceptatietest vraagt vaak naar SQL die onder een ánder doel is toegepast.
     ledgerAlles = (await sql.unsafe(MIGRATIE_LEDGER_ALLES_SQL)) as unknown as Record<string, unknown>[];
-    activiteit = (await sql.unsafe(DOEL_ACTIVITEIT_SQL, [
-      onderwerp ?? d.id,
+    activiteit = (await sql.unsafe(DOEL_BEWIJS_ACTIVITEIT_SQL, [
+      taak,
     ])) as unknown as Record<string, unknown>[];
+    if (prNummer !== null)
+      toetsingen = (await sql.unsafe(PR_TOETSINGEN_SQL, [
+        Number(prNummer),
+      ])) as unknown as Record<string, unknown>[];
+    // Een test vraagt vaak naar wat er met een ÁNDER doel is gebeurd ("bewijs met
+    // een gecontroleerde test dat ..."). Dat staat in het doelenregister.
+    doelen = (await sql.unsafe(DOELEN_LEDGER_SQL)) as unknown as Record<string, unknown>[];
     // Altijd meegeleverd, niet alleen bij een test die als `sql` is herkend. Gemeten op 2026-11-07 in
     // de end-tot-endproef: test A vroeg om het bestaan van een view én om het migratieledger, werd als
     // soort `bewijs` herkend, en de beoordeelaar zag daardoor het ledger wél en de view niet. Terecht
@@ -124,8 +138,13 @@ export async function bewijsVoorTest(
     `pull request: ${d.pr?.repo ?? "-"}#${d.pr?.nummer ?? "-"} kop ${String(d.pr?.kop ?? "-").slice(0, 7)} merge ${String(d.pr?.merge_sha ?? "-").slice(0, 7)}`,
     `migratieledger van dit doel:\n${ledger.length === 0 ? "(geen regels)" : JSON.stringify(ledger).slice(0, 4000)}`,
     `migratieledger van de hele lane (alle doelen, nieuwste eerst):\n${ledgerAlles.length === 0 ? "(geen regels)" : JSON.stringify(ledgerAlles).slice(0, 4000)}`,
-    `activiteit van ${onderwerp ?? d.id}:\n${activiteit.length === 0 ? "(geen regels)" : JSON.stringify(activiteit).slice(0, 8000)}`,
+    `activiteit van ${taak}:\n${activiteit.length === 0 ? "(geen regels)" : JSON.stringify(activiteit).slice(0, 8000)}`,
+    `doelen van de lane (nieuwste eerst, met uitkomst):\n${doelen.length === 0 ? "(geen regels)" : JSON.stringify(doelen).slice(0, 6000)}`,
   ];
+  if (prNummer !== null)
+    delen.push(
+      `toetsingen van ${onderwerp} (de historie van deze pull request):\n${toetsingen.length === 0 ? "(geen regels)" : JSON.stringify(toetsingen).slice(0, 4000)}`,
+    );
   if (feiten.length > 0)
     delen.push(
       `wat er in het schema jarvis staat:\n${JSON.stringify(feiten).slice(0, 6000)}`,

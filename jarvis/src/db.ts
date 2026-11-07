@@ -388,6 +388,35 @@ export const KETEN_SPOOR_SQL =
 export const DOEL_ACTIVITEIT_SQL =
   "select op::text as op, uitvoerder, rol, soort, tekst, verwijzing from jarvis.activiteit where taak = $1 order by op desc limit 60";
 
+/**
+ * Dezelfde activiteit, maar als bewijs voor een acceptatietest: zonder de
+ * eigen oordelen van de eindcontrole. Die zijn de meting, niet het onderwerp.
+ * Bleven ze staan, dan duwden veertig regels "test C: niet-geslaagd" het
+ * bewijs zelf uit het venster en las de beoordelaar zijn vorige oordeel als
+ * bewijs (gemeten 2026-11-07, 12:40-13:05 UTC, aan D-20261021-161119608).
+ * De regels "vastgezet:" en "migraties toegepast:" blijven: die zeggen iets
+ * over het onderwerp en niet over de uitslag.
+ */
+export const DOEL_BEWIJS_ACTIVITEIT_SQL =
+  "select op::text as op, uitvoerder, rol, soort, tekst, verwijzing from jarvis.activiteit " +
+  "where taak = $1 and not (uitvoerder = 'ci' and soort = 'acceptatie' " +
+  "and (tekst like 'test %' or tekst like 'eindoordeel:%')) order by op desc limit 60";
+
+/**
+ * Wat de administratie over een pull request vastlegt. Een acceptatietest die
+ * naar "#106" vraagt, vroeg tot nu toe de activiteit van een taak met die
+ * naam; die bestaat niet, want activiteit hangt aan een dossier. De historie
+ * van een pull request staat in de toetsingen: elk oordeel met commit en tijd.
+ */
+export const PR_TOETSINGEN_SQL =
+  "select pr_repo, pr_nummer, commit_sha, oordeel, door, op::text as op from jarvis.toetsingen " +
+  "where pr_nummer = $1 order by op";
+
+/** De doelen van de lane, nieuwste eerst: wat er met elk doel is gebeurd en hoe het afliep. */
+export const DOELEN_LEDGER_SQL =
+  "select id, status, left(coalesce(uitkomst, ''), 300) as uitkomst, bijgewerkt::text as bijgewerkt " +
+  "from jarvis.doelen order by bijgewerkt desc limit 25";
+
 export function toegestaneSql(): readonly string[] {
   return [
     DOELEN_SQL,
