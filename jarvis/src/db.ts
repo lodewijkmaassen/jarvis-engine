@@ -410,6 +410,36 @@ export const DOEL_ACTIVITEIT_SQL =
   "select op::text as op, uitvoerder, rol, soort, tekst, verwijzing from jarvis.activiteit where taak = $1 order by op desc limit 60";
 
 /**
+ * De statusovergangen van alle doelen in de lane: wat er met een doel is gebeurd, en in welke
+ * richting. Het doelenregister zegt hoe een doel afliep; dit zegt welke weg het daarheen nam.
+ *
+ * Een acceptatietest kan juist daarnaar vragen - "bewijs dat een doel met een falende
+ * acceptatietest niet op klaar komt" is een vraag over de overgang, niet over de uitkomst.
+ * Gemeten op 2026-11-07 om 21:13 UTC: test C zakte met "er is geen activiteit of andere
+ * registratie die laat zien dat het doel daadwerkelijk niet naar status 'klaar' is overgegaan".
+ *
+ * Het oordeel dat de eindcontrole aan zo'n overgang meeschrijft, wordt afgekapt bij het woord
+ * waar het begint - om dezelfde reden als in DOEL_BEWIJS_ACTIVITEIT_SQL (RSK-0043).
+ */
+/**
+ * De acceptatiemetingen van ANDERE doelen: de regels die de eindcontrole daar schreef, met
+ * oordeel en reden. Een test kan naar een gecontroleerde proef op een ander doel vragen - "bewijs
+ * dat een doel met een falende acceptatietest niet op klaar komt" - en dan is de meting van dat
+ * andere doel het bewijs. Gemeten op 2026-11-07: test C zakte met "geen objectief geregistreerde
+ * falende expliciete acceptatietest te zien; het blijft bij een omschrijving in de uitkomstkolom".
+ *
+ * De metingen van het doel zelf blijven eruit: die zijn het oordeel van deze meting (RSK-0043).
+ */
+export const LANE_ACCEPTATIE_SQL =
+  "select op::text as op, taak, tekst from jarvis.activiteit where soort = 'acceptatie' " +
+  "and taak is not null and taak <> $1 order by op desc limit 25";
+
+export const LANE_OVERGANGEN_SQL =
+  "select op::text as op, taak, " +
+  "left(tekst, coalesce(nullif(position('acceptatietest' in tekst), 0) - 1, length(tekst))) as tekst " +
+  "from jarvis.activiteit where soort = 'status' and taak is not null order by op desc limit 60";
+
+/**
  * Dezelfde activiteit, maar als bewijs voor een acceptatietest: zonder de
  * eigen oordelen van de eindcontrole. Die zijn de meting, niet het onderwerp.
  * Bleven ze staan, dan duwden veertig regels "test C: niet-geslaagd" het

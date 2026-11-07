@@ -10,7 +10,7 @@
 // de database gaat, krijgt vast omschreven, read-only bewijs.
 
 import type { AcceptatieTest } from "./acceptatie";
-import { ACCEPTATIE_SLEUTEL_SQL, DB_MIGRATIES_SQL, DOELEN_LEDGER_SQL, DOEL_BEWIJS_ACTIVITEIT_SQL, MIGRATIE_LEDGER_ALLES_SQL, MIGRATIE_LEDGER_SQL, PR_ACTIVITEIT_SQL, PR_TOETSINGEN_SQL, SCHEMA_FEITEN_SQL } from "./db";
+import { ACCEPTATIE_SLEUTEL_SQL, DB_MIGRATIES_SQL, DOELEN_LEDGER_SQL, DOEL_BEWIJS_ACTIVITEIT_SQL, LANE_ACCEPTATIE_SQL, LANE_OVERGANGEN_SQL, MIGRATIE_LEDGER_ALLES_SQL, MIGRATIE_LEDGER_SQL, PR_ACTIVITEIT_SQL, PR_TOETSINGEN_SQL, SCHEMA_FEITEN_SQL } from "./db";
 import type { Doel } from "./doelen";
 import type { DbClient } from "./opdrachten";
 
@@ -97,6 +97,8 @@ export async function bewijsVoorTest(
   let toetsingen: Record<string, unknown>[] = [];
   let prActiviteit: Record<string, unknown>[] = [];
   let doelen: Record<string, unknown>[] = [];
+  let overgangen: Record<string, unknown>[] = [];
+  let laneAcceptatie: Record<string, unknown>[] = [];
   // Een onderwerp als "#106" is een pull request en geen dossier: activiteit
   // hangt aan een dossier en levert dan altijd "(geen regels)". De historie van
   // een pull request staat in de toetsingen.
@@ -124,6 +126,11 @@ export async function bewijsVoorTest(
     // Een test vraagt vaak naar wat er met een ÁNDER doel is gebeurd ("bewijs met
     // een gecontroleerde test dat ..."). Dat staat in het doelenregister.
     doelen = (await sql.unsafe(DOELEN_LEDGER_SQL)) as unknown as Record<string, unknown>[];
+    // Hoe een doel liep, niet alleen hoe het afliep: een test kan naar de overgang vragen.
+    overgangen = (await sql.unsafe(LANE_OVERGANGEN_SQL)) as unknown as Record<string, unknown>[];
+    // En wat de eindcontrole bij ANDERE doelen heeft gemeten: een test kan naar een gecontroleerde
+    // proef op een ander doel vragen. De metingen van dit doel zelf blijven eruit.
+    laneAcceptatie = (await sql.unsafe(LANE_ACCEPTATIE_SQL, [d.id])) as unknown as Record<string, unknown>[];
     // Altijd meegeleverd, niet alleen bij een test die als `sql` is herkend. Gemeten op 2026-11-07 in
     // de end-tot-endproef: test A vroeg om het bestaan van een view én om het migratieledger, werd als
     // soort `bewijs` herkend, en de beoordeelaar zag daardoor het ledger wél en de view niet. Terecht
@@ -199,6 +206,10 @@ export async function bewijsVoorTest(
           `migraties die de database zelf als toegepast registreert (view jarvis.db_migraties; met het begin van de SQL, zodat te zien is welke objecten elke migratie aanbrengt):\n${JSON.stringify(dbMigraties).slice(0, 4000)}`,
         ]),
     `activiteit van ${taak} (tabel jarvis.activiteit):\n${activiteit.length === 0 ? "(geen regels)" : JSON.stringify(activiteit).slice(0, 5000)}`,
+    `statusovergangen van alle doelen in de lane (tabel jarvis.activiteit, soort status; nieuwste eerst):
+${overgangen.length === 0 ? "(geen regels)" : JSON.stringify(overgangen).slice(0, 4000)}`,
+    `acceptatiemetingen van ANDERE doelen in de lane (tabel jarvis.activiteit, soort acceptatie; nieuwste eerst; de metingen van dit doel zelf staan er niet in):
+${laneAcceptatie.length === 0 ? "(geen regels)" : JSON.stringify(laneAcceptatie).slice(0, 5000)}`,
     `doelen van de lane (tabel jarvis.doelen; nieuwste eerst, met titel, pull request en uitkomst):\n${doelen.length === 0 ? "(geen regels)" : JSON.stringify(doelen.map((r) => (r["id"] === d.id ? { ...r, uitkomst: DOEL_ZELF } : r))).slice(0, 8000)}`,
   ];
   return { bewijs: delen.join("\n\n"), onuitvoerbaar: null };
