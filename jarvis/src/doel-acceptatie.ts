@@ -32,9 +32,21 @@ const INSTELLING_SQL =
 /** Het doel dat als laatste vastliep of is hervat: waarop een onbepaalbare acceptatietest één keer wordt vastgezet. */
 const LAATST_VAST_SQL =
   "select id from jarvis.doelen where vast_door is not null or heropend_op is not null order by coalesce(heropend_op, bijgewerkt) desc limit 1";
-/** Hoe vaak een acceptatietest van dit doel al niet slaagde: daarna is herstellen geen herstellen meer. */
+/**
+ * Hoeveel RONDEN van dit doel al zakten: daarna is herstellen geen herstellen
+ * meer. Geteld worden de eindoordelen, niet de losse tests.
+ *
+ * Stond hier eerst `'%: niet-geslaagd%'`, en dat telt elke regel
+ * `test A: niet-geslaagd` apart. Een doel met drie acceptatietests zat dus na
+ * zijn EERSTE zakkende ronde al op drie van drie en werd meteen vastgezet; de
+ * herstelketen die de eigenaar vraagt ("bij mislukking gaat het bestaande
+ * autonome herstelproces verder") kwam voor zo'n doel nooit op gang. Gemeten
+ * op 2026-11-07 aan D-20261021-161119608, dat werd vastgezet met de tekst
+ * "ronde 40 van 3".
+ */
 export const ACCEPTATIE_MISLUKT_SQL =
-  "select count(*) as aantal from jarvis.activiteit where taak = $1 and soort = 'acceptatie' and tekst like '%: niet-geslaagd%'";
+  "select count(*) as aantal from jarvis.activiteit where taak = $1 and soort = 'acceptatie' " +
+  "and tekst like 'eindoordeel:%acceptatietest niet geslaagd%'";
 export const MAX_ACCEPTATIE_RONDES = 3;
 
 /** Eén regel in de bestaande activiteitenlog; dat is waar de AI Core en de eigenaar kijken. */
