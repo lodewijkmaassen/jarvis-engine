@@ -115,7 +115,7 @@ import {
   WIE_SQL,
 } from "./db";
 import { randomBytes } from "node:crypto";
-import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, duidRechten, eigenaarVan, SAMENVOEGMETHODE, VERPLICHTE_CHECK, type PullRequestFeiten } from "./pr";
+import { ATTESTATIE_GEBRUIKER, ATTESTATIE_WORKFLOW, beoordeelOpenen, beoordeelSamenvoegen, duidDispatchWeigering, duidRechten, eigenaarVan, SAMENVOEGMETHODE, uniekeHerkomstPerNaam, VERPLICHTE_CHECK, type PullRequestFeiten, type WorkflowBestand } from "./pr";
 import { homedir, tmpdir } from "node:os";
 
 const uitvoeren = promisify(execFile);
@@ -1707,6 +1707,25 @@ function workflowRunId(r: { html_url?: string | null; details_url?: string | nul
 }
 
 /**
+ * De workflowbestanden op een commit, zoals de API ze geeft. Leeg bij elke
+ * hapering: de aanroeper leidt hier een bewijs uit af, en een halve lezing
+ * bewijst niets.
+ */
+async function workflowBestandenOp(token: string, slug: string, ref: string): Promise<readonly WorkflowBestand[]> {
+  const map = await github(token, "GET", `/repos/${slug}/contents/.github/workflows?ref=${encodeURIComponent(ref)}`);
+  if (map.status !== 200 || !Array.isArray(map.lading)) return [];
+  const bestanden: WorkflowBestand[] = [];
+  for (const item of map.lading as { name?: unknown; path?: unknown; type?: unknown }[]) {
+    if (item.type !== "file" || typeof item.path !== "string" || !/\.ya?ml$/i.test(item.path)) continue;
+    const inhoud = await github(token, "GET", `/repos/${slug}/contents/${item.path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`);
+    const l = inhoud.lading as { content?: string; encoding?: string } | null;
+    if (inhoud.status !== 200 || l?.encoding !== "base64" || typeof l.content !== "string") return [];
+    bestanden.push({ pad: item.path, inhoud: Buffer.from(l.content, "base64").toString("utf8") });
+  }
+  return bestanden;
+}
+
+/**
  * De workflow achter elke check-run, als `run-id -> workflow-id`.
  *
  * `laatstePerNaam` mag een run alleen laten vervallen voor een latere run van
@@ -1771,6 +1790,14 @@ export async function leesPullRequest(token: string, slug: string, nummer: numbe
     }[];
   }).check_runs;
   const herkomsten = await herkomstPerRun(token, slug, runs);
+  // Bleef de herkomst van een dubbele naam onbekend (geen `actions: read`), dan is er nog een bron die met
+  // `contents: read` te lezen is: de workflowbestanden zelf. Kan maar één bestand een check met deze naam
+  // opleveren, dan zijn twee runs met die naam noodzakelijk uit dezelfde workflow (RSK-0032). Alleen in dat
+  // geval wordt er gelezen — het is een extra call, en zonder dubbele naam valt er niets te vervangen.
+  const aantalPerNaam = new Map<string, number>();
+  for (const r of runs) aantalPerNaam.set(r.name, (aantalPerNaam.get(r.name) ?? 0) + 1);
+  const onbekend = runs.some((r) => (aantalPerNaam.get(r.name) ?? 0) > 1 && !herkomsten.has(workflowRunId(r)));
+  const uitWorkflow = onbekend ? uniekeHerkomstPerNaam(await workflowBestandenOp(token, slug, p.head.sha)) : new Map<string, string>();
   return {
     nummer,
     auteur: p.user.login,
@@ -1786,7 +1813,7 @@ export async function leesPullRequest(token: string, slug: string, nummer: numbe
       status: r.status,
       conclusie: r.conclusion,
       gestart: r.started_at ?? null,
-      herkomst: herkomsten.get(workflowRunId(r)) ?? null,
+      herkomst: herkomsten.get(workflowRunId(r)) ?? uitWorkflow.get(r.name) ?? null,
     })),
   };
 }
