@@ -214,6 +214,8 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
   const { alle, bot } = await reviewRepos();
   const versie = await ketenVersie();
   const doelen = await leesDoelen(sql);
+  /** Doelen die in deze ronde al een samenvoeging kregen; een tweede zou de database (terecht) weigeren. */
+  const vastgelegd = new Set<string>();
   const lopend = doelen.filter((d) => d.status === "bezig" || d.status === "review");
   if (lopend.length === 0) return 0;
   let code = 0;
@@ -261,8 +263,24 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
         continue;
       }
       const pr = { repo: slug, nummer: p.number, kop: p.head.sha, merge_sha: p.merge_commit_sha };
-      await sql.unsafe("select jarvis.doel_ci($1, 'samengevoegd', $2::text::jsonb, null)", [d.id, JSON.stringify(pr)]);
-      console.log(`jarvis doel: ${d.id} samengevoegd via ${slug}#${p.number} (${p.merge_commit_sha.slice(0, 7)})`);
+      // Per ronde legt een doel hoogstens één samenvoeging vast. Een doel dat in meer dan één samengevoegde
+      // pull request is genoemd (en dat gebeurt: een doel dat weken loopt wordt vaker genoemd) leverde anders
+      // bij de tweede een weigering van de database op — "samengevoegd -> samengevoegd is niet toegestaan" —
+      // en die fout brak de hele ronde af, inclusief het reviewen van alle andere pull requests. Gemeten op
+      // 2026-11-07 in Kasboek: ronde 42364496122, exitcode 1, geen enkele review gedaan.
+      if (vastgelegd.has(d.id)) {
+        console.log(`jarvis doel: ${d.id} is deze ronde al vastgelegd; ${slug}#${p.number} wacht op de volgende`);
+        continue;
+      }
+      try {
+        await sql.unsafe("select jarvis.doel_ci($1, 'samengevoegd', $2::text::jsonb, null)", [d.id, JSON.stringify(pr)]);
+        vastgelegd.add(d.id);
+        console.log(`jarvis doel: ${d.id} samengevoegd via ${slug}#${p.number} (${p.merge_commit_sha.slice(0, 7)})`);
+      } catch (fout) {
+        // Eén doel dat niet wil, mag de ronde niet kosten: de rest van de pull requests moet nog beoordeeld worden.
+        code = 1;
+        console.error(`jarvis doel: ${d.id} niet vastgelegd via ${slug}#${p.number}: ${fout instanceof Error ? fout.message : String(fout)}`);
+      }
     }
   }
   return code;
