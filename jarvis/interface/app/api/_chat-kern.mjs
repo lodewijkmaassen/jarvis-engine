@@ -77,6 +77,22 @@ const kort = (t, n) => (typeof t === "string" && t.length > n ? `${t.slice(0, n)
  * read-only lezingen (jarvis.acceptatie_raadpleeg); de vorm van het antwoord is
  * dezelfde als hierboven, zodat het model geen verschil ziet.
  */
+/**
+ * Is dit de sleutel van de acceptatiedeur? Vóór de eerste modelaanroep, niet
+ * pas bij de eerste lezing: gemeten op 2026-11-07 antwoordde de deur met een
+ * willekeurig token gewoon, omdat een vraag die geen lezing nodig heeft de
+ * controle oversloeg. Dan staat het model van de eigenaar open op zijn kosten.
+ */
+export async function sleutelGeldig(cfg, sleutel, fetchFn) {
+  const r = await fetchFn(`${cfg.url}/rest/v1/rpc/acceptatie_geldig`, {
+    method: "POST",
+    headers: { apikey: cfg.key, "content-type": "application/json" },
+    body: JSON.stringify({ p_token: sleutel }),
+  });
+  if (!r.ok) return false;
+  return (await r.json()) === true;
+}
+
 export async function raadpleegMetSleutel(cfg, sleutel, invoer, fetchFn) {
   const i = invoer ?? {};
   const vorm =
@@ -277,6 +293,8 @@ export async function verwerk({ token, body, cfg, sleutel, fetchFn = fetch }) {
   const alleenLezen = body?.alleen_lezen === true;
   try {
     if (alleenLezen) {
+      // Eerst de sleutel, dan het model: anders antwoordt de deur ook zonder geldige sleutel.
+      if (!(await sleutelGeldig(cfg, token, fetchFn))) return { status: 401, lading: { fout: "Geen geldige acceptatiesleutel." } };
       const { tekst } = await vraagModel(berichten, {
         sleutel,
         fetchFn,
