@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { DOELEN_LEDGER_SQL } from "@/jarvis/src/db";
+import { DOELEN_LEDGER_SQL, PR_TOETSINGEN_SQL, SCHEMA_FEITEN_SQL } from "@/jarvis/src/db";
 import { bewijsVoorTest } from "@/jarvis/src/doel-bewijs";
-import { bouwBeoordelingsVraag, OPDRACHT_CONTEXT_TEKENS, type AcceptatieTest } from "@/jarvis/src/acceptatie";
+import { BEWIJS_TEKENS, bouwBeoordelingsVraag, OPDRACHT_CONTEXT_TEKENS, type AcceptatieTest } from "@/jarvis/src/acceptatie";
 import type { Doel } from "@/jarvis/src/doelen";
 import type { DbClient } from "@/jarvis/src/opdrachten";
 
@@ -90,5 +90,36 @@ describe("de beoordelaar kan lezen waar de test naar verwijst", () => {
     const vraag = bouwBeoordelingsVraag(TEST, "bewijs", "x".repeat(OPDRACHT_CONTEXT_TEKENS + 500));
     expect(vraag).toContain("[afgekapt]");
     expect(vraag.length).toBeLessThan(OPDRACHT_CONTEXT_TEKENS + 1500);
+  });
+});
+
+/**
+ * Het bewijs wordt als geheel afgekapt. Staat de historie van het onderwerp
+ * achteraan, dan valt juist die weg zodra de algemene lijsten groeien - gemeten
+ * op 2026-11-07 om 20:06 UTC, toen de beoordelaar voor eis (c) van
+ * acceptatietest A een "afgekapt overzicht van de historie van #106" meldde
+ * terwijl die historie zeven regels is.
+ */
+describe("het onderwerp staat vooraan in het bewijs", () => {
+  it("zet de historie van de pull request voor de algemene lijsten", async () => {
+    const sql = {
+      unsafe: async (q: string) => {
+        if (q === PR_TOETSINGEN_SQL) return [{ pr_repo: "org/engine", pr_nummer: 106, commit_sha: "c".repeat(40), oordeel: "GO", door: "ci-review", op: "2026-10-21T09:22:29Z" }];
+        if (q === SCHEMA_FEITEN_SQL) return [{ soort: "functie", naam: "doel_overgang" }];
+        if (q === DOELEN_LEDGER_SQL) return [{ id: "D-20261107-000000001", status: "gesloten", uitkomst: "in de herstelketen gezet" }];
+        return [];
+      },
+    } as unknown as DbClient;
+    const uit = await bewijsVoorTest(sql, DOEL, { ...TEST, onderwerp: "#106" }, "#106");
+    const historie = uit.bewijs.indexOf("historie van #106");
+    const doelen = uit.bewijs.indexOf("doelen van de lane");
+    expect(historie).toBeGreaterThan(-1);
+    expect(doelen).toBeGreaterThan(historie);
+  });
+
+  it("kapt het bewijs pas af bij de ruimere grens", () => {
+    const vraag = bouwBeoordelingsVraag(TEST, "x".repeat(BEWIJS_TEKENS - 10));
+    expect(vraag).not.toContain("[afgekapt]");
+    expect(bouwBeoordelingsVraag(TEST, "x".repeat(BEWIJS_TEKENS + 10))).toContain("[afgekapt]");
   });
 });
