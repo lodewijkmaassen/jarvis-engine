@@ -1994,13 +1994,28 @@ async function opdrachtPr(losse: readonly string[], vlaggen: ReadonlyMap<string,
 // De eigen database van Jarvis (schema jarvis). Zie db.ts.
 // ---------------------------------------------------------------------------
 
-const DB_URL_BESTAND = process.env.JARVIS_DB_URL_BESTAND ?? path.join(homedir(), ".jarvis-db-url");
+/**
+ * Het bestand met de verbindingsreeks. Bij ELKE aanroep opnieuw bepaald, niet
+ * eenmaal bij het laden van deze module.
+ *
+ * Waarom dat verschil telt: `JARVIS_DB_URL_BESTAND` is de enige manier om een
+ * test los te koppelen van de werkplek. Werd het pad bij het laden vastgelegd,
+ * dan kwam een test die de variabele in `beforeEach` zet te laat en las de
+ * code alsnog de echte reeks uit de thuismap. Vier tests in
+ * `pr-attesteren-voorcontrole` en één in `v3` deden precies dat: op een
+ * werkplek met `~/.jarvis-db-url` verbonden ze met de echte database en
+ * faalden, en zonder dat bestand slaagden ze (RSK-0031, gemeten 2026-11-07).
+ * Een test hoort hetzelfde te zeggen op elke machine.
+ */
+function dbUrlBestand(): string {
+  return process.env.JARVIS_DB_URL_BESTAND ?? path.join(homedir(), ".jarvis-db-url");
+}
 
 async function leesDbUrl(): Promise<string | null> {
   const uitOmgeving = (process.env.JARVIS_DB_URL ?? "").trim();
   if (uitOmgeving.length > 0) return uitOmgeving;
   try {
-    const inhoud = (await readFile(DB_URL_BESTAND, "utf8")).trim();
+    const inhoud = (await readFile(dbUrlBestand(), "utf8")).trim();
     return inhoud.length > 0 ? inhoud : null;
   } catch {
     return null;
@@ -2354,7 +2369,7 @@ async function opdrachtDb(losse: readonly string[], vlaggen: ReadonlyMap<string,
   const verbinding = await verbindDb();
   if (verbinding === null) {
     console.error(
-      `jarvis db: geen weg naar de database: geen verbindingsreeks (JARVIS_DB_URL, ${DB_URL_BESTAND}) en geen ` +
+      `jarvis db: geen weg naar de database: geen verbindingsreeks (JARVIS_DB_URL, ${dbUrlBestand()}) en geen ` +
         "Edge Function (JARVIS_DB_API of attestatie.url in jarvis.config.yml).",
     );
     return 1;

@@ -335,7 +335,26 @@ describe("B3: de noodstop (enabled: false) stopt ook elke V3-opdracht", () => {
     const map = mkdtempSync(path.join(tmpdir(), "jarvis-noodstop-"));
     writeFileSync(path.join(map, "jarvis.config.yml"), tekst);
     // Een bereikbare "database" en "GitHub" zijn bewust niet ingesteld: de noodstop moet vóór elk netwerk of database komen.
-    const r = spawnSync("node", [BIN, "v3", ...args], { cwd: map, encoding: "utf8", env: { PATH: process.env.PATH ?? "", HOME: map, GITHUB_TOKEN: "x" } });
+    //
+    // HOME alleen is niet genoeg: op Windows leest Node de thuismap uit USERPROFILE, dus bleef de engine
+    // `~/.jarvis-db-url` van de werkplek lezen en verbond deze test met de echte database (RSK-0031, gemeten
+    // 2026-11-07). JARVIS_DB_URL_BESTAND wijst het pad expliciet aan en is daarmee onafhankelijk van het
+    // besturingssysteem; HOME en USERPROFILE blijven staan voor al het andere dat de thuismap leest.
+    const r = spawnSync("node", [BIN, "v3", ...args], {
+      cwd: map,
+      encoding: "utf8",
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: map,
+        USERPROFILE: map,
+        JARVIS_DB_URL_BESTAND: path.join(map, ".jarvis-db-url-bestaat-niet"),
+        // Zonder reeks valt de engine terug op de Edge Function, afgeleid uit attestatie.url in de
+        // configuratie hierboven. Die naam bestaat niet, en een DNS-lookup die wegloopt maakte deze test
+        // traag en wisselend. Een poort op localhost die niemand opent, weigert onmiddellijk.
+        JARVIS_DB_API: "http://127.0.0.1:1/functions/v1/jarvis-db",
+        GITHUB_TOKEN: "x",
+      },
+    });
     return { code: r.status, uit: `${r.stdout}${r.stderr}` };
   }
 
@@ -356,7 +375,7 @@ describe("B3: de noodstop (enabled: false) stopt ook elke V3-opdracht", () => {
   it("laat de opdracht met enabled: true wél tot de volgende stap komen (hier: geen database)", () => {
     const r = draai(config, ["status"]);
     expect(r.uit).not.toMatch(/noodstop/);
-    expect(r.uit).toMatch(/geen weg naar de database|jarvis v3 status/);
+    expect(r.uit).toMatch(/geen weg naar de database|niet bereikbaar|jarvis v3 status/);
   });
 });
 
