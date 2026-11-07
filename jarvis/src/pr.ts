@@ -100,6 +100,103 @@ export function laatstePerNaam(checks: readonly Check[]): readonly Check[] {
   });
 }
 
+/** Eén workflowbestand zoals het op de kop van de pull request staat. */
+export type WorkflowBestand = { readonly pad: string; readonly inhoud: string };
+
+/**
+ * De checknamen die dit workflowbestand kan opleveren: de naam van elke job,
+ * en die is de `name:` van de job of anders zijn sleutel.
+ *
+ * `onzeker` betekent: dit bestand kan namen opleveren die hier niet te lezen
+ * zijn — een naam met een expressie erin (`${{ … }}`) of een job met een
+ * matrix, die per combinatie een eigen naam krijgt. Dan is er niets te
+ * bewijzen en zegt deze lezing niets.
+ *
+ * Bewust een kleine, letterlijke lezer en geen YAML-ontleder: hij leest één
+ * vorm — `jobs:` op kolom 0, jobs twee spaties in, hun `name:` vier spaties in
+ * — en meldt al het andere als onzeker. Een lezer die meer gevallen aankan,
+ * raadt in de gevallen die hij niet aankan, en raden is hier precies wat niet
+ * mag.
+ */
+export function checkNamenVanWorkflow(inhoud: string): { readonly namen: readonly string[]; readonly onzeker: boolean } {
+  const namen = new Map<string, string>();
+  let inJobs = false;
+  let job: string | null = null;
+  let onzeker = false;
+  for (const regel of inhoud.split(/\r?\n/)) {
+    if (/^jobs:\s*(#.*)?$/.test(regel)) {
+      inJobs = true;
+      continue;
+    }
+    if (inJobs && /^[^\s#]/.test(regel)) break; // een volgende sleutel op kolom 0 sluit jobs af
+    if (!inJobs) continue;
+    if (/^\s*(#.*)?$/.test(regel)) continue; // leeg of alleen commentaar
+    const sleutel = /^ {2}([A-Za-z_][A-Za-z0-9_-]*):\s*(#.*)?$/.exec(regel);
+    if (sleutel) {
+      job = sleutel[1]!;
+      namen.set(job, job);
+      continue;
+    }
+    if (/^ {2}\S/.test(regel)) {
+      // Een job met zijn waarde op dezelfde regel (`job: {…}`) of een vorm die deze lezer niet kent.
+      onzeker = true;
+      continue;
+    }
+    if (job === null) continue;
+    const naam = /^ {4}name:\s*(.+?)\s*$/.exec(regel);
+    if (naam) {
+      const waarde = naam[1]!.replace(/^["']|["']$/g, "").trim();
+      if (waarde.includes("${{")) onzeker = true;
+      else namen.set(job, waarde);
+      continue;
+    }
+    if (/^ {4}strategy:/.test(regel)) onzeker = true;
+  }
+  if (namen.size === 0) onzeker = true;
+  return { namen: [...new Set(namen.values())], onzeker };
+}
+
+/**
+ * Per checknaam die precies ÉÉN workflowbestand kan opleveren: dat bestand.
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * `laatstePerNaam` mag een rode run alleen laten vervallen voor een latere run
+ * van dezelfde workflow (QA-bevinding N-1: een toegevoegde workflow met een
+ * job `poort` zou anders een echte rode poort onzichtbaar maken). De herkomst
+ * kwam uit `/actions/runs/<id>`, en dat vraagt het recht `actions: read` — dat
+ * de sweep niet heeft. Zonder herkomst verviel er niets, en daarmee hield één
+ * tijdelijk rode run (een 504 van GitHub) de keten voor altijd tegen
+ * (RSK-0032, gemeten 2026-11-07 op #307 van een consumentproject).
+ *
+ * Wat hier in de plaats komt is geen versoepeling maar een bewijs uit een
+ * andere bron: de workflowbestanden zelf, op de kop van de pull request, die
+ * met `contents: read` te lezen zijn. Kan maar één bestand een check met deze
+ * naam opleveren, dan zijn twee runs met die naam noodzakelijk uit dezelfde
+ * workflow en geldt de laatste. Kan er meer dan één bestand bij — precies het
+ * geval van N-1 — dan staat hier niets en blijft de strenge regel gelden.
+ *
+ * Fail closed op elke twijfel: één onzeker bestand maakt de hele lezing leeg.
+ */
+export function uniekeHerkomstPerNaam(bestanden: readonly WorkflowBestand[]): ReadonlyMap<string, string> {
+  const uit = new Map<string, string>();
+  if (bestanden.length === 0) return uit;
+  const perNaam = new Map<string, Set<string>>();
+  for (const b of bestanden) {
+    const { namen, onzeker } = checkNamenVanWorkflow(b.inhoud);
+    if (onzeker) return new Map();
+    for (const naam of namen) {
+      const paden = perNaam.get(naam) ?? new Set<string>();
+      paden.add(b.pad);
+      perNaam.set(naam, paden);
+    }
+  }
+  for (const [naam, paden] of perNaam) {
+    if (paden.size === 1) uit.set(naam, `wf:${[...paden][0]}`);
+  }
+  return uit;
+}
+
 export type PullRequestFeiten = {
   readonly nummer: number;
   readonly auteur: string;
