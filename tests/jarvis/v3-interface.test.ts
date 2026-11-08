@@ -183,4 +183,12 @@ describe("de V3-weergave", () => {
     expect(HTML).toContain('<link rel="manifest" href="/v3/manifest.webmanifest">');
     expect(HTML).toContain('navigator.serviceWorker.register("/v3/sw.js", { scope: "/v3/" })');
   });
+  it("biedt spraakinvoer bij de omschrijving van een nieuw doel, verborgen zonder browserondersteuning (D-20261107-234820314)", () => {
+    expect(HTML).toContain('id="nspraak"');
+    expect(HTML).toMatch(/id="nspraak"[^>]*hidden/);
+    expect(HTML).toContain("window.SpeechRecognition || window.webkitSpeechRecognition");
+    expect(HTML).toContain("if (!knop || !veld || !SR) return;");
+    expect(HTML).toContain('rec.lang = "nl-NL"');
+    expect(HTML).toContain("koppelSpraak();");
+  });
 });

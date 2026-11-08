@@ -297,11 +297,33 @@
   function invoerBlok(plek) {
     return `<div class="invoer"><h2>${plek ? `Nieuw doel voor ${esc(plek.naam)}` : "Nieuw doel"}</h2>
         <div class="rij"><input id="nt" placeholder="Titel" aria-label="Titel"><input id="nu" placeholder="Waar het te zien is (https://…), optioneel" aria-label="Waar het te zien is, optioneel">
-          <textarea class="breed" id="no" rows="4" placeholder="Wat wil je dat Jarvis bereikt?" aria-label="Opdracht"></textarea></div>
+          <textarea class="breed" id="no" rows="4" placeholder="Wat wil je dat Jarvis bereikt?" aria-label="Opdracht"></textarea>
+          <button type="button" class="bijlage" id="nspraak" aria-pressed="false" aria-label="Spraakinvoer voor de omschrijving" title="Spreek de omschrijving in" hidden>🎤 Spreek in</button></div>
         <button class="hoofd" id="nv">Geef doel</button></div>`;
   }
 
+  // Spraakinvoer voor de omschrijving: browserdictaat (Web Speech API); zonder ondersteuning blijft de knop verborgen.
+  function koppelSpraak() {
+    const knop = $("nspraak"), veld = $("no");
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!knop || !veld || !SR) return;
+    knop.hidden = false;
+    let rec = null, basis = "";
+    const stop = () => { if (rec) { try { rec.stop(); } catch {} } };
+    const zet = (aan) => { knop.setAttribute("aria-pressed", String(aan)); knop.textContent = aan ? "⏹ Stop" : "🎤 Spreek in"; };
+    knop.onclick = () => {
+      if (rec) return stop();
+      rec = new SR(); rec.lang = "nl-NL"; rec.interimResults = true; rec.continuous = true;
+      basis = veld.value && !/\s$/.test(veld.value) ? veld.value + " " : veld.value;
+      rec.onresult = (e) => { let t = ""; for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript; veld.value = basis + t; };
+      rec.onend = () => { rec = null; zet(false); };
+      rec.onerror = () => { rec = null; zet(false); };
+      try { rec.start(); zet(true); } catch { rec = null; zet(false); }
+    };
+  }
+
   function koppelInvoer(plek) {
+    koppelSpraak();
     $("nv").onclick = () => zeg(async () => {
       const opdracht = plek ? "Project: " + plek.label + "\n\n" + $("no").value : $("no").value;
       await rpc("doel_nieuw", { p_titel: $("nt").value, p_opdracht: opdracht, p_acceptatie_url: $("nu").value || null });
