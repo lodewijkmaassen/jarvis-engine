@@ -517,8 +517,16 @@ describe("de V3-workflow start de migratiejob ook na een automatische merge (zon
     expect(m).toMatch(/ref: main/);
     void blok;
   });
-  it("draait ook op het rooster, zodat een gemiste ronde de volgende keer wordt ingehaald", () => {
-    expect(yml).toMatch(/schedule:\s*\n\s*- cron: "\*\/10/);
+  it("draait niet op een klok, maar op werk: na de poort, en wanneer zij gestart wordt", () => {
+    // De keten stond op elke tien minuten. Gemeten 1 t/m 12 november 2026 waren 1992 van de
+    // 2913 runs in de drie repositories een lege ronde op die klok, en van 9 t/m 12 november —
+    // vier dagen zonder een enkele commit — was dat 100% van alle runs, zo'n 390 per dag. De
+    // motor in de database wekt de keten binnen twee minuten zodra er werk is; de klok voegde
+    // daar niets aan toe behalve kosten (RSK-0046).
+    expect(yml).not.toMatch(/^\s*schedule:/m);
+    expect(yml).not.toMatch(/cron:/);
+    expect(yml).toMatch(/workflow_run:\s*\n\s*workflows: \["jarvis-lint"\]/);
+    expect(yml).toMatch(/workflow_dispatch: \{\}/);
   });
   it("de actieve kopie is byte-identiek aan de canonieke", () => {
     expect(readFileSync(path.join(process.cwd(), ".github/workflows/jarvis-v3.yml"), "utf8")).toBe(yml);

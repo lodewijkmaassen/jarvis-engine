@@ -9,7 +9,7 @@ name: jarvis-v3
 # De jobs sweep, eindcontrole en dispatch draaien in de GitHub-omgeving `jarvis-ci` (alleen branch main), zodat
 # een branch van de uitvoerder het CI-geheim niet kan lezen. Drie jobs, elk met alleen de rechten die hij nodig heeft:
 #
-#   sweep       elke tien minuten en na elke poort-run: loopt de open
+#   sweep       na elke poort-run en bij elke gestarte ronde: loopt de open
 #               Jarvis-pull requests langs. Valt een PR binnen het mandaat van
 #               zijn taak (paden, repo, migraties, toetsing GO, poort groen),
 #               dan keurt de poort goed en — alleen bij productie: true in het
@@ -27,9 +27,14 @@ name: jarvis-v3
 #               GITHUB_TOKEN) start geen push-workflow, en juist die merge moet de migratie starten.
 #               De route is idempotent (ledger), dus elke ronde mag opnieuw proberen.
 
+# GEEN `schedule`. Die stond hier op elke tien minuten en liet de keten dag en nacht
+# draaien, ook als er niets te doen was: gemeten 1 tot en met 12 november 2026 waren
+# 1992 van de 2913 runs in de drie repositories een lege ronde op de klok, en van 9 tot
+# en met 12 november - vier dagen zonder een enkele commit - was dat 100% van alle runs,
+# zo'n 390 per dag. De keten heeft die klok niet nodig: de motor in de database wekt haar
+# binnen twee minuten zodra er werk is, en na elke poort-run start zij via `workflow_run`.
+# Handmatig starten blijft via `workflow_dispatch`.
 on:
-  schedule:
-    - cron: "*/10 * * * *"
   workflow_run:
     workflows: ["jarvis-lint"]
     types: [completed]
