@@ -170,6 +170,11 @@
         { sleutel: "offerte-opvolging", naam: "Offerte opvolging", omschrijving: "Verstuurde offertes bewaken en op het juiste moment opvolgen." },
         { sleutel: "reviews-verzamelen", naam: "Reviews verzamelen", omschrijving: "Na een afgeronde klus om een review vragen." },
       ] },
+    // Nog zonder eigen repository: de repositoryregel op de projectpagina valt dan weg.
+    { sleutel: "tobias-leert", naam: "Tobias Leert", omschrijving: "Leerprojecten voor Tobias.",
+      subprojecten: [
+        { sleutel: "woordbattle", naam: "WoordBattle", omschrijving: "Een woordspel om spelenderwijs woorden te leren." },
+      ] },
   ];
   // Volledige plek van een doel: "kasboek", of "tovas-flow/offerte-opvolging" voor een subproject.
   // Bewust precies één subniveau: de eigenaar vroeg project → subproject. Een dieper label ("a/b/c") telt
@@ -483,7 +488,7 @@
     $("inhoud").innerHTML = `<a class="terug" href="${esc(terug)}">← ${esc(terugLabel)}</a>
       <div class="kaart"><h3 style="font-size:22px">${esc(naam)}</h3><div class="klein">${esc(omschrijving)}</div>
         <p><span class="badge ${vast.length ? "MISLUKT" : "KLAAR"}">${esc(status)}</span></p>
-        <p class="klein">Repository: <a href="https://github.com/${esc(repo)}">${esc(repo)}</a></p></div>
+        ${repo ? `<p class="klein">Repository: <a href="https://github.com/${esc(repo)}">${esc(repo)}</a></p>` : ""}</div>
       ${extra}
       ${invoerBlok(plek)}
       <div class="raster">
