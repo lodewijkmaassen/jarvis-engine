@@ -31,7 +31,7 @@ Vragen over Jarvis zelf (welke taken lopen, status, wat er vandaag klaar is, wat
 De keten van een doel: open (nieuw, wacht tot de uitvoerder het oppakt) → bezig (de uitvoerder bouwt) → review (pull request open, wacht op de reviewjob in CI) → samengevoegd (wordt uitgerold, daarna meet CI productie) → klaar. Vast = vastgelopen (veld vast_door zegt wie: uitvoerder, ci of eigenaar; de uitkomst geeft de reden; heropend_op is het moment van de laatste hervatting), gesloten = door de eigenaar afgesloten. Leg bij een vraag uit in welke stap het doel zit en wat er dan gebeurt.
 Vragen over de historie van een taak (wat is er gebeurd, waarom liep hij vast, welke NO-GO-feedback, wat is daarna aangepast, is hij hervat, hoe is het opgelost, welke pull requests): roep raadpleeg_doelen aan met het id van het doel; dat geeft de activiteit (stappen, fouten, herstel, pull requests, merge) en de reviewoordelen met rapport per kop van de pull request. Zonder id (bijvoorbeeld "welke taak liep het laatst vast") gebruik je historie: true, dat geeft de recentste vastgelopen doelen, hervatte doelen (heropend_op), statusovergangen (oud → nieuw, met reden), fouten en NO-GO's. Een doel dat is hervat staat niet meer op vast: kijk dus ook naar hervatte_doelen en statusovergangen. Haal daarna het gevonden doel met id op. Geef alleen wat daar staat; ontbreekt een gebeurtenis in de administratie, zeg dat dan. De uitvoerder draait periodiek; een doel op open kan dus even wachten.
 Is het een concrete opdracht om iets te bouwen of te wijzigen: roep het gereedschap maak_doel aan met een korte titel, en kies het project als het duidelijk is. De letterlijke tekst van de eigenaar gaat automatisch het doel in; herhaal die niet. Geef in toelichting alleen wat daar niet in staat: waar de eigenaar naar eerdere berichten verwijst, of wat er op een meegestuurde afbeelding staat.
-Projecten: tovas-flow (ToVas Flow: gemiste oproepen, offertes, reviews, inlogpagina), kasboek (Kasboek). Subprojecten van tovas-flow: gemiste-oproepen, offerte-opvolging, reviews-verzamelen.
+Projecten: tovas-flow (ToVas Flow: gemiste oproepen, offertes, reviews, inlogpagina), kasboek (Kasboek), tobias-leert (Tobias Leert). Subprojecten van tovas-flow: gemiste-oproepen, offerte-opvolging, reviews-verzamelen. Subproject van tobias-leert: woordbattle (WoordBattle).
 Bij een bericht kan een afbeelding zitten die de eigenaar ter toelichting meestuurt: kijk ernaar en gebruik wat erop staat. Neem bij een opdracht de relevante inhoud van de afbeelding in woorden op in de toelichting.
 Verzin geen resultaten en beloof niets over de uitkomst; de keten bouwt, beoordeelt en rolt uit.`;
 
@@ -57,7 +57,7 @@ const GEREEDSCHAP = [{
     properties: {
       titel: { type: "string", description: "Korte titel, hoogstens 80 tekens" },
       toelichting: { type: "string", description: "Optioneel en kort: context die niet in de tekst van de eigenaar staat (verwijzing naar eerdere berichten, inhoud van een afbeelding). De tekst van de eigenaar zelf wordt automatisch toegevoegd." },
-      project: { type: "string", description: "Optioneel: tovas-flow, kasboek of tovas-flow/<subproject>", pattern: "^[a-z0-9-]+(/[a-z0-9-]+)?$" },
+      project: { type: "string", description: "Optioneel: tovas-flow, kasboek, tobias-leert, of <project>/<subproject> zoals tovas-flow/offerte-opvolging of tobias-leert/woordbattle", pattern: "^[a-z0-9-]+(/[a-z0-9-]+)?$" },
     },
     required: ["titel"],
   },

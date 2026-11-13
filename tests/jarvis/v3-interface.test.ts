@@ -122,6 +122,12 @@ describe("de V3-weergave", () => {
     expect(HTML).toContain("weergaveSubproject(project, sub)");
     expect(HTML).toContain('label: p.sleutel + "/" + sp.sleutel');
   });
+  it("heeft Tobias Leert als project met subproject WoordBattle, zonder repository (D-20261113-092942303)", () => {
+    expect(HTML).toContain('sleutel: "tobias-leert", naam: "Tobias Leert"');
+    expect(HTML).toContain('sleutel: "woordbattle", naam: "WoordBattle"');
+    // Een project zonder repository toont geen kapotte repositorylink.
+    expect(HTML).toContain('${repo ? `<p class="klein">Repository:');
+  });
   it("wijst een doel toe aan project of subproject via de eerste regel van de opdracht", () => {
     const regel = /const projectVan = (\(d\) => \{.*?\});/.exec(HTML)?.[1];
     expect(regel).toBeTruthy();
