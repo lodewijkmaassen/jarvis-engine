@@ -22,7 +22,7 @@ import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
-import { ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { afmeldingZonderTest, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -317,6 +317,18 @@ async function isNazaat(token: string, slug: string, basis: string, kandidaat: s
   return a.status === 200 && (status === "ahead" || status === "identical");
 }
 
+/** De titel van de pull request van een doel, voor de afmelding; null als die niet te lezen is. */
+async function prTitel(token: string, pr: Doel["pr"]): Promise<string | null> {
+  if (!pr?.repo || !pr.nummer) return null;
+  try {
+    const r = await github(token, "GET", `/repos/${pr.repo}/pulls/${pr.nummer}`);
+    const titel = r.status === 200 ? (r.lading as { title?: unknown }).title : null;
+    return typeof titel === "string" ? titel : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * De eindcontrole: voor elk samengevoegd doel eerst de database, dan de
  * uitrol, dan de acceptatietests — en pas als alles drie klopt: klaar.
@@ -395,7 +407,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       // 3. De acceptatietests die de eigenaar in de opdracht zette. Staat er geen, dan meet de keten zoals altijd.
       const tests = leesAcceptatieTests(d.opdracht);
       if (tests.length === 0) {
-        const bewijs = d.acceptatie_url === null ? "samengevoegd; het doel noemt geen acceptatie-URL en geen expliciete acceptatietest" : "productie gemeten op de acceptatie-URL";
+        const bewijs = afmeldingZonderTest(d, await prTitel(token, d.pr));
         await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, mig.gedaan.length > 0 ? `${bewijs}; migraties toegepast: ${mig.gedaan.join(", ")}` : bewijs]);
         console.log(`jarvis eindcontrole: ${d.id} → klaar (${bewijs})`);
         continue;

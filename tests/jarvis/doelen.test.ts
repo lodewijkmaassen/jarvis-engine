@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REVIEWER_DOOR } from "@/jarvis/src/attestatie";
-import { checksGroen, dispatchNodig, doelUitPrTekst, MAX_NO_GO, reviewBesluit, STIL_MINUTEN } from "@/jarvis/src/doelen";
+import { afmeldingZonderTest, checksGroen, dispatchNodig, doelUitPrTekst, MAX_NO_GO, reviewBesluit, STIL_MINUTEN } from "@/jarvis/src/doelen";
 import { poortUitkomst } from "@/jarvis/src/opdrachten";
 
 const KOP = "a".repeat(40);
@@ -179,5 +179,32 @@ describe("herstel QA ronde 2 op jarvis-engine#88", () => {
     // Precies twee echte blokken: elk begin en elk einde komt twee keer voor.
     expect(vraag.split(DATA_BEGIN).length - 1).toBe(2);
     expect(vraag.split(DATA_EIND).length - 1).toBe(2);
+  });
+});
+
+describe("afmeldingZonderTest", () => {
+  const doel = {
+    titel: "Project Tobias Leert aanmaken",
+    acceptatie_url: null,
+    pr: { repo: "lodewijkmaassen/jarvis-engine", nummer: 140, merge_sha: "474f976d44ca503a6d154e35b071dc97255b5294" },
+  };
+  it("noemt eerst wat er is opgeleverd, met pull request en samenvoeging (D-20261113-092942303)", () => {
+    const tekst = afmeldingZonderTest(doel, "Projecten: Tobias Leert met subproject WoordBattle");
+    expect(tekst).toBe(
+      "Opgeleverd: Projecten: Tobias Leert met subproject WoordBattle via lodewijkmaassen/jarvis-engine#140, samengevoegd als 474f976. " +
+        "productie niet apart gemeten: het doel noemt geen acceptatie-URL en geen acceptatietest.",
+    );
+  });
+  it("valt terug op de titel van het doel als de pull request niet te lezen is", () => {
+    expect(afmeldingZonderTest(doel, null)).toMatch(/^Opgeleverd: Project Tobias Leert aanmaken via lodewijkmaassen\/jarvis-engine#140/);
+    expect(afmeldingZonderTest(doel, "   ")).toMatch(/^Opgeleverd: Project Tobias Leert aanmaken /);
+  });
+  it("noemt de acceptatie-URL als die er is, en laat ontbrekende PR-gegevens weg", () => {
+    const tekst = afmeldingZonderTest({ titel: "Iets", acceptatie_url: "https://voorbeeld.nl/x", pr: null }, null);
+    expect(tekst).toBe("Opgeleverd: Iets. productie gemeten op https://voorbeeld.nl/x.");
+  });
+  it("kort een lange titel in", () => {
+    const tekst = afmeldingZonderTest({ ...doel, pr: null }, "x".repeat(300));
+    expect(tekst.startsWith(`Opgeleverd: ${"x".repeat(119)}….`)).toBe(true);
   });
 });
