@@ -84,6 +84,28 @@ export function ketenVersieUit(uitkomst: string | null): string | null {
 }
 
 /**
+ * De afmelding van een doel dat klaar is zonder acceptatietest: wat er is opgeleverd en waar.
+ *
+ * Stond hier eerst alleen "samengevoegd; het doel noemt geen acceptatie-URL en geen expliciete
+ * acceptatietest". Dat zegt wat er NIET is gemeten, en niets over wat er is gedaan. De eigenaar las
+ * dat op 2026-11-13 bij D-20261113-092942303 als een afmelding zonder inhoud en heropende het doel,
+ * terwijl het werk (Tobias Leert met subproject WoordBattle) gewoon was samengevoegd en uitgerold.
+ * De afmelding noemt daarom eerst het werk: de titel van de pull request (of die van het doel als
+ * die niet te lezen is), de pull request zelf en de samenvoeging. Wat er niet is gemeten volgt erna.
+ */
+export function afmeldingZonderTest(d: Pick<Doel, "titel" | "acceptatie_url" | "pr">, prTitel: string | null): string {
+  const titel = (prTitel ?? "").trim() || d.titel.trim();
+  const wat = titel.length > 120 ? `${titel.slice(0, 119)}…` : titel;
+  const pr = d.pr?.repo && d.pr.nummer ? ` via ${d.pr.repo}#${d.pr.nummer}` : "";
+  const merge = d.pr?.merge_sha ? `, samengevoegd als ${d.pr.merge_sha.slice(0, 7)}` : "";
+  const meting =
+    d.acceptatie_url === null
+      ? "productie niet apart gemeten: het doel noemt geen acceptatie-URL en geen acceptatietest"
+      : `productie gemeten op ${d.acceptatie_url}`;
+  return `Opgeleverd: ${wat}${pr}${merge}. ${meting}.`;
+}
+
+/**
  * Mag dit doel opnieuw gemeten worden op de samenvoeging die er al is?
  *
  * Alleen wanneer alles hieronder klopt:
