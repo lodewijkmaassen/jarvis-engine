@@ -147,6 +147,36 @@ describe("de acceptatietest uit de opdracht", () => {
     expect(vast[0]!.onderwerp).toBe("D-20261021-161119608");
   });
 
+  it("herkent een genummerde sectie Acceptatiecriteria en stopt bij de volgende kop", () => {
+    const opdracht = [
+      "## 5. Strikte scope V1",
+      "",
+      "1. Niet dit.",
+      "",
+      "## 6. Acceptatiecriteria",
+      "",
+      "De opdracht is uitsluitend KLAAR wanneer:",
+      "",
+      "1. **Werkende applicatie:** het spel is gepubliceerd en via een werkende URL bereikbaar.",
+      "",
+      "2. **Drie talen:** Engels, Duits en Frans werken.",
+      "",
+      "Een groene CI-controle is op zichzelf onvoldoende.",
+      "",
+      "## 7. Autonomie en uitvoering",
+      "",
+      "## 9. Oplevering",
+      "",
+      "1. De URL van de werkende applicatie.",
+    ].join("\n");
+    const tests = leesAcceptatieTests(opdracht);
+    expect(tests.map((t) => t.id)).toEqual(["1", "2"]);
+    expect(tests[0]!.tekst).toMatch(/^\*\*Werkende applicatie:\*\*/);
+    expect(tests[1]!.tekst).toContain("groene CI-controle");
+    expect(tests[1]!.tekst).not.toMatch(/Autonomie|Oplevering/);
+    expect(leesAcceptatieTests("Acceptatiecriteria:\n\nA. De pagina opent.\n")[0]!.id).toBe("A");
+  });
+
   it("vindt niets in een opdracht zonder expliciete sectie", () => {
     expect(leesAcceptatieTests("Bouw iets en test het goed. A. niet dit.")).toEqual([]);
   });
