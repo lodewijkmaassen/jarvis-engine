@@ -6,7 +6,7 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-11-13._
+_Gegenereerd op 2026-11-15._
 
 | Feit | Waarde |
 |---|---|
@@ -34,6 +34,25 @@ _Gegenereerd op 2026-11-13._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Een doel is pas klaar als het eindresultaat aantoonbaar is bereikt
+(D-20261115-095941788). De eindcontrole zette een samengevoegd doel zonder
+expliciete acceptatietest direct op klaar ("samengevoegd; het doel noemt geen
+acceptatie-URL en geen expliciete acceptatietest"), en `eindoordeel([])` heette
+klaar. Gemeten op 2026-11-13/14: D-20261107-225515647 werd drie keer heropend
+en ging drie keer binnen een kwartier op precies die grond weer naar klaar.
+
+Nu leidt de keten een test af als de opdracht er geen noemt
+(`testsVoorDoel` / `afgeleideAcceptatieTest`): het eindresultaat uit de
+opdracht, beoordeeld door het tweede model op de pagina (bij een
+acceptatie-URL) of op de inhoud van de pull request plus de administratie.
+Samenvoeging, uitrol of HTTP 200 tellen uitdrukkelijk niet als bewijs.
+Nul uitgevoerde tests is niet klaar. `herhaling` herkent dezelfde
+statusovergang met dezelfde reden: vanaf drie keer krijgt de uitvoerder (via
+de uitkomst en de dispatch) de opdracht zijn aanpak te veranderen, vanaf vijf
+keer staat het doel vast — ook op de weg "productie niet in orde", die tot nu
+toe geen grens had. Bewijs: `tests/jarvis/afronding-op-bewijs.test.ts`.
+
 
 De opdrachttekst van een taak is geen administratieve wijziging meer.
 `DEC-0044` laat een administratieve pull request door zonder taakakkoord,
