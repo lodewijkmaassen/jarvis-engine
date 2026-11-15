@@ -142,6 +142,8 @@ export async function voerAcceptatieUit(
   sql: DbClient,
   d: Doel,
   tests: readonly AcceptatieTest[],
+  /** Bewijs dat de eindcontrole al heeft gelezen (de inhoud van de pull request); gaat vóór het overige bewijs. */
+  extraBewijs: string | null = null,
 ): Promise<readonly AcceptatieUitkomst[]> {
   const activiteit = (await sql.unsafe(DOEL_ACTIVITEIT_SQL, [
     d.id,
@@ -167,12 +169,15 @@ export async function voerAcceptatieUit(
         );
       }
     }
-    const { bewijs, onuitvoerbaar } = await bewijsVoorTest(
+    const gemeten = await bewijsVoorTest(
       sql,
       d,
       test,
       onderwerp,
     );
+    const onuitvoerbaar = gemeten.onuitvoerbaar;
+    const extra = (extraBewijs ?? "").trim();
+    const bewijs = extra === "" || onuitvoerbaar !== null ? gemeten.bewijs : `${extra}\n\n${gemeten.bewijs}`;
     if (onuitvoerbaar !== null) {
       uit.push({ id: test.id, staat: "niet-meetbaar", bewijs: "", reden: onuitvoerbaar });
       await schrijfAcceptatie(sql, d.id, `test ${test.id}: niet-meetbaar — ${onuitvoerbaar}`);

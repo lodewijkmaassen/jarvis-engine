@@ -16,13 +16,13 @@ import path from "node:path";
 import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
-import { ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
-import { eindoordeel, leesAcceptatieTests } from "./acceptatie";
+import { ACTIVITEIT_SQL, DOEL_ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
+import { bouwPrBewijs, eindoordeel, testsVoorDoel } from "./acceptatie";
 import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
-import { ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -383,8 +383,13 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
         }
         if (!uitkomst.geslaagd) {
           if (minuten >= 30) {
-            await sql.unsafe("select jarvis.doel_ci($1, 'bezig', null, $2)", [d.id, `productie na ${Math.round(minuten)} min niet in orde: ${uitkomst.bewijs}`]);
-            console.log(`jarvis eindcontrole: ${d.id} → terug naar de uitvoerder (${uitkomst.bewijs})`);
+            // Deze weg had geen grens: elke ronde terug naar bezig met dezelfde reden. Herhaalt het doel
+            // zich, dan zegt de uitkomst dat de aanpak anders moet; herhaalt het zich te vaak, dan vast.
+            const h = await herhalingVan(sql, d.id);
+            const naar = h.besluit === "vast" ? "vast" : "bezig";
+            const tekst = `productie na ${Math.round(minuten)} min niet in orde: ${uitkomst.bewijs}${herhalingsZin(h)}`;
+            await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, tekst.slice(0, 1700)]);
+            console.log(`jarvis eindcontrole: ${d.id} → ${naar} (${uitkomst.bewijs})`);
           } else {
             console.log(`jarvis eindcontrole: ${d.id} wacht op de uitrol (${Math.round(minuten)} min): ${uitkomst.bewijs}`);
           }
@@ -392,14 +397,11 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
         }
       }
 
-      // 3. De acceptatietests die de eigenaar in de opdracht zette. Staat er geen, dan meet de keten zoals altijd.
-      const tests = leesAcceptatieTests(d.opdracht);
-      if (tests.length === 0) {
-        const bewijs = d.acceptatie_url === null ? "samengevoegd; het doel noemt geen acceptatie-URL en geen expliciete acceptatietest" : "productie gemeten op de acceptatie-URL";
-        await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, mig.gedaan.length > 0 ? `${bewijs}; migraties toegepast: ${mig.gedaan.join(", ")}` : bewijs]);
-        console.log(`jarvis eindcontrole: ${d.id} → klaar (${bewijs})`);
-        continue;
-      }
+      // 3. De acceptatietests die de eigenaar in de opdracht zette — en staat er geen, dan de test die de
+      //    keten zelf uit de opdracht afleidt. Een samenvoeging of een bouwmerk is nooit genoeg om klaar te
+      //    heten; er is altijd een meting van het eindresultaat (D-20261115-095941788).
+      const tests = testsVoorDoel(d);
+      const prBewijs = await leesPrBewijs(token, d);
       // Niet de klok maar de versie. Een uitrol kreeg een vast halfuur voordat er werd gemeten, omdat
       // een test anders de oude pagina meet. Meet een doel geen pagina maar de keten zelf, dan is er
       // geen pagina om op te wachten maar een versie om te controleren — en die kent deze run precies:
@@ -429,7 +431,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
           console.log(`jarvis eindcontrole: ${d.id} meet na ${Math.round(minuten)} min zonder uitrolbewijs — ${waarom}`);
         }
       }
-      const uitkomsten = await voerAcceptatieUit(sql, d, tests);
+      const uitkomsten = await voerAcceptatieUit(sql, d, tests, prBewijs);
       const eind = eindoordeel(uitkomsten);
       if (eind.klaar) {
         await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, `acceptatietests geslaagd — ${eind.samenvatting}`]);
@@ -446,8 +448,9 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
         ? `acceptatietest niet te meten — ${eind.samenvatting}`
         : `acceptatietest niet geslaagd (ronde ${rondes + 1} van ${MAX_ACCEPTATIE_RONDES}) — ${eind.samenvatting}`;
       const blok = classificeerBlokkade(eind.onmeetbaar ? `${tekst} (ontbrekende bevoegdheid)` : tekst);
-      const naar = vanDeEigenaar(blok) || rondes >= MAX_ACCEPTATIE_RONDES ? "vast" : "bezig";
-      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(rendereerBlokkade(tekst, blok).slice(0, 1700), versie)]);
+      const h = await herhalingVan(sql, d.id);
+      const naar = vanDeEigenaar(blok) || rondes >= MAX_ACCEPTATIE_RONDES || h.besluit === "vast" ? "vast" : "bezig";
+      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(`${rendereerBlokkade(tekst, blok).slice(0, 1500)}${herhalingsZin(h)}`, versie)]);
       await schrijfAcceptatie(sql, d.id, `eindoordeel: ${naar} — ${tekst}`);
       console.log(`jarvis eindcontrole: ${d.id} → ${naar} [${blok.soort}] (${tekst.slice(0, 200)})`);
     } catch (fout) {
@@ -458,9 +461,59 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
   return code;
 }
 
+/** De herhaling in de statusovergangen van één doel. Niet te lezen telt als geen herhaling: nooit een reden om te stoppen. */
+async function herhalingVan(sql: DbClient, id: string): Promise<Herhaling> {
+  try {
+    const rijen = (await sql.unsafe(DOEL_ACTIVITEIT_SQL, [id])) as unknown as { soort: string; tekst: string }[];
+    return herhaling(rijen.filter((r) => r.soort === "status"));
+  } catch {
+    return { aantal: 0, tekst: "", besluit: "door" };
+  }
+}
+
+/** Wat een herhaling aan een uitkomst toevoegt: niets, of de opdracht om de aanpak te veranderen. */
+function herhalingsZin(h: Herhaling): string {
+  if (h.besluit === "door") return "";
+  return h.besluit === "vast"
+    ? ` — HERHALING: ${h.aantal}× dezelfde overgang; vastgezet om een eindeloze lus te voorkomen`
+    : ` — HERHALING: ${h.aantal}× dezelfde overgang; de vorige aanpak werkt niet, onderzoek de oorzaak en kies een andere`;
+}
+
+/** De inhoud van de pull request van een doel als bewijs, of null als die niet te lezen is. */
+async function leesPrBewijs(token: string, d: Doel): Promise<string | null> {
+  const repo = (d.pr?.repo ?? "").trim();
+  const nummer = d.pr?.nummer;
+  if (repo === "" || typeof nummer !== "number") return null;
+  try {
+    const pr = await github(token, "GET", `/repos/${repo}/pulls/${nummer}`);
+    const bestanden = await github(token, "GET", `/repos/${repo}/pulls/${nummer}/files?per_page=100`);
+    if (pr.status !== 200) return null;
+    const p = pr.lading as { title?: string; body?: string | null };
+    const lijst = bestanden.status === 200 && Array.isArray(bestanden.lading) ? (bestanden.lading as Record<string, unknown>[]) : [];
+    return bouwPrBewijs(
+      { repo, nummer, titel: String(p.title ?? ""), tekst: String(p.body ?? "") },
+      lijst.map((b) => ({
+        naam: String(b["filename"] ?? ""),
+        status: String(b["status"] ?? ""),
+        erbij: Number(b["additions"] ?? 0),
+        eraf: Number(b["deletions"] ?? 0),
+        patch: typeof b["patch"] === "string" ? b["patch"] : null,
+      })),
+    );
+  } catch {
+    return null;
+  }
+}
+
 /** Start de routine via de API als er een doel zonder beweging staat. Het token gaat alleen in een header. */
 async function dispatchDoelen(sql: DbClient, droog: boolean): Promise<number> {
-  const besluit = dispatchNodig(await leesDoelen(sql), new Date());
+  const doelen = await leesDoelen(sql);
+  const herhaald = new Map<string, Herhaling>();
+  for (const d of doelen.filter((x) => x.status === "open" || x.status === "bezig" || x.status === "review")) {
+    const h = await herhalingVan(sql, d.id);
+    if (h.besluit !== "door") herhaald.set(d.id, h);
+  }
+  const besluit = dispatchNodig(doelen, new Date(), herhaald);
   console.log(`jarvis dispatch: ${besluit.reden}`);
   if (!besluit.start) return 0;
   const claim = await sql.unsafe("select jarvis.v3_dispatch_claim($1) as ok", [20]);

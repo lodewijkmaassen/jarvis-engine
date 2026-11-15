@@ -346,10 +346,76 @@ export function uitrolProef(o: {
   return { soort: "onbepaald", reden: `de samenvoeging staat in ${repo}, en die repository draait deze run niet` };
 }
 
-export function dispatchNodig(doelen: readonly Pick<Doel, "id" | "status" | "bijgewerkt">[], nu: Date): { readonly start: boolean; readonly reden: string } {
+export function dispatchNodig(
+  doelen: readonly Pick<Doel, "id" | "status" | "bijgewerkt">[],
+  nu: Date,
+  /** Per doel de herhaling in zijn statusovergangen (zie `herhaling`); alleen doelen die herhalen. */
+  herhaald: ReadonlyMap<string, Herhaling> = new Map(),
+): { readonly start: boolean; readonly reden: string } {
   const werk = doelen.filter((d) => d.status === "open" || d.status === "bezig" || d.status === "review");
   if (werk.length === 0) return { start: false, reden: "geen doel in uitvoering" };
   const stil = werk.filter((d) => d.status === "open" || nu.getTime() - Date.parse(d.bijgewerkt) >= STIL_MINUTEN * 60_000);
   if (stil.length === 0) return { start: false, reden: `${werk.length} doel(en) in beweging` };
-  return { start: true, reden: `${stil.length} doel(en) zonder recente beweging: ${stil.map((d) => d.id).join(", ")}` };
+  const herhalend = stil.flatMap((d) => {
+    const h = herhaald.get(d.id);
+    return h !== undefined && h.besluit !== "door" ? [`${d.id} herhaalt ${h.aantal}× "${h.tekst.slice(0, 160)}" — onderzoek de oorzaak en kies een andere aanpak`] : [];
+  });
+  return {
+    start: true,
+    reden:
+      `${stil.length} doel(en) zonder recente beweging: ${stil.map((d) => d.id).join(", ")}` +
+      (herhalend.length === 0 ? "" : `; HERHALING: ${herhalend.join("; ")}`),
+  };
+}
+
+/** Zo vaak dezelfde overgang met dezelfde reden, en het heet herhaling: de aanpak moet anders. */
+export const HERHALING_DREMPEL = 3;
+/** Zo vaak, en verder herhalen kost alleen nog geld: het doel staat vast met de herhaling als reden. */
+export const HERHALING_MAX = 5;
+
+export type Herhaling = {
+  /** Hoe vaak de vaakst voorkomende overgang met reden voorkwam. */
+  readonly aantal: number;
+  /** Die overgang, genormaliseerd. */
+  readonly tekst: string;
+  /** door: geen herhaling · andere-aanpak: signaal aan de uitvoerder · vast: stoppen, geen eindeloze lus. */
+  readonly besluit: "door" | "andere-aanpak" | "vast";
+};
+
+/** Een overgang zonder wat per ronde verschilt (getallen, commits, de ketenversie), zodat herhaling zichtbaar wordt. */
+export function normaliseerOvergang(tekst: string): string {
+  return tekst
+    .replace(/\s*\[keten [^\]]*\]\s*$/, "")
+    .replace(/\b[0-9a-f]{7,40}\b/gi, "<sha>")
+    .replace(/\d+/g, "<n>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Herhaalt een doel zichzelf? Gemeten over zijn statusovergangen (jarvis.activiteit, soort status).
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * D-20261107-225515647 ging op 2026-11-13/14 drie keer van samengevoegd naar klaar met exact dezelfde
+ * reden, telkens nadat de eigenaar het had heropend. En een doel waarvan de pagina het bouwmerk niet
+ * draagt, ging zonder grens terug naar bezig met "productie na N min niet in orde". Geen van beide
+ * werd ergens opgemerkt: elke ronde zag alleen zichzelf.
+ *
+ * Alleen overgangen MET een reden tellen (een "bezig → review" zonder reden is gewoon werk). Wat per
+ * ronde verschilt — minuten, rondenummers, commits — telt niet als verschil.
+ */
+export function herhaling(overgangen: readonly { readonly tekst: string }[]): Herhaling {
+  const tel = new Map<string, number>();
+  for (const o of overgangen) {
+    if (!/→[^:]*:/.test(o.tekst)) continue;
+    const n = normaliseerOvergang(o.tekst);
+    tel.set(n, (tel.get(n) ?? 0) + 1);
+  }
+  let tekst = "";
+  let aantal = 0;
+  for (const [t, a] of tel) if (a > aantal) [tekst, aantal] = [t, a];
+  const besluit = aantal >= HERHALING_MAX ? "vast" : aantal >= HERHALING_DREMPEL ? "andere-aanpak" : "door";
+  return { aantal, tekst, besluit };
 }

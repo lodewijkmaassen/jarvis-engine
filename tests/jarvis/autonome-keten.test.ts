@@ -172,7 +172,8 @@ describe("de acceptatietest uit de opdracht", () => {
     expect(eindoordeel(goed).klaar).toBe(true);
     expect(eindoordeel(gemengd).klaar).toBe(false);
     expect(eindoordeel(gemengd).samenvatting).toContain("B: niet-geslaagd");
-    expect(eindoordeel([]).klaar).toBe(true);
+    // Geen enkele meting is geen bewijs (D-20261115-095941788): vroeger heette dit klaar.
+    expect(eindoordeel([]).klaar).toBe(false);
   });
 
   it("scheidt niet gemeten van gezakt: beide houden tegen, maar niet op dezelfde manier", () => {
@@ -185,7 +186,7 @@ describe("de acceptatietest uit de opdracht", () => {
     expect(eindoordeel(onmeetbaar).onmeetbaar).toBe(true);
     expect(eindoordeel(gezakt).klaar).toBe(false);
     expect(eindoordeel(gezakt).onmeetbaar).toBe(false);
-    expect(eindoordeel([]).onmeetbaar).toBe(false);
+    expect(eindoordeel([]).onmeetbaar).toBe(true);
   });
 });
 
