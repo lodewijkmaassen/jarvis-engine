@@ -236,11 +236,97 @@ export function eindoordeel(uitkomsten: readonly AcceptatieUitkomst[]): {
   readonly onmeetbaar: boolean;
   readonly samenvatting: string;
 } {
-  if (uitkomsten.length === 0) return { klaar: true, onmeetbaar: false, samenvatting: "geen expliciete acceptatietest in het doel" };
+  // Geen enkele meting is geen bewijs. Stond hier `klaar: true`, en dat was precies de weg waarlangs een
+  // samengevoegd doel zonder acceptatietest klaar heette (D-20261115-095941788).
+  if (uitkomsten.length === 0) return { klaar: false, onmeetbaar: true, samenvatting: "er is geen enkele acceptatietest uitgevoerd; zonder meting is er geen bewijs" };
   const regels = uitkomsten.map((u) => `${u.id}: ${u.staat} — ${u.reden}`);
   return {
     klaar: uitkomsten.every((u) => u.staat === "geslaagd"),
     onmeetbaar: uitkomsten.some((u) => u.staat === "niet-meetbaar"),
     samenvatting: regels.join(" | ").slice(0, 1800),
   };
+}
+
+/** De id van de test die de keten zelf afleidt als de opdracht er geen noemt. */
+export const AFGELEIDE_TEST_ID = "eindresultaat";
+
+/**
+ * De acceptatietest die de keten zelf afleidt uit de opdracht, als de eigenaar er geen schreef.
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * Een doel zonder expliciete acceptatietest ging naar klaar zodra de pull request was samengevoegd
+ * (en de pagina, als er een acceptatie-URL was, een bouwmerk droeg). De uitkomst luidde letterlijk
+ * "samengevoegd; het doel noemt geen acceptatie-URL en geen expliciete acceptatietest". Gemeten op
+ * 2026-11-13/14 aan D-20261107-225515647: drie keer heropend door de eigenaar, drie keer binnen een
+ * kwartier weer klaar op exact dezelfde grond — een technische tussenstap die als eindresultaat gold.
+ *
+ * Een ontbrekend criterium is geen reden om níet te meten maar om het af te leiden: het eindresultaat
+ * dat de opdracht beschrijft ís het criterium. De beoordelaar (een ander model dan de bouwer) krijgt de
+ * opdracht als context en toetst het bewijs eraan. Een samenvoeging, een uitrol of een HTTP 200 telt
+ * daarbij uitdrukkelijk niet als bewijs.
+ */
+export function afgeleideAcceptatieTest(d: {
+  readonly acceptatie_url: string | null;
+  readonly pr: { readonly nummer?: number } | null;
+}): AcceptatieTest {
+  const url = (d.acceptatie_url ?? "").trim();
+  const tekst = [
+    "Het beoogde eindresultaat van de opdracht is aantoonbaar bereikt. De opdracht noemt zelf geen acceptatietest;",
+    "leid de eisen af uit de opdracht (het gewenste eindresultaat en de acceptatie die zij beschrijft) en toets elke eis aan het bewijs.",
+    "Een samengevoegde pull request, een geslaagde uitrol, een groene build of een HTTP 200 is op zichzelf GEEN bewijs:",
+    "het bewijs moet laten zien dat wat de opdracht vraagt werkelijk bestaat of werkt (de inhoud van de pagina, de gewijzigde code",
+    "en de tests die het gedrag aantonen). Ontbreekt dat voor een wezenlijke eis, dan is de test niet geslaagd.",
+  ].join(" ");
+  const nummer = d.pr?.nummer;
+  return {
+    id: AFGELEIDE_TEST_ID,
+    soort: url !== "" ? "http" : "bewijs",
+    tekst,
+    vraag: null,
+    url: url !== "" ? url : null,
+    onderwerp: typeof nummer === "number" && Number.isInteger(nummer) && nummer > 0 ? `#${nummer}` : null,
+    volatiel: false,
+  };
+}
+
+/**
+ * De tests waarop een doel wordt afgemaakt: die de eigenaar schreef, of anders de afgeleide.
+ * Nooit leeg — daarmee is er geen weg meer naar klaar zonder meting.
+ */
+export function testsVoorDoel(d: {
+  readonly opdracht: string;
+  readonly acceptatie_url: string | null;
+  readonly pr: { readonly nummer?: number } | null;
+}): readonly AcceptatieTest[] {
+  const expliciet = leesAcceptatieTests(d.opdracht);
+  return expliciet.length > 0 ? expliciet : [afgeleideAcceptatieTest(d)];
+}
+
+/** Zoveel tekens van de inhoud van de pull request gaan als bewijs mee; de rest van het bewijs blijft passen. */
+export const PR_BEWIJS_TEKENS = 12_000;
+
+/**
+ * Wat de pull request van een doel werkelijk verandert, als bewijsblok: titel, beschrijving en de
+ * gewijzigde bestanden met het begin van hun diff. Zonder dit blok zag de beoordelaar bij een doel
+ * zonder acceptatie-URL alleen de administratie (wie samenvoegde, wanneer) en nooit wát er gebouwd is
+ * — en dan valt een functioneel eindresultaat niet te toetsen.
+ */
+export function bouwPrBewijs(
+  pr: { readonly repo: string; readonly nummer: number; readonly titel: string; readonly tekst: string },
+  bestanden: readonly { readonly naam: string; readonly status: string; readonly erbij: number; readonly eraf: number; readonly patch: string | null }[],
+): string {
+  const kop = [
+    `inhoud van pull request ${pr.repo}#${pr.nummer} (zojuist gelezen via de GitHub-API):`,
+    `titel: ${pr.titel}`,
+    `beschrijving:\n${pr.tekst.trim().slice(0, 3000) || "(leeg)"}`,
+    `gewijzigde bestanden (${bestanden.length}):`,
+    ...bestanden.map((b) => `- ${b.naam} (${b.status}, +${b.erbij} -${b.eraf})`),
+  ].join("\n");
+  const diffs = bestanden
+    .filter((b) => b.patch !== null && b.patch !== "")
+    .map((b) => `--- ${b.naam}\n${(b.patch ?? "").slice(0, 1500)}`)
+    .join("\n");
+  const geheel = diffs === "" ? kop : `${kop}\n\nbegin van de diff per bestand:\n${diffs}`;
+  return geheel.length > PR_BEWIJS_TEKENS ? `${geheel.slice(0, PR_BEWIJS_TEKENS)}\n… [afgekapt]` : geheel;
 }
