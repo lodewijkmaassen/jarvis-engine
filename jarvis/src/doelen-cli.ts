@@ -483,7 +483,33 @@ function herhalingsZin(h: Herhaling): string {
 async function leesPrBewijs(token: string, d: Doel): Promise<string | null> {
   const repo = (d.pr?.repo ?? "").trim();
   const nummer = d.pr?.nummer;
-  if (repo === "" || typeof nummer !== "number") return null;
+  if (repo === "") return null;
+  // Eerst de MERGE-COMMIT, niet de pull request. De eindcontrole draait met `contents: read` en mag
+  // daarmee commits lezen; pull requests vragen `pull-requests: read`, dat deze job niet heeft. Gemeten
+  // op 2026-11-16: het bewijsblok bleef daardoor leeg en de beoordelaar zag nooit wát er gebouwd was —
+  // ook niet bij een doel waarvan de samenvoeging exact deed wat de opdracht vroeg. De merge-commit
+  // draagt dezelfde bestanden en diffs, en vraagt geen recht erbij.
+  const merge = (d.pr?.merge_sha ?? "").trim();
+  if (merge !== "") {
+    const c = await github(token, "GET", `/repos/${repo}/commits/${merge}`);
+    if (c.status === 200) {
+      const l = c.lading as { commit?: { message?: string }; files?: Record<string, unknown>[] };
+      const regels = String(l.commit?.message ?? "").split("\n");
+      const bestanden = (l.files ?? []).map((b) => ({
+        naam: String(b["filename"] ?? ""),
+        status: String(b["status"] ?? ""),
+        erbij: Number(b["additions"] ?? 0),
+        eraf: Number(b["deletions"] ?? 0),
+        patch: typeof b["patch"] === "string" ? b["patch"] : null,
+      }));
+      return bouwPrBewijs(
+        { repo, nummer: typeof nummer === "number" ? nummer : 0, titel: regels[0] ?? "", tekst: regels.slice(1).join("\n").trim() },
+        bestanden,
+        `inhoud van de samenvoeging van dit doel (${repo}, merge-commit ${merge.slice(0, 7)}, zojuist gelezen via de GitHub-API):`,
+      );
+    }
+  }
+  if (typeof nummer !== "number") return null;
   try {
     const pr = await github(token, "GET", `/repos/${repo}/pulls/${nummer}`);
     const bestanden = await github(token, "GET", `/repos/${repo}/pulls/${nummer}/files?per_page=100`);
