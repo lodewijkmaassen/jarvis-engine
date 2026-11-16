@@ -315,9 +315,11 @@ export const PR_BEWIJS_TEKENS = 12_000;
 export function bouwPrBewijs(
   pr: { readonly repo: string; readonly nummer: number; readonly titel: string; readonly tekst: string },
   bestanden: readonly { readonly naam: string; readonly status: string; readonly erbij: number; readonly eraf: number; readonly patch: string | null }[],
+  /** Waar dit blok vandaan komt; standaard de pull request zelf. */
+  herkomst: string | null = null,
 ): string {
   const kop = [
-    `inhoud van pull request ${pr.repo}#${pr.nummer} (zojuist gelezen via de GitHub-API):`,
+    herkomst ?? `inhoud van pull request ${pr.repo}#${pr.nummer} (zojuist gelezen via de GitHub-API):`,
     `titel: ${pr.titel}`,
     `beschrijving:\n${pr.tekst.trim().slice(0, 3000) || "(leeg)"}`,
     `gewijzigde bestanden (${bestanden.length}):`,

@@ -185,3 +185,34 @@ describe("7. bestaande uitvoering is niet verslechterd", () => {
     expect(groot).toMatch(/\[afgekapt\]$/);
   });
 });
+
+/**
+ * Het bewijsblok komt uit de merge-commit, niet uit de pull request.
+ *
+ * De eindcontrole draait met `contents: read`. Pull requests lezen vraagt
+ * `pull-requests: read`, dat die job niet heeft — gemeten op 2026-11-16: het
+ * blok bleef leeg en de beoordelaar zag nooit wát er gebouwd was, ook niet bij
+ * een doel waarvan de samenvoeging exact deed wat de opdracht vroeg. De
+ * merge-commit draagt dezelfde bestanden en diffs.
+ */
+describe("de herkomst van het bewijsblok staat erbij", () => {
+  const bestanden = [{ naam: "package.json", status: "modified", erbij: 1, eraf: 1, patch: "@@ -25,7 +25,7 @@\n-  oud\n+  nieuw" }];
+
+  it("noemt standaard de pull request", () => {
+    const b = bouwPrBewijs({ repo: "org/app", nummer: 336, titel: "Pin", tekst: "" }, bestanden);
+    expect(b).toContain("inhoud van pull request org/app#336");
+    expect(b).toContain("package.json");
+    expect(b).toContain("+  nieuw");
+  });
+
+  it("noemt de merge-commit wanneer het blok daaruit komt", () => {
+    const b = bouwPrBewijs(
+      { repo: "org/app", nummer: 336, titel: "Merge pull request #336", tekst: "" },
+      bestanden,
+      "inhoud van de samenvoeging van dit doel (org/app, merge-commit 847a059, zojuist gelezen via de GitHub-API):",
+    );
+    expect(b).toContain("merge-commit 847a059");
+    expect(b).not.toContain("inhoud van pull request");
+    expect(b).toContain("package.json");
+  });
+});
