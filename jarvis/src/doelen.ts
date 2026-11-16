@@ -221,6 +221,43 @@ export function ketenSpoor(o: {
  * nieuwste kandidaat hem één keer vervangen; daarna staat de tijd er wel bij
  * en gaat het vanzelf goed.
  */
+/**
+ * Wacht dit doel in review op de attestatie van zijn eigen pull request?
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * Een doel in `review` draagt de pull request waarop het wacht: open, dus
+ * zonder merge-sha en zonder tijdstip. `magVastleggen` heeft dan niets om
+ * tegen te vergelijken en zegt ja tegen elke samengevoegde kandidaat — ook
+ * tegen een oude samenvoeging van weken eerder. Het doel verlaat daarmee
+ * `review`, en de attestatie van de actuele pull request krijgt geen tweede
+ * kans: die wordt alleen gestart voor doelen in `review`.
+ *
+ * Gemeten op 2026-11-16 aan D-20261107-225515647 (WoordBattle): de attestatie
+ * van #335 liep anderhalve minuut te vroeg ("geen onafhankelijke review met
+ * oordeel GO op de kop", "de poort is nog niet klaar"), waarna de sweep in
+ * dezelfde ronde de merge van #331 van 7 november vastlegde. De eindcontrole
+ * beoordeelde vervolgens die oude code, zag geen werkende URL en stuurde het
+ * doel terug — vijf keer dezelfde overgang, en daarna vast.
+ *
+ * De regel is daarom: zolang een doel in review op zijn eigen pull request
+ * wacht, legt de sweep geen ANDERE samenvoeging vast. De samenvoeging van die
+ * pull request zelf wordt gewoon vastgelegd; daar verandert niets aan.
+ */
+export function wachtOpEigenSamenvoeging(o: {
+  readonly status: string;
+  /** De pull request die het doel nu draagt. */
+  readonly huidig: { readonly repo?: string; readonly nummer?: number } | null;
+  /** De samengevoegde pull request die de sweep wil vastleggen. */
+  readonly kandidaat: { readonly repo: string; readonly nummer: number };
+}): boolean {
+  if (o.status !== "review") return false;
+  const repo = (o.huidig?.repo ?? "").trim().toLowerCase();
+  const nummer = o.huidig?.nummer;
+  if (repo === "" || typeof nummer !== "number" || !Number.isInteger(nummer) || nummer <= 0) return false;
+  return repo !== o.kandidaat.repo.trim().toLowerCase() || nummer !== o.kandidaat.nummer;
+}
+
 export function magVastleggen(o: {
   /** De samenvoeging die het doel nu draagt, of null. */
   readonly huidig: { readonly merge_sha?: string; readonly merged_at?: string } | null;

@@ -22,7 +22,7 @@ import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
-import { herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, wachtOpEigenSamenvoeging, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
@@ -263,6 +263,12 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
       // een blokkade van Jarvis zélf ([fout] of [bevoegdheid]), en zij is gemeten met een ANDERE versie van de
       // keten dan de huidige. Is de keten niet veranderd, dan gebeurt er niets — en dat is wat het ping-pong
       // van 2026-11-07 tegenhoudt.
+      // Een doel in review wacht op de attestatie van zijn eigen pull request. Een ANDERE samenvoeging
+      // vastleggen haalt het uit review, en dan krijgt die attestatie geen tweede kans (RSK-0047).
+      if (wachtOpEigenSamenvoeging({ status: d.status, huidig: d.pr, kandidaat: { repo: slug, nummer: p.number } })) {
+        console.log(`jarvis doel: ${slug}#${p.number} wordt voor ${d.id} niet vastgelegd — het doel staat in review en wacht op de attestatie van ${d.pr?.repo ?? ""}#${d.pr?.nummer ?? "?"}`);
+        continue;
+      }
       const mag = magVastleggen({ huidig: d.pr, kandidaat: { merge_sha: p.merge_commit_sha, merged_at: p.merged_at } });
       if (!mag.mag) {
         // Dezelfde samenvoeging: alleen opnieuw beoordelen als de keten zelf is veranderd (RSK-0033).
