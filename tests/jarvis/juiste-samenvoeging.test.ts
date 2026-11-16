@@ -48,3 +48,31 @@ describe("een oudere samenvoeging verdringt nooit een nieuwere", () => {
     expect(magVastleggen({ huidig: OUD, kandidaat: { merge_sha: "e".repeat(40), merged_at: OUD.merged_at } }).mag).toBe(false);
   });
 });
+
+describe("een doel dat op een open pull request wacht, valt niet terug op een oude samenvoeging", () => {
+  const OUDE_PR = { repo: "voorbeeld/app", nummer: 331, ...OUD };
+  const OPEN = { repo: "voorbeeld/app", nummer: 335 };
+
+  it("weigert een oudere samenvoeging van een andere pull request", () => {
+    const uit = magVastleggen({ huidig: OPEN, kandidaat: OUDE_PR });
+    expect(uit.mag).toBe(false);
+    expect(uit.reden).toContain("voorbeeld/app#335");
+  });
+
+  it("weigert ook een nieuwere samenvoeging van een andere pull request", () => {
+    expect(magVastleggen({ huidig: OPEN, kandidaat: { repo: "voorbeeld/app", nummer: 340, ...NIEUW } }).mag).toBe(false);
+  });
+
+  it("weigert hetzelfde nummer in een andere repository", () => {
+    expect(magVastleggen({ huidig: OPEN, kandidaat: { repo: "voorbeeld/engine", nummer: 335, ...NIEUW } }).mag).toBe(false);
+  });
+
+  it("legt de samenvoeging van de pull request waarop het doel wacht wel vast", () => {
+    const uit = magVastleggen({ huidig: OPEN, kandidaat: { repo: "Voorbeeld/App", nummer: 335, ...NIEUW } });
+    expect(uit.mag).toBe(true);
+  });
+
+  it("laat een vastgelegde samenvoeging zich gewoon door een nieuwere vervangen", () => {
+    expect(magVastleggen({ huidig: OUDE_PR, kandidaat: { repo: "voorbeeld/app", nummer: 335, ...NIEUW } }).mag).toBe(true);
+  });
+});

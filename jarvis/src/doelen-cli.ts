@@ -263,7 +263,7 @@ async function vastleggen(sql: DbClient, token: string): Promise<number> {
       // een blokkade van Jarvis zélf ([fout] of [bevoegdheid]), en zij is gemeten met een ANDERE versie van de
       // keten dan de huidige. Is de keten niet veranderd, dan gebeurt er niets — en dat is wat het ping-pong
       // van 2026-11-07 tegenhoudt.
-      const mag = magVastleggen({ huidig: d.pr, kandidaat: { merge_sha: p.merge_commit_sha, merged_at: p.merged_at } });
+      const mag = magVastleggen({ huidig: d.pr, kandidaat: { repo: slug, nummer: p.number, merge_sha: p.merge_commit_sha, merged_at: p.merged_at } });
       if (!mag.mag) {
         // Dezelfde samenvoeging: alleen opnieuw beoordelen als de keten zelf is veranderd (RSK-0033).
         const zelfde = (d.pr?.merge_sha ?? "").toLowerCase() === p.merge_commit_sha.toLowerCase();

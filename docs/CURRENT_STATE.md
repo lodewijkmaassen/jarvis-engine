@@ -6,13 +6,13 @@
      worden door CI gedetecteerd en overschreven. Schrijf je toelichting
      onder het blok, niet erin. -->
 
-_Gegenereerd op 2026-11-15._
+_Gegenereerd op 2026-11-16._
 
 | Feit | Waarde |
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 63 |
+| Testbestanden | 64 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
