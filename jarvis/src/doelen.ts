@@ -222,11 +222,26 @@ export function ketenSpoor(o: {
  * en gaat het vanzelf goed.
  */
 export function magVastleggen(o: {
-  /** De samenvoeging die het doel nu draagt, of null. */
-  readonly huidig: { readonly merge_sha?: string; readonly merged_at?: string } | null;
+  /** De pull request die het doel nu draagt (samengevoegd of nog open), of null. */
+  readonly huidig: { readonly repo?: string; readonly nummer?: number; readonly merge_sha?: string; readonly merged_at?: string } | null;
   /** De nieuwste kandidaat uit deze ronde. */
-  readonly kandidaat: { readonly merge_sha: string; readonly merged_at: string };
+  readonly kandidaat: { readonly repo?: string; readonly nummer?: number; readonly merge_sha: string; readonly merged_at: string };
 }): { readonly mag: boolean; readonly reden: string } {
+  // Een doel dat naar een ANDERE, nog niet samengevoegde pull request wijst, wacht op die pull request.
+  // `doel zet <id> review --pr {repo, nummer}` legt zo'n verwijzing vast zonder merge_sha en zonder
+  // merged_at; zonder deze regel gold een oude samenvoeging van hetzelfde doel dan als "nieuwer" (er is
+  // geen tijd om tegen te vergelijken) en zette de sweep het doel terug op die oude samenvoeging, waarna
+  // de eindcontrole het op dat oude werk afsloot. Gemeten 2026-11-07 t/m 2026-11-16 aan
+  // D-20261107-225515647: vijf keer heropend, vijf keer binnen een ronde terug op dezelfde samenvoeging,
+  // en de pull requests met het nieuwe werk werden nooit beoordeeld.
+  const huidigNummer = o.huidig?.nummer;
+  const wachtOpOpen = typeof huidigNummer === "number" && huidigNummer > 0 && (o.huidig?.merge_sha ?? "") === "";
+  if (wachtOpOpen) {
+    const zelfdeRepo = (o.huidig?.repo ?? "").toLowerCase() === (o.kandidaat.repo ?? "").toLowerCase();
+    if (!(zelfdeRepo && o.kandidaat.nummer === huidigNummer)) {
+      return { mag: false, reden: `het doel wacht op ${o.huidig?.repo ?? ""}#${huidigNummer}, die nog niet is samengevoegd` };
+    }
+  }
   const huidigSha = (o.huidig?.merge_sha ?? "").toLowerCase();
   if (huidigSha === o.kandidaat.merge_sha.toLowerCase()) {
     return { mag: false, reden: "dezelfde samenvoeging als die het doel al draagt" };
