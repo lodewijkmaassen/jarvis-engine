@@ -303,8 +303,89 @@ export function testsVoorDoel(d: {
   return expliciet.length > 0 ? expliciet : [afgeleideAcceptatieTest(d)];
 }
 
-/** Zoveel tekens van de inhoud van de pull request gaan als bewijs mee; de rest van het bewijs blijft passen. */
-export const PR_BEWIJS_TEKENS = 12_000;
+/**
+ * Zoveel tekens van de inhoud van de pull request gaan als bewijs mee; de rest van het bewijs blijft passen.
+ * Het blok staat vooraan in het bewijs (dat als geheel op BEWIJS_TEKENS wordt afgekapt), dus dit is wat de
+ * beoordelaar in elk geval ziet.
+ */
+export const PR_BEWIJS_TEKENS = 20_000;
+
+/** Wat elk bestand minstens krijgt, ook als er veel bestanden zijn: genoeg om te zien wát er verandert. */
+const MIN_DIFF_PER_BESTAND = 400;
+
+/**
+ * Verdeelt een budget eerlijk over de diffs: een kleine diff gaat er helemaal in, wat hij overlaat gaat naar
+ * de grotere. Stond hier eerst een vaste 1500 tekens per bestand, en daarmee zag de beoordelaar van
+ * D-20261117-194518764 (Ideeën) alleen de navigatieregel van een diff van 7000 tekens, en van de test alleen
+ * de eerste helft — terwijl het hele bewijs ruim binnen het budget paste. Gezakt op "afgekapt", niet op het werk.
+ */
+export function verdeelDiffBudget(lengtes: readonly number[], budget: number): number[] {
+  const toegewezen = lengtes.map(() => 0);
+  let open = lengtes.map((_, i) => i).filter((i) => lengtes[i]! > 0);
+  let over = Math.max(0, budget);
+  while (open.length > 0 && over > 0) {
+    const deel = Math.floor(over / open.length);
+    if (deel === 0) break;
+    const nogOpen: number[] = [];
+    for (const i of open) {
+      const nodig = lengtes[i]! - toegewezen[i]!;
+      const krijgt = Math.min(nodig, deel);
+      toegewezen[i]! += krijgt;
+      over -= krijgt;
+      if (toegewezen[i]! < lengtes[i]!) nogOpen.push(i);
+    }
+    open = nogOpen;
+  }
+  return toegewezen.map((t, i) => Math.min(lengtes[i]!, Math.max(t, Math.min(lengtes[i]!, MIN_DIFF_PER_BESTAND))));
+}
+
+/** Eén commit zoals de GitHub-API hem geeft, teruggebracht tot wat het bewijs nodig heeft. */
+export interface DoelCommit {
+  readonly sha: string;
+  readonly bericht: string;
+  readonly ouders: number;
+  readonly bestanden: readonly { readonly naam: string; readonly status: string; readonly erbij: number; readonly eraf: number; readonly patch: string | null }[];
+}
+
+/** Draagt deze commit de trailer van dit doel? Een samenvoeging (twee ouders) telt niet: die herhaalt alleen. */
+export function isCommitVanDoel(c: { readonly bericht: string; readonly ouders: number }, doelId: string): boolean {
+  if (c.ouders > 1) return false;
+  const esc = doelId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^Jarvis-Task:\\s*${esc}\\s*$`, "m").test(c.bericht);
+}
+
+/**
+ * Het werk van een heel doel, over al zijn pull requests heen: de commits met zijn trailer, oudste eerst,
+ * per bestand samengevoegd. Een doel dat na een gezakte acceptatietest met een tweede pull request wordt
+ * hersteld, wijst daarna naar die tweede samenvoeging; zonder dit blok zag de beoordelaar alleen het herstel
+ * en niet meer het werk waar de opdracht om vroeg.
+ */
+export function werkVanDoel(
+  doelId: string,
+  commits: readonly DoelCommit[],
+): { readonly naam: string; readonly status: string; readonly erbij: number; readonly eraf: number; readonly patch: string | null }[] {
+  const per = new Map<string, { naam: string; status: string; erbij: number; eraf: number; patches: string[] }>();
+  for (const c of commits) {
+    if (!isCommitVanDoel(c, doelId)) continue;
+    for (const b of c.bestanden) {
+      const al = per.get(b.naam);
+      if (al === undefined) {
+        per.set(b.naam, { naam: b.naam, status: b.status, erbij: b.erbij, eraf: b.eraf, patches: b.patch ? [b.patch] : [] });
+      } else {
+        al.erbij += b.erbij;
+        al.eraf += b.eraf;
+        if (b.patch) al.patches.push(b.patch);
+      }
+    }
+  }
+  return [...per.values()].map((b) => ({
+    naam: b.naam,
+    status: b.status,
+    erbij: b.erbij,
+    eraf: b.eraf,
+    patch: b.patches.length === 0 ? null : b.patches.join("\n"),
+  }));
+}
 
 /**
  * Wat de pull request van een doel werkelijk verandert, als bewijsblok: titel, beschrijving en de
@@ -325,10 +406,17 @@ export function bouwPrBewijs(
     `gewijzigde bestanden (${bestanden.length}):`,
     ...bestanden.map((b) => `- ${b.naam} (${b.status}, +${b.erbij} -${b.eraf})`),
   ].join("\n");
-  const diffs = bestanden
-    .filter((b) => b.patch !== null && b.patch !== "")
-    .map((b) => `--- ${b.naam}\n${(b.patch ?? "").slice(0, 1500)}`)
+  const metDiff = bestanden.filter((b) => b.patch !== null && b.patch !== "");
+  // Het budget voor de diffs is wat er na de kop en de koppen per bestand over is; eerlijk verdeeld.
+  const vast = kop.length + 40 + metDiff.reduce((n, b) => n + b.naam.length + 100, 0);
+  const ruimte = verdeelDiffBudget(metDiff.map((b) => (b.patch ?? "").length), PR_BEWIJS_TEKENS - vast);
+  const diffs = metDiff
+    .map((b, i) => {
+      const patch = b.patch ?? "";
+      const n = ruimte[i]!;
+      return `--- ${b.naam}\n${n >= patch.length ? patch : `${patch.slice(0, n)}\n… [diff van dit bestand afgekapt na ${n} van ${patch.length} tekens]`}`;
+    })
     .join("\n");
-  const geheel = diffs === "" ? kop : `${kop}\n\nbegin van de diff per bestand:\n${diffs}`;
+  const geheel = diffs === "" ? kop : `${kop}\n\ndiff per bestand:\n${diffs}`;
   return geheel.length > PR_BEWIJS_TEKENS ? `${geheel.slice(0, PR_BEWIJS_TEKENS)}\n… [afgekapt]` : geheel;
 }
