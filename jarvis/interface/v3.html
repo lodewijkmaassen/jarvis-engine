@@ -162,7 +162,7 @@
 
   // Een project is een vaste plek; zijn doelen zijn gewone doelen waarvan de opdracht begint met "Project: <sleutel>".
   // Een project kan subprojecten hebben; een doel van een subproject begint met "Project: <project>/<subproject>".
-  const PROJECTEN = [
+  const VASTE_PROJECTEN = [
     { sleutel: "kasboek", naam: "Kasboek", omschrijving: "Het bestaande Kasboek-project: kasstromen en saldo, met eigen repository en omgeving.", repo: "lodewijkmaassen/kasboek" },
     { sleutel: "tovas-flow", naam: "ToVas Flow", omschrijving: "ToVas Flow: van gemiste oproep tot gekwalificeerde lead, offerte en review, met eigen repository en omgeving.", repo: "lodewijkmaassen/tovas-flow",
       subprojecten: [
@@ -176,6 +176,31 @@
         { sleutel: "woordbattle", naam: "WoordBattle", omschrijving: "Een woordspel om spelenderwijs woorden te leren." },
       ] },
   ];
+  // Projecten en subprojecten die de eigenaar zelf aanmaakt (D-20261117-194904457). Net als een idee is dat een bericht
+  // van de eigenaar met status 'verwerkt' (geen wachtrij pakt het op, geen nieuwe tabel of migratie), hier met
+  // context.projectdef = { sleutel, naam, omschrijving, repo?, ouder? }. Met ouder is het een subproject van dat project.
+  // Een sleutel die al bestaat telt niet: een vast project of een eerder aangemaakt project wint.
+  // projecten:begin
+  const sleutelVan = (naam) => String(naam ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  function bouwProjecten(vast, berichten, objectVan) {
+    const lijst = vast.map((p) => ({ ...p, subprojecten: [...(p.subprojecten ?? [])] }));
+    const defs = berichten.filter((b) => b.van === "eigenaar").map((b) => objectVan(b.context).projectdef)
+      .filter((d) => d && typeof d.sleutel === "string" && /^[a-z0-9-]+$/.test(d.sleutel) && typeof d.naam === "string" && d.naam.trim());
+    for (const d of defs.filter((d) => !d.ouder)) {
+      if (lijst.some((p) => p.sleutel === d.sleutel)) continue;
+      lijst.push({ sleutel: d.sleutel, naam: d.naam, omschrijving: d.omschrijving ?? "", ...(d.repo ? { repo: d.repo } : {}), subprojecten: [] });
+    }
+    for (const d of defs.filter((d) => d.ouder)) {
+      const p = lijst.find((x) => x.sleutel === d.ouder);
+      if (!p || p.subprojecten.some((sp) => sp.sleutel === d.sleutel)) continue;
+      p.subprojecten.push({ sleutel: d.sleutel, naam: d.naam, omschrijving: d.omschrijving ?? "" });
+    }
+    return lijst;
+  }
+  // projecten:einde
+  let PROJECTEN = bouwProjecten(VASTE_PROJECTEN, [], () => ({}));
+  // Wat de eigenaar in een projectformulier typte, per formulier; een verversing op de klok tekent het opnieuw.
+  const projectConcept = {};
   // Volledige plek van een doel: "kasboek", of "tovas-flow/offerte-opvolging" voor een subproject.
   // Bewust precies één subniveau: de eigenaar vroeg project → subproject. Een dieper label ("a/b/c") telt
   // nergens mee; een derde niveau is een nieuwe ontwerpbeslissing, geen uitbreiding van deze regel.
@@ -266,6 +291,7 @@
     if (doelen.error) { melding(`Niet te lezen: ${doelen.error.message}`); return; }
     alleDoelen = doelen.data;
     await laadBeslissingen();
+    PROJECTEN = bouwProjecten(VASTE_PROJECTEN, berichten, objectVan);
     const lopend = splits(alleDoelen).lopend;
     $("status").textContent = `bijgewerkt ${new Date().toLocaleTimeString("nl-NL")} · ${lopend.length} lopend`;
     teken();
@@ -531,7 +557,39 @@
         return `<a class="projectkaart" href="#/projecten/${esc(p.sleutel)}"><h3>${esc(p.naam)}</h3><div class="klein">${esc(p.omschrijving)}</div>
           ${subs.length ? `<div class="klein">Subprojecten: ${subs.map((s) => esc(s.naam)).join(" · ")}</div>` : ""}
           ${telrij(t)}</a>`;
-      }).join("")}</div>`;
+      }).join("")}</div>
+      ${projectFormulier(null)}`;
+    koppelProjectFormulier(null);
+  }
+
+  // Formulier voor een nieuw project (ouder = null) of een nieuw subproject van project ouder.
+  function projectFormulier(ouder) {
+    const k = ouder ? ouder.sleutel : "", c = projectConcept[k] ?? {};
+    return `<div class="invoer"><h2>${ouder ? `Nieuw subproject voor ${esc(ouder.naam)}` : "Nieuw project"}</h2>
+        <div class="rij"><input id="pn" placeholder="Naam" aria-label="Naam van het ${ouder ? "subproject" : "project"}" value="${esc(c.naam ?? "")}">
+          ${ouder ? "" : `<input id="pr" placeholder="Repository (eigenaar/naam), optioneel" aria-label="Repository, optioneel" value="${esc(c.repo ?? "")}">`}
+          <textarea class="breed" id="po" rows="2" placeholder="Korte omschrijving" aria-label="Omschrijving">${esc(c.omschrijving ?? "")}</textarea></div>
+        <button class="hoofd" id="pv">${ouder ? "Maak subproject" : "Maak project"}</button></div>`;
+  }
+  function koppelProjectFormulier(ouder) {
+    const k = ouder ? ouder.sleutel : "";
+    const c = (projectConcept[k] ??= {});
+    $("pn").oninput = (ev) => { c.naam = ev.target.value; };
+    $("po").oninput = (ev) => { c.omschrijving = ev.target.value; };
+    if ($("pr")) $("pr").oninput = (ev) => { c.repo = ev.target.value; };
+    $("pv").onclick = () => zeg(async () => {
+      const naam = $("pn").value.trim(), omschrijving = $("po").value.trim(), repo = $("pr") ? $("pr").value.trim() : "";
+      const sleutel = sleutelVan(naam);
+      if (!sleutel) throw new Error("Geef het " + (ouder ? "subproject" : "project") + " eerst een naam.");
+      if (repo && !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo)) throw new Error("Schrijf de repository als eigenaar/naam, of laat hem leeg.");
+      const bestaand = ouder ? (ouder.subprojecten ?? []) : PROJECTEN;
+      if (bestaand.some((x) => x.sleutel === sleutel)) throw new Error(`Er is al een ${ouder ? "subproject" : "project"} met de naam ${naam}.`);
+      const projectdef = { sleutel, naam, omschrijving, ...(repo ? { repo } : {}), ...(ouder ? { ouder: ouder.sleutel } : {}) };
+      const r = await client.from("berichten").insert({ van: "eigenaar", tekst: (ouder ? `Nieuw subproject van ${ouder.naam}: ` : "Nieuw project: ") + naam,
+        status: "verwerkt", verwerkt_op: new Date().toISOString(), verwerking: "Project van de eigenaar; geen opdracht.", context: { projectdef } });
+      if (r.error) throw r.error;
+      delete projectConcept[k];
+    });
   }
 
   const telrij = (t) => `<div class="telrij"><span class="badge">${t.lopend.length} lopend</span><span class="badge ${t.vast.length ? "MISLUKT" : ""}">${t.vast.length} vastgelopen</span><span class="badge KLAAR">${t.klaar.length} klaar</span></div>`;
@@ -565,8 +623,9 @@
           ${telrij(splits(doelenVanPlek(p.sleutel + "/" + sp.sleutel)))}</a>`).join("")}</div>`
       : "";
     // Op de projectpagina staan alle doelen van het project, ook die van zijn subprojecten.
-    weergavePlek({ terug: "#/projecten", terugLabel: "Projecten", naam: p.naam, omschrijving: p.omschrijving, repo: p.repo, extra,
+    weergavePlek({ terug: "#/projecten", terugLabel: "Projecten", naam: p.naam, omschrijving: p.omschrijving, repo: p.repo, extra: extra + projectFormulier(p),
       doelen: doelenVanProject(p), plek: { naam: p.naam, label: p.sleutel } });
+    koppelProjectFormulier(p);
   }
 
   function weergaveSubproject(p, sp) {
