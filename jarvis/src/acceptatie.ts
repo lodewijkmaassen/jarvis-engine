@@ -388,6 +388,24 @@ export function werkVanDoel(
 }
 
 /**
+ * Het werk van een doel in een tweede repository: de engine. Een doel in een project dat de engine
+ * gebruikt, wordt vaak in de engine gebouwd; de pull request in het project werkt dan alleen de
+ * engine-pin bij. Wie alleen die pull request leest, ziet twee regels in package.json en niet wat er
+ * gebouwd is — en kan het eindresultaat dus niet toetsen. Gelezen wordt tot en met de pin die het
+ * project nu draagt, zodat alleen werk meetelt dat werkelijk in het project zit.
+ */
+export function leesEngineWerkMee(repo: string, engineRepo: string | null, pin: string | null): boolean {
+  const r = repo.trim().toLowerCase();
+  const e = (engineRepo ?? "").trim().toLowerCase();
+  return r !== "" && e !== "" && r !== e && (pin ?? "").trim() !== "";
+}
+
+/** Bestanden uit een andere repository krijgen die repository voor hun naam, zodat het bewijs niet verwart. */
+export function metHerkomst<T extends { readonly naam: string }>(repo: string, bestanden: readonly T[]): T[] {
+  return bestanden.map((b) => ({ ...b, naam: `${repo}: ${b.naam}` }));
+}
+
+/**
  * Wat de pull request van een doel werkelijk verandert, als bewijsblok: titel, beschrijving en de
  * gewijzigde bestanden met het begin van hun diff. Zonder dit blok zag de beoordelaar bij een doel
  * zonder acceptatie-URL alleen de administratie (wie samenvoegde, wanneer) en nooit wát er gebouwd is

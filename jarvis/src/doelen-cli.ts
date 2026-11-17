@@ -17,7 +17,7 @@ import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
 import { ACTIVITEIT_SQL, DOEL_ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
-import { bouwPrBewijs, eindoordeel, isCommitVanDoel, testsVoorDoel, werkVanDoel, type DoelCommit } from "./acceptatie";
+import { bouwPrBewijs, eindoordeel, isCommitVanDoel, leesEngineWerkMee, metHerkomst, testsVoorDoel, werkVanDoel, type DoelCommit } from "./acceptatie";
 import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
@@ -401,7 +401,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       //    keten zelf uit de opdracht afleidt. Een samenvoeging of een bouwmerk is nooit genoeg om klaar te
       //    heten; er is altijd een meting van het eindresultaat (D-20261115-095941788).
       const tests = testsVoorDoel(d);
-      const prBewijs = await leesPrBewijs(token, d);
+      const prBewijs = await leesPrBewijs(token, d, engineRepo, enginePin);
       // Niet de klok maar de versie. Een uitrol kreeg een vast halfuur voordat er werd gemeten, omdat
       // een test anders de oude pagina meet. Meet een doel geen pagina maar de keten zelf, dan is er
       // geen pagina om op te wachten maar een versie om te controleren — en die kent deze run precies:
@@ -522,7 +522,7 @@ async function leesWerkVanDoel(
   return { aantal: commits.length, bestanden: werkVanDoel(doelId, commits) };
 }
 
-async function leesPrBewijs(token: string, d: Doel): Promise<string | null> {
+async function leesPrBewijs(token: string, d: Doel, engineRepo: string | null = null, enginePin: string | null = null): Promise<string | null> {
   const repo = (d.pr?.repo ?? "").trim();
   const nummer = d.pr?.nummer;
   if (repo === "") return null;
@@ -542,11 +542,22 @@ async function leesPrBewijs(token: string, d: Doel): Promise<string | null> {
       // acceptatietest met een tweede pull request is hersteld, wijst nu naar die tweede. Niet te lezen
       // valt terug op de samenvoeging zelf.
       const werk = await leesWerkVanDoel(token, repo, merge, d.id).catch(() => null);
+      // Is het doel (deels) in de engine gebouwd, dan hoort dat werk erbij; anders ziet de beoordelaar
+      // alleen een pin-wijziging (D-20261117-194904457). Niet te lezen valt terug op het eigen werk.
+      let engineBestanden: ReturnType<typeof werkVanDoel> = [];
+      let ook = "";
+      if (engineRepo !== null && enginePin !== null && leesEngineWerkMee(repo, engineRepo, enginePin)) {
+        const engine = await leesWerkVanDoel(token, engineRepo, enginePin, d.id).catch(() => null);
+        if (engine !== null && engine.aantal > 0) {
+          engineBestanden = metHerkomst(engineRepo, engine.bestanden);
+          ook = `, plus de ${engine.aantal} commit(s) met dezelfde trailer in ${engineRepo} tot en met de engine-pin ${enginePin.slice(0, 7)}`;
+        }
+      }
       if (werk !== null && werk.aantal > 0 && werk.bestanden.length > 0) {
         return bouwPrBewijs(
           { repo, nummer: typeof nummer === "number" ? nummer : 0, titel: regels[0] ?? "", tekst: regels.slice(1).join("\n").trim() },
-          werk.bestanden,
-          `inhoud van al het werk van dit doel (${repo}: de ${werk.aantal} commit(s) met de trailer Jarvis-Task: ${d.id} tot en met merge-commit ${merge.slice(0, 7)}, oudste eerst en per bestand samengevoegd, zojuist gelezen via de GitHub-API):`,
+          [...engineBestanden, ...werk.bestanden],
+          `inhoud van al het werk van dit doel (${repo}: de ${werk.aantal} commit(s) met de trailer Jarvis-Task: ${d.id} tot en met merge-commit ${merge.slice(0, 7)}${ook}, oudste eerst en per bestand samengevoegd, zojuist gelezen via de GitHub-API):`,
         );
       }
       return bouwPrBewijs(
