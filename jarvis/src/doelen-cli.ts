@@ -17,7 +17,7 @@ import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
 import { ACTIVITEIT_SQL, DOEL_ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
-import { bouwPrBewijs, eindoordeel, testsVoorDoel } from "./acceptatie";
+import { bouwPrBewijs, eindoordeel, isCommitVanDoel, testsVoorDoel, werkVanDoel, type DoelCommit } from "./acceptatie";
 import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
@@ -480,6 +480,48 @@ function herhalingsZin(h: Herhaling): string {
 }
 
 /** De inhoud van de pull request van een doel als bewijs, of null als die niet te lezen is. */
+/** Eén gewijzigd bestand uit de GitHub-API, teruggebracht tot wat het bewijs nodig heeft. */
+function leesBestand(b: Record<string, unknown>): { naam: string; status: string; erbij: number; eraf: number; patch: string | null } {
+  return {
+    naam: String(b["filename"] ?? ""),
+    status: String(b["status"] ?? ""),
+    erbij: Number(b["additions"] ?? 0),
+    eraf: Number(b["deletions"] ?? 0),
+    patch: typeof b["patch"] === "string" ? b["patch"] : null,
+  };
+}
+
+/** Hoeveel commits van één doel er hoogstens worden gelezen; elk is één API-aanroep. */
+const MAX_DOEL_COMMITS = 15;
+
+/** De commits van een doel in de geschiedenis tot en met `tot`, oudste eerst, met hun bestanden. */
+async function leesWerkVanDoel(
+  token: string,
+  repo: string,
+  tot: string,
+  doelId: string,
+): Promise<{ readonly aantal: number; readonly bestanden: ReturnType<typeof werkVanDoel> } | null> {
+  const lijst = await github(token, "GET", `/repos/${repo}/commits?sha=${tot}&per_page=100`);
+  if (lijst.status !== 200 || !Array.isArray(lijst.lading)) return null;
+  const kandidaten = (lijst.lading as Record<string, unknown>[])
+    .map((c) => ({
+      sha: String(c["sha"] ?? ""),
+      bericht: String((c["commit"] as { message?: string } | undefined)?.message ?? ""),
+      ouders: Array.isArray(c["parents"]) ? (c["parents"] as unknown[]).length : 1,
+    }))
+    .filter((c) => c.sha !== "" && isCommitVanDoel(c, doelId))
+    .slice(0, MAX_DOEL_COMMITS)
+    .reverse();
+  const commits: DoelCommit[] = [];
+  for (const k of kandidaten) {
+    const c = await github(token, "GET", `/repos/${repo}/commits/${k.sha}`);
+    if (c.status !== 200) return null;
+    const files = (c.lading as { files?: Record<string, unknown>[] }).files ?? [];
+    commits.push({ ...k, bestanden: files.map(leesBestand) });
+  }
+  return { aantal: commits.length, bestanden: werkVanDoel(doelId, commits) };
+}
+
 async function leesPrBewijs(token: string, d: Doel): Promise<string | null> {
   const repo = (d.pr?.repo ?? "").trim();
   const nummer = d.pr?.nummer;
@@ -495,13 +537,18 @@ async function leesPrBewijs(token: string, d: Doel): Promise<string | null> {
     if (c.status === 200) {
       const l = c.lading as { commit?: { message?: string }; files?: Record<string, unknown>[] };
       const regels = String(l.commit?.message ?? "").split("\n");
-      const bestanden = (l.files ?? []).map((b) => ({
-        naam: String(b["filename"] ?? ""),
-        status: String(b["status"] ?? ""),
-        erbij: Number(b["additions"] ?? 0),
-        eraf: Number(b["deletions"] ?? 0),
-        patch: typeof b["patch"] === "string" ? b["patch"] : null,
-      }));
+      const bestanden = (l.files ?? []).map(leesBestand);
+      // Het werk van het hele doel, niet alleen van deze samenvoeging: een doel dat na een gezakte
+      // acceptatietest met een tweede pull request is hersteld, wijst nu naar die tweede. Niet te lezen
+      // valt terug op de samenvoeging zelf.
+      const werk = await leesWerkVanDoel(token, repo, merge, d.id).catch(() => null);
+      if (werk !== null && werk.aantal > 0 && werk.bestanden.length > 0) {
+        return bouwPrBewijs(
+          { repo, nummer: typeof nummer === "number" ? nummer : 0, titel: regels[0] ?? "", tekst: regels.slice(1).join("\n").trim() },
+          werk.bestanden,
+          `inhoud van al het werk van dit doel (${repo}: de ${werk.aantal} commit(s) met de trailer Jarvis-Task: ${d.id} tot en met merge-commit ${merge.slice(0, 7)}, oudste eerst en per bestand samengevoegd, zojuist gelezen via de GitHub-API):`,
+        );
+      }
       return bouwPrBewijs(
         { repo, nummer: typeof nummer === "number" ? nummer : 0, titel: regels[0] ?? "", tekst: regels.slice(1).join("\n").trim() },
         bestanden,

@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { AFGELEIDE_TEST_ID, afgeleideAcceptatieTest, bouwPrBewijs, eindoordeel, leesAcceptatieTests, testsVoorDoel } from "../../jarvis/src/acceptatie";
+import { AFGELEIDE_TEST_ID, afgeleideAcceptatieTest, bouwPrBewijs, eindoordeel, PR_BEWIJS_TEKENS, leesAcceptatieTests, testsVoorDoel } from "../../jarvis/src/acceptatie";
 import { voerAcceptatieUit } from "../../jarvis/src/doel-acceptatie";
 import { dispatchNodig, herhaling, HERHALING_DREMPEL, HERHALING_MAX, normaliseerOvergang, type Doel, type Herhaling } from "../../jarvis/src/doelen";
 import type { DbClient } from "../../jarvis/src/opdrachten";
@@ -181,7 +181,7 @@ describe("7. bestaande uitvoering is niet verslechterd", () => {
 
   it("kapt een grote pull request af zodat het overige bewijs blijft passen", () => {
     const groot = bouwPrBewijs({ repo: "r/x", nummer: 1, titel: "t", tekst: "" }, Array.from({ length: 200 }, (_, i) => ({ naam: `f${i}.ts`, status: "added", erbij: 1, eraf: 0, patch: "+".repeat(1500) })));
-    expect(groot.length).toBeLessThan(12_100);
+    expect(groot.length).toBeLessThan(PR_BEWIJS_TEKENS + 100);
     expect(groot).toMatch(/\[afgekapt\]$/);
   });
 });
