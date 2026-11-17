@@ -130,7 +130,7 @@
 <div class="schil">
 <aside class="zijbalk">
   <div class="merk"><div class="kern" aria-hidden="true"></div><div><h1>Jarvis</h1><div class="onder">Command Center</div></div></div>
-  <nav aria-label="Hoofdnavigatie"><a href="#/" id="nav-cc">Command Center</a><a href="#/projecten" id="nav-pr">Projecten</a></nav>
+  <nav aria-label="Hoofdnavigatie"><a href="#/" id="nav-cc">Command Center</a><a href="#/projecten" id="nav-pr">Projecten</a><a href="#/ideeen" id="nav-id">Ideeën</a></nav>
   <div id="status">laden…</div>
 </aside>
 <main>
@@ -271,7 +271,7 @@
     teken();
   }
 
-  const lijst = (arr, leeg) => (arr.length ? arr.map(kaartDoel).join("") : `<div class="leeg">${esc(leeg)}</div>`);
+  const lijst = (arr, leeg) => (arr.length ? arr.map((x) => (x.idee ? ideeKaart(x.idee) : kaartDoel(x))).join("") : `<div class="leeg">${esc(leeg)}</div>`);
   // Een gesloten doel is af voor de eigenaar zonder dat het bereikt is: niet lopend, niet vastgelopen, niet klaar.
   const splits = (doelen) => ({
     lopend: doelen.filter((d) => !["klaar", "vast", "gesloten"].includes(d.status)),
@@ -467,6 +467,62 @@
     tekenChat();
   }
 
+  // Ideeën (D-20261117-194518764): een eigen plek om een idee vast te houden zonder dat Jarvis eraan begint. Een idee is
+  // een bericht van de eigenaar met context.idee, dat meteen de status 'verwerkt' krijgt: de berichtenwachtrij (status
+  // 'nieuw') pakt het dus nooit op, en er is geen nieuwe tabel of migratie nodig. Pas "Maak er een doel van" start werk.
+  const ideeen = () => berichten.filter((b) => b.van === "eigenaar" && objectVan(b.context).idee === true).reverse();
+  const ideeOpen = (b) => { const c = objectVan(b.context); return !c.gearchiveerd && !c.doel; };
+  const ideeConcept = { tekst: "", titel: "" };
+  function ideeKaart(b) {
+    const c = objectVan(b.context);
+    const doel = c.doel ? alleDoelen.find((d) => d.id === c.doel) : null;
+    const stand = c.doel ? `<span class="badge">${doel ? esc(LABEL[doel.status] ?? doel.status) : "doel"}</span>` : c.gearchiveerd ? `<span class="badge">gearchiveerd</span>` : "";
+    const knoppen = ideeOpen(b)
+      ? `<button class="hoofd" data-idee="doel">Maak er een doel van</button><button data-idee="archiveer">Archiveer</button>`
+      : c.gearchiveerd ? `<button data-idee="terug">Terugzetten</button>` : "";
+    return `<div class="kaart" data-idee-id="${esc(b.id)}"><h3>${esc(c.titel || String(b.tekst).split("\n")[0].slice(0, 80))}${stand}</h3>
+      <div class="klein">${esc(tijd(b.op))}${c.doel ? ` · doel ${esc(c.doel)}` : ""}</div>
+      <p class="opdracht">${esc(b.tekst)}</p>${knoppen}</div>`;
+  }
+  function weergaveIdeeen() {
+    const alle = ideeen();
+    const open = alle.filter(ideeOpen), verder = alle.filter((b) => !ideeOpen(b));
+    const fout = beslissingFout ? `<div class="melding">${esc(beslissingFout)}</div>` : "";
+    $("inhoud").innerHTML = `<h2 style="margin-top:18px">Ideeën <span class="tel">${open.length}</span></h2>
+      <div class="subtekst">Hier bewaar je een idee zonder dat Jarvis eraan begint. Maak er een doel van zodra je het wilt laten bouwen.</div>${fout}
+      <div class="invoer"><h2>Nieuw idee</h2>
+        <div class="rij"><input id="it" placeholder="Titel, optioneel" aria-label="Titel van het idee" value="${esc(ideeConcept.titel)}">
+          <textarea class="breed" id="io" rows="3" placeholder="Wat is het idee?" aria-label="Idee">${esc(ideeConcept.tekst)}</textarea></div>
+        <button class="hoofd" id="iv">Bewaar idee</button></div>
+      ${open.length ? open.map(ideeKaart).join("") : `<div class="leeg">Nog geen ideeën.</div>`}
+      ${verder.length ? inklapBlok("ideeen:verder", "Omgezet en gearchiveerd", verder.map((b) => ({ id: b.id, idee: b })), "") : ""}`;
+    $("io").oninput = (ev) => { ideeConcept.tekst = ev.target.value; };
+    $("it").oninput = (ev) => { ideeConcept.titel = ev.target.value; };
+    $("iv").onclick = () => zeg(async () => {
+      const tekst = $("io").value.trim(), titel = $("it").value.trim();
+      if (!tekst) throw new Error("Schrijf eerst het idee op.");
+      const r = await client.from("berichten").insert({ van: "eigenaar", tekst, status: "verwerkt", verwerkt_op: new Date().toISOString(),
+        verwerking: "Idee van de eigenaar; geen opdracht.", context: { idee: true, ...(titel ? { titel } : {}) } });
+      if (r.error) throw r.error;
+      ideeConcept.tekst = ""; ideeConcept.titel = "";
+    });
+  }
+  async function ideeActie(id, wat) {
+    const b = berichten.find((x) => String(x.id) === id);
+    if (!b) return;
+    const c = objectVan(b.context);
+    let nieuw;
+    if (wat === "doel") {
+      const titel = c.titel || String(b.tekst).split("\n")[0].slice(0, 80);
+      const doel = await rpc("doel_nieuw", { p_titel: titel, p_opdracht: b.tekst, p_acceptatie_url: null });
+      nieuw = { ...c, doel: doel ?? true };
+    } else if (wat === "archiveer") nieuw = { ...c, gearchiveerd: true };
+    else if (wat === "terug") { nieuw = { ...c }; delete nieuw.gearchiveerd; }
+    else return;
+    const r = await client.from("berichten").update({ context: nieuw }).eq("id", b.id);
+    if (r.error) throw r.error;
+  }
+
   function weergaveProjecten() {
     $("inhoud").innerHTML = `<h2 style="margin-top:18px">Projecten <span class="tel">${PROJECTEN.length}</span></h2>
       <div class="projecten">${PROJECTEN.map((p) => {
@@ -519,15 +575,15 @@
   }
 
   // Drie routes onder #/projecten: het overzicht, één project (#/projecten/<project>) en één subproject
-  // (#/projecten/<project>/<subproject>). Een onbekende sleutel valt terug op het overzicht.
+  // (#/projecten/<project>/<subproject>). Een onbekende sleutel valt terug op het overzicht. #/ideeen is de ideeënlijst.
   function teken() {
     const route = location.hash.replace(/^#\/?/, "");
     const [deel, sleutel, subsleutel] = route.split("/");
-    $("nav-cc").removeAttribute("aria-current"); $("nav-pr").removeAttribute("aria-current");
+    for (const n of ["nav-cc", "nav-pr", "nav-id"]) $(n).removeAttribute("aria-current");
     const project = deel === "projecten" ? PROJECTEN.find((p) => p.sleutel === sleutel) : null;
     const sub = project && subsleutel ? (project.subprojecten ?? []).find((sp) => sp.sleutel === subsleutel) : null;
-    $("nav-" + (deel === "projecten" ? "pr" : "cc")).setAttribute("aria-current", "page");
-    if (sub) weergaveSubproject(project, sub); else if (project) weergaveProject(project); else if (deel === "projecten") weergaveProjecten(); else weergaveCommandCenter();
+    $("nav-" + (deel === "projecten" ? "pr" : deel === "ideeen" ? "id" : "cc")).setAttribute("aria-current", "page");
+    if (deel === "ideeen") weergaveIdeeen(); else if (sub) weergaveSubproject(project, sub); else if (project) weergaveProject(project); else if (deel === "projecten") weergaveProjecten(); else weergaveCommandCenter();
   }
 
   // Eén luisteraar voor het openklappen en de knoppen op alle doelkaarten, in elke weergave.
@@ -539,6 +595,14 @@
       if (wat === "afwijzen" && !confirm("Dit akkoord afwijzen? Jarvis voegt deze pull request dan niet samen.")) return;
       bk.disabled = true;
       zeg(() => beslis(bk.closest("[data-bericht]").dataset.bericht, wat));
+      return;
+    }
+    const ik = ev.target.closest("button[data-idee]");
+    if (ik) {
+      const wat = ik.dataset.idee;
+      if (wat === "doel" && !confirm("Van dit idee een doel maken? Jarvis gaat het dan bouwen.")) return;
+      ik.disabled = true;
+      zeg(() => ideeActie(ik.closest("[data-idee-id]").dataset.ideeId, wat));
       return;
     }
     const knop = ev.target.closest("button[data-actie]");
