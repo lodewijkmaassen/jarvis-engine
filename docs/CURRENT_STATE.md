@@ -458,6 +458,24 @@ chat-completions-formaat. Tegelijk bewaakt `jarvis db bericht` de
 eigenaarstaal: een bericht met technische namen wordt geweigerd, de
 technische bron gaat mee in `--technisch` en de app toont hem ingeklapt.
 
+Sinds 2026-11-18 leest die reviewer de héle wijziging. `patchPerBestand` en
+`diffTekens` waren afkapmaten: een patch boven de grens ging afgekapt mee en
+een bestand boven het diffbudget werd weggelaten, waarna de reviewer
+bevindingen deed over regels die hij nooit zag. Ze zijn nu knipmaten.
+`verdeelDiff` knipt een grote patch op hunkgrenzen in genummerde delen (de
+delen achter elkaar zijn weer teken voor teken de patch van GitHub) en
+verdeelt de delen over leesronden; elke ronde is één vraag, de oordelen worden
+samengevoegd en één correctie maakt het geheel een correctie. Boven
+`REVIEW_LIMIETEN.ronden` is de wijziging wél te groot: dan volgt een NO-GO met
+die reden. Omvang alleen is daarmee geen reden meer voor een NO-GO; wat dat
+nog wel is: tekst die GitHub niet gaf terwijl hij gewijzigde regels meldt.
+Een bestand met nul gewijzigde regels — een afbeelding of ander binair bestand
+— heeft geen tekst om af te kappen en blokkeerde voorheen elke pull request
+waarin het stond; het gaat nu als lijst met namen mee, binnen het datablok,
+met de mededeling dat zijn inhoud niet gelezen en dus niet beoordeeld is. De
+volledigheidswacht zat alleen in de reviewbaan in CI en staat nu ook op de
+losse `jarvis review`, die eerder stil afkapte.
+
 Sinds 2026-09-24 kent het overzicht een vierde antwoord op "wie is aan zet":
 naast `jarvis`, `eigenaar` en `niemand` staat er nu `wacht`. Een open stap die
 op een gebeurtenis, een andere uitvoerder, een taak of een pull request wacht,
