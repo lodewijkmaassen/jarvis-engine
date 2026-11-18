@@ -102,8 +102,8 @@
   @media (prefers-reduced-motion: reduce) { .voortgang i.nu { animation:none; } }
   button { font:inherit; padding:10px 18px; border-radius:10px; border:1px solid var(--lijn); background:var(--kaart2); color:var(--tekst); cursor:pointer; margin:10px 8px 0 0; min-height:44px; }
   button.hoofd { background:linear-gradient(135deg, var(--accent2), var(--accent)); border-color:transparent; color:#04101f; font-weight:600; }
-  button:disabled { opacity:.5; } button:focus-visible, input:focus-visible, textarea:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
-  input, textarea { font:inherit; width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--lijn); background:var(--bg); color:var(--tekst); margin:0; }
+  button:disabled { opacity:.5; } button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  input, textarea, select { font:inherit; width:100%; padding:11px 12px; border-radius:10px; border:1px solid var(--lijn); background:var(--bg); color:var(--tekst); margin:0; }
   input::placeholder, textarea::placeholder { color:#5d6e88; }
   .melding { padding:10px 12px; border-radius:10px; border:1px solid var(--fout); color:var(--fout); margin:10px 0; }
   .leeg { color:var(--gedempt); padding:14px; border:1px dashed var(--lijn); border-radius:14px; text-align:center; margin-bottom:10px; }
@@ -120,6 +120,8 @@
   .terug { display:inline-block; margin:14px 0 4px; font-size:14px; }
   .telrij { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
   .acties { margin-top:12px; padding-top:12px; border-top:1px solid var(--lijn); }
+  .verplaats { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
+  .verplaats select { flex:1 1 220px; width:auto; min-width:0; }
   .kaart.gesloten { opacity:.75; }
   h2 button[data-actie="vouw"] { margin:0 0 0 10px; padding:4px 12px; min-height:32px; font-size:13px; letter-spacing:0; text-transform:none; }
   .bladeren { display:flex; align-items:center; gap:12px; margin:6px 0 10px; }
@@ -247,7 +249,30 @@
   // Volledige plek van een doel: "kasboek", of "tovas-flow/offerte-opvolging" voor een subproject.
   // Bewust precies één subniveau: de eigenaar vroeg project → subproject. Een dieper label ("a/b/c") telt
   // nergens mee; een derde niveau is een nieuwe ontwerpbeslissing, geen uitbreiding van deze regel.
-  const projectVan = (d) => { const m = /^Project:\s*([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s*(\n|$)/i.exec(String(d.opdracht ?? "")); return m ? m[1].toLowerCase() : null; };
+  // Een doel verplaatsen (D-20261118-192315736): de eigenaar zet een doel in een ander project of subproject, of haalt
+  // het uit elk project. Net als een project of idee is dat een verwerkt bericht van de eigenaar, hier met
+  // context.verplaatsing = { doel, plek } (plek "" = geen project). De opdracht van het doel blijft ongemoeid; de jongste
+  // verplaatsing van een doel wint van de projectregel in zijn opdracht.
+  // verplaatsen:begin
+  function bouwVerplaatsingen(berichten, objectVan) {
+    const plekken = new Map();
+    for (const b of berichten) {
+      if (b.van !== "eigenaar") continue;
+      const v = objectVan(b.context).verplaatsing;
+      if (!v || typeof v.doel !== "string" || !v.doel || typeof v.plek !== "string") continue;
+      if (v.plek === "") plekken.set(v.doel, null);
+      else if (/^[a-z0-9-]+(?:\/[a-z0-9-]+)?$/.test(v.plek)) plekken.set(v.doel, v.plek);
+    }
+    return plekken;
+  }
+  const plekLabel = (d) => { const m = /^Project:\s*([a-z0-9-]+(?:\/[a-z0-9-]+)?)\s*(\n|$)/i.exec(String(d.opdracht ?? "")); return m ? m[1].toLowerCase() : null; };
+  const plekVan = (d, plekken) => (plekken.has(d.id) ? plekken.get(d.id) : plekLabel(d));
+  // Alle plekken waar een doel heen kan: eerst geen project, dan elk project gevolgd door zijn subprojecten.
+  const plekKeuzes = (projecten) => [{ plek: "", naam: "Geen project (alleen Command Center)" },
+    ...projecten.flatMap((p) => [{ plek: p.sleutel, naam: p.naam }, ...(p.subprojecten ?? []).map((sp) => ({ plek: p.sleutel + "/" + sp.sleutel, naam: p.naam + " · " + sp.naam }))])];
+  // verplaatsen:einde
+  let verplaatst = new Map();
+  const projectVan = (d) => plekVan(d, verplaatst);
   // Alle doelen van een project, inclusief die van zijn subprojecten.
   const doelenVanProject = (p) => alleDoelen.filter((d) => { const plek = projectVan(d); return plek === p.sleutel || (plek ?? "").startsWith(p.sleutel + "/"); });
   const doelenVanPlek = (plek) => alleDoelen.filter((d) => projectVan(d) === plek);
@@ -267,7 +292,10 @@
     return `<div class="acties" data-id="${esc(d.id)}">
         <div class="klein">Opdracht</div><p class="opdracht">${esc(zonderLabel(d.opdracht))}</p>
         <textarea rows="3" data-concept="${esc(d.id)}" placeholder="Aanvullende informatie of instructie voor Jarvis" aria-label="Reactie op ${esc(d.titel)}">${esc(concepten[d.id] ?? "")}</textarea>
-        <button class="hoofd" data-actie="reageer">${knop}</button>${sluit}</div>`;
+        <button class="hoofd" data-actie="reageer">${knop}</button>${sluit}
+        <div class="verplaats"><select data-plek="${esc(d.id)}" aria-label="Project of subproject voor ${esc(d.titel)}">${plekKeuzes(PROJECTEN).map((k) =>
+          `<option value="${esc(k.plek)}"${k.plek === (projectVan(d) ?? "") ? " selected" : ""}>${esc(k.naam)}</option>`).join("")}</select>
+          <button data-actie="verplaats">Verplaats</button></div></div>`;
   }
 
   function kaartDoel(d) {
@@ -332,7 +360,7 @@
 
   async function laad(auto) {
     // Een verversing op de klok mag nooit een half getypte opdracht wegvegen.
-    if (auto === true && document.activeElement && ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+    if (auto === true && document.activeElement && ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
     const [doelen, logboek] = await Promise.all([
       client.from("doelen").select("*").order("aangemaakt", { ascending: false }),
       client.from("activiteit").select("op, uitvoerder, rol, taak, project, soort, tekst, verwijzing").order("op", { ascending: false }).limit(60),
@@ -345,6 +373,7 @@
     activiteit = logboek.data ?? [];
     await laadBeslissingen();
     PROJECTEN = bouwProjecten(VASTE_PROJECTEN, berichten, objectVan);
+    verplaatst = bouwVerplaatsingen(berichten, objectVan);
     const lopend = splits(alleDoelen).lopend;
     $("status").textContent = `laatste controle ${new Date().toLocaleTimeString("nl-NL")} · ${lopend.length} lopend`;
     teken();
@@ -829,6 +858,17 @@
       const reactie = blok.querySelector("textarea").value.trim();
       if (!reactie) { melding("Schrijf eerst je reactie; Jarvis pakt het doel daarmee weer op."); return; }
       zeg(async () => { await rpc("doel_reageer", { p_id: id, p_reactie: reactie }); delete concepten[id]; geopend.delete(id); });
+    } else if (knop.dataset.actie === "verplaats") {
+      const plek = blok.querySelector("select[data-plek]").value;
+      const d = alleDoelen.find((x) => x.id === id);
+      if (!d) return;
+      if (plek === (projectVan(d) ?? "")) { melding("Dit doel staat daar al."); return; }
+      const keuze = plekKeuzes(PROJECTEN).find((k) => k.plek === plek);
+      zeg(async () => {
+        const r = await client.from("berichten").insert({ van: "eigenaar", tekst: `Doel ${d.titel} verplaatst naar ${keuze ? keuze.naam : plek}.`,
+          status: "verwerkt", verwerkt_op: new Date().toISOString(), verwerking: "Verplaatsing door de eigenaar; geen opdracht.", context: { verplaatsing: { doel: id, plek } } });
+        if (r.error) throw r.error;
+      });
     } else if (knop.dataset.actie === "sluit" && confirm("Dit doel sluiten? Jarvis werkt er niet meer aan en het verdwijnt uit Vastgelopen.")) {
       zeg(async () => { await rpc("doel_sluit", { p_id: id }); delete concepten[id]; geopend.delete(id); });
     }
