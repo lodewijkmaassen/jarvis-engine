@@ -3,14 +3,20 @@ import {
   antwoordTekst,
   bouwAanroep,
   bouwReviewVraag,
+  combineerReviews,
+  DATA_BEGIN,
+  DATA_EIND,
   eigenaarstaalBezwaar,
   EIGENAARSTAAL_MAX_TEKENS,
+  knipPatch,
   leverancierFout,
   parseerReview,
   REVIEW_LIMIETEN,
   rendereerReview,
   reviewDocumentId,
   technischeMarkers,
+  verdeelDiff,
+  type Review,
 } from "../../jarvis/src/review";
 
 const invoer = {
@@ -19,7 +25,7 @@ const invoer = {
   kop: "0123456789abcdef0123456789abcdef01234567",
   titel: "Eén kleine wijziging",
   beschrijving: "Wat er verandert en waarom.\n\nUitzonderingen: geen",
-  diff: [{ bestand: "lib/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-a\n+b" }],
+  stukken: [{ bestand: "lib/a.ts", status: "modified", patch: "@@ -1 +1 @@\n-a\n+b" }],
   dossier: "## Acceptatiecriteria\n\n1. Het werkt.",
   context: "### DEC-0001 — Iets besloten",
 };
@@ -37,13 +43,35 @@ describe("de vraag aan de reviewer", () => {
     expect(v).toContain("DEC-0001");
   });
 
-  it("kapt een te grote patch af en laat bestanden buiten het diffbudget weg, met melding", () => {
-    const groot = "x".repeat(REVIEW_LIMIETEN.patchPerBestand + 10);
-    const veel = Array.from({ length: 8 }, (_, i) => ({ bestand: `b${i}.ts`, status: "modified", patch: groot }));
-    const v = bouwReviewVraag({ ...invoer, diff: veel });
-    expect(v).toContain("afgekapt: 10 tekens weggelaten");
-    expect(v).toContain("patch weggelaten");
-    expect(v.length).toBeLessThan(REVIEW_LIMIETEN.diffTekens + REVIEW_LIMIETEN.contextTekens + REVIEW_LIMIETEN.dossierTekens + 4_000);
+  it("noemt van een gedeelde patch welk deel het is, en kapt niets af", () => {
+    const stukken = [
+      { bestand: "lib/groot.ts", status: "modified", patch: "@@ -1 +1 @@\n+een", deel: 1, delen: 2 },
+      { bestand: "lib/groot.ts", status: "modified", patch: "@@ -9 +9 @@\n+twee", deel: 2, delen: 2 },
+    ];
+    const v = bouwReviewVraag({ ...invoer, stukken, ronde: { nummer: 2, totaal: 3 } });
+    expect(v).toContain("## lib/groot.ts (modified, deel 1 van 2)");
+    expect(v).toContain("## lib/groot.ts (modified, deel 2 van 2)");
+    expect(v).toContain("leesronde 2 van 3");
+    expect(v).not.toContain("afgekapt");
+    expect(v).not.toContain("weggelaten");
+  });
+
+  it("meldt bestanden zonder tekstdiff bij naam, binnen het datablok, en zegt dat hun inhoud niet gelezen is", () => {
+    const v = bouwReviewVraag({ ...invoer, zonderTekst: [{ bestand: "tasks/T-1/beeld.jpg", status: "added" }] });
+    expect(v).toContain("1 bestand(en) zonder tekstdiff");
+    expect(v).toContain("niet gelezen en dus niet beoordeeld");
+    expect(v.indexOf("tasks/T-1/beeld.jpg")).toBeGreaterThan(v.indexOf(DATA_BEGIN));
+    expect(v.indexOf("tasks/T-1/beeld.jpg")).toBeLessThan(v.lastIndexOf(DATA_EIND));
+    // Precies één datablok rond wat van de bouwer komt, ook met die lijst erin.
+    expect(v.split(DATA_BEGIN).length - 1).toBe(2);
+    expect(v.split(DATA_EIND).length - 1).toBe(2);
+  });
+
+  it("zegt niets over delen of ronden als de wijziging in één keer past", () => {
+    const v = bouwReviewVraag({ ...invoer, ronde: { nummer: 1, totaal: 1 } });
+    expect(v).toContain("## lib/a.ts (modified)");
+    expect(v).not.toContain("leesronde");
+    expect(v).not.toContain("zonder tekstdiff");
   });
 
   it("slaat het dossierdeel over als er geen dossier is", () => {
@@ -130,5 +158,71 @@ describe("eigenaarstaal", () => {
 
   it("weigert een verslag in plaats van een bericht", () => {
     expect(eigenaarstaalBezwaar("Alles goed. ".repeat(EIGENAARSTAAL_MAX_TEKENS / 6))).toMatch(/hoogstens/);
+  });
+});
+
+describe("de hele wijziging lezen, in delen als het moet", () => {
+  const patch = Array.from({ length: 40 }, (_, h) => `@@ -${h * 10},3 +${h * 10},3 @@\n-oud ${h}\n+nieuw ${h}\n`).join("");
+
+  it("knipt een te grote patch in delen die samen precies de patch zijn, op hunkgrenzen", () => {
+    const delen = knipPatch(patch, 300);
+    expect(delen.length).toBeGreaterThan(1);
+    expect(delen.join("")).toBe(patch);
+    for (const d of delen) {
+      expect(d.length).toBeLessThanOrEqual(300);
+      expect(d.startsWith("@@")).toBe(true);
+    }
+  });
+
+  it("knipt ook een regel die zelf groter is dan de maat, zonder één teken te verliezen", () => {
+    const eenRegel = `@@ -1 +1 @@\n+${"x".repeat(1_000)}\n`;
+    const delen = knipPatch(eenRegel, 100);
+    expect(delen.join("")).toBe(eenRegel);
+    for (const d of delen) expect(d.length).toBeLessThanOrEqual(100);
+  });
+
+  it("laat een patch die past met rust", () => {
+    expect(knipPatch("@@ -1 +1 @@\n+a", 1_000)).toEqual(["@@ -1 +1 @@\n+a"]);
+  });
+
+  it("verdeelt een groot bestand in genummerde delen en laat niets weg", () => {
+    const groot = `@@ -1 +1 @@\n${"+regel\n".repeat(4_000)}`;
+    const v = verdeelDiff([{ bestand: "a.ts", status: "modified", patch: groot }]);
+    expect(v.onvolledig).toEqual([]);
+    const stukken = v.ronden.flat();
+    expect(stukken.length).toBeGreaterThan(1);
+    expect(stukken.map((s) => s.patch).join("")).toBe(groot);
+    expect(stukken.map((s) => s.deel)).toEqual(stukken.map((_, i) => i + 1));
+    expect(new Set(stukken.map((s) => s.delen))).toEqual(new Set([stukken.length]));
+  });
+
+  it("voegt de oordelen van de ronden samen: één correctie maakt het geheel een correctie", () => {
+    const akkoord: Review = {
+      oordeel: "akkoord",
+      samenvatting: "Deel een klopt.",
+      punten: [{ ernst: "laag", tekst: "naamgeving", bestand: "a.ts" }],
+      conclusie_eigenaar: "Het kan door.",
+    };
+    const correctie: Review = {
+      oordeel: "correctie",
+      samenvatting: "Deel twee niet.",
+      punten: [{ ernst: "hoog", tekst: "de sleutel lekt", bestand: "b.ts" }],
+      conclusie_eigenaar: "Er moet eerst iets hersteld worden.",
+    };
+    const uit = combineerReviews([akkoord, correctie]);
+    expect(uit.oordeel).toBe("correctie");
+    expect(uit.punten).toHaveLength(2);
+    expect(uit.samenvatting).toBe("Ronde 1: Deel een klopt. Ronde 2: Deel twee niet.");
+    expect(uit.conclusie_eigenaar).toBe(correctie.conclusie_eigenaar);
+    // Eén oordeel blijft zichzelf; hetzelfde punt uit twee ronden komt één keer terug.
+    expect(combineerReviews([akkoord])).toBe(akkoord);
+    expect(combineerReviews([akkoord, akkoord]).oordeel).toBe("akkoord");
+    expect(combineerReviews([akkoord, akkoord]).punten).toHaveLength(1);
+  });
+
+  it("zonder oordeel is er niets gelezen en dus geen akkoord", () => {
+    const leeg = combineerReviews([]);
+    expect(leeg.oordeel).toBe("correctie");
+    expect(leeg.punten[0]?.ernst).toBe("hoog");
   });
 });

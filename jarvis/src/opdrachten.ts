@@ -50,7 +50,19 @@ import { genereerAfgeleiden, leesRolcontract, vindDrift, type Rolcontract } from
 import { HEARTBEAT_MINUTEN, ROLLEN, bepaalRegie, uitvoeringVan, type Activiteit, type Rol, type Uitvoerders } from "./regie";
 import { laadKennis, type KennisLading } from "./store";
 import { controleerUitrol } from "./uitrol";
-import { antwoordTekst, bouwAanroep, bouwReviewVraag, eigenaarstaalBezwaar, leverancierFout, parseerReview, rendereerReview, reviewDocumentId, type Review as ModelReview } from "./review";
+import {
+  antwoordTekst,
+  bouwAanroep,
+  bouwReviewVraag,
+  combineerReviews,
+  eigenaarstaalBezwaar,
+  leverancierFout,
+  parseerReview,
+  rendereerReview,
+  reviewDocumentId,
+  verdeelDiff,
+  type Review as ModelReview,
+} from "./review";
 import { ACTIEVE_KETEN, canoniekeKetenPad,
   ACTIEVE_ATTESTATIE,
   ACTIEVE_WORKFLOW,
@@ -2621,6 +2633,48 @@ type ReviewDocument = {
   readonly verzoek_id: number | null;
 };
 
+/** Eén leesronde bij de reviewer: de vraag via de database versturen en op het oordeel wachten. Tekst = de fout. */
+async function leesEenRonde(sql: DbClient, model: string, vraag: string, label: string): Promise<{ readonly review: ModelReview; readonly verzoekId: number } | string> {
+  const gevraagd = await sql.unsafe(VRAAG_REVIEW_SQL, [JSON.stringify(bouwAanroep(model, vraag))]);
+  const verzoekId = Number(gevraagd[0]?.id);
+  if (!Number.isInteger(verzoekId) || verzoekId <= 0) {
+    return "de database heeft het verzoek niet verstuurd (jarvis.vraag_review gaf geen nummer; staat de API-sleutel in de Vault en de url in de instellingen?)";
+  }
+  console.error(`jarvis review: verzoek ${verzoekId} verstuurd (${model}, ${vraag.length} tekens${label}); wacht op het antwoord…`);
+  const start = Date.now();
+  let antwoord: { status_code: number | null; content: string | null; error_msg: string | null; timed_out: boolean | null } | null = null;
+  while (Date.now() - start < REVIEW_WACHT_SECONDEN * 1000) {
+    await new Promise((klaar) => setTimeout(klaar, REVIEW_PEIL_MS));
+    const rijen = await sql.unsafe(LEES_REVIEW_SQL, [verzoekId]);
+    const r = rijen[0];
+    if (r && (r.status_code !== null || r.error_msg !== null || r.timed_out === true)) {
+      antwoord = {
+        status_code: r.status_code === null ? null : Number(r.status_code),
+        content: r.content === null || r.content === undefined ? null : String(r.content),
+        error_msg: r.error_msg === null || r.error_msg === undefined ? null : String(r.error_msg),
+        timed_out: r.timed_out === true,
+      };
+      break;
+    }
+  }
+  if (antwoord === null) return `geen antwoord binnen ${REVIEW_WACHT_SECONDEN} seconden (verzoek ${verzoekId})`;
+  if (antwoord.timed_out || antwoord.error_msg) return `het verzoek is mislukt (${antwoord.timed_out ? "time-out" : antwoord.error_msg})`;
+  let lading: unknown = null;
+  try {
+    lading = antwoord.content === null ? null : JSON.parse(antwoord.content);
+  } catch {
+    lading = null;
+  }
+  if (antwoord.status_code !== 200) {
+    return `de leverancier antwoordde HTTP ${antwoord.status_code}${leverancierFout(lading) ? ` — ${leverancierFout(lading)}` : ""}`;
+  }
+  const tekst = antwoordTekst(lading);
+  if (tekst === null) return "het antwoord bevat geen tekst";
+  const review = parseerReview(tekst);
+  if (typeof review === "string") return `het oordeel is onleesbaar (${review})`;
+  return { review, verzoekId };
+}
+
 /**
  * `jarvis review <nummer> --repo <slug> [--model <m>] [--taak <T-…>]`
  * Exit 0 = akkoord, 4 = correctie nodig (één ronde), 3 = al beoordeeld, 1 = mislukt.
@@ -2667,11 +2721,16 @@ async function opdrachtReview(losse: readonly string[], vlaggen: ReadonlyMap<str
       console.error(`jarvis review: bestanden niet te lezen (${foutTekst(bestanden)}).`);
       return 1;
     }
-    const diff = (bestanden.lading as { filename: string; status: string; patch?: string }[]).map((b) => ({
-      bestand: b.filename,
-      status: b.status,
-      patch: b.patch ?? "(geen patch: binair of te groot)",
-    }));
+    // Grote patches in genummerde delen, grote diffs in meer leesronden, en wat niet te lezen is wordt
+    // benoemd in plaats van stilzwijgend afgekapt: zonder volledige lezing geen oordeel (B3).
+    const bestandslijst = bestanden.lading as { filename: string; status: string; patch?: string; changes?: number }[];
+    const verdeling = verdeelDiff(bestandslijst.map((b) => ({ bestand: b.filename, status: b.status, patch: b.patch ?? null, wijzigingen: b.changes })));
+    if (verdeling.onvolledig.length > 0) {
+      console.error("jarvis review: deze wijziging is niet volledig te lezen; zonder volledige lezing geen oordeel.");
+      for (const reden of verdeling.onvolledig) console.error(`  - ${reden}`);
+      return 4;
+    }
+    const bestandsnamen = bestandslijst.map((b) => b.filename);
 
     // De opdracht en acceptatiecriteria: het dossier van de taak die de PR noemt
     // (--taak, of "Taak: T-…" in de PR-tekst), gelezen uit de werkmap als het er staat.
@@ -2701,7 +2760,7 @@ async function opdrachtReview(losse: readonly string[], vlaggen: ReadonlyMap<str
         klasse: "S",
         config,
         records: lading.records,
-        bestanden: diff.map((d) => d.bestand),
+        bestanden: bestandsnamen,
         readSource: createFileReader(wortel),
         gegenereerdOp: new Date().toISOString(),
       });
@@ -2710,63 +2769,34 @@ async function opdrachtReview(losse: readonly string[], vlaggen: ReadonlyMap<str
       context = `(geen contextpakket: ${fout instanceof Error ? fout.message : String(fout)})`;
     }
 
-    const vraag = bouwReviewVraag({ repo: slug, nummer, kop: p.head.sha, titel: p.title, beschrijving, diff, dossier, context });
-    const aanroep = bouwAanroep(model, vraag);
-    const gevraagd = await sql.unsafe(VRAAG_REVIEW_SQL, [JSON.stringify(aanroep)]);
-    const verzoekId = Number(gevraagd[0]?.id);
-    if (!Number.isInteger(verzoekId) || verzoekId <= 0) {
-      console.error("jarvis review: de database heeft het verzoek niet verstuurd (jarvis.vraag_review gaf geen nummer; staat de API-sleutel in de Vault en de url in de instellingen?).");
-      return 1;
-    }
-    console.error(`jarvis review: verzoek ${verzoekId} verstuurd (${model}, ${vraag.length} tekens); wacht op het antwoord…`);
-
-    const start = Date.now();
-    let antwoord: { status_code: number | null; content: string | null; error_msg: string | null; timed_out: boolean | null } | null = null;
-    while (Date.now() - start < REVIEW_WACHT_SECONDEN * 1000) {
-      await new Promise((klaar) => setTimeout(klaar, REVIEW_PEIL_MS));
-      const rijen = await sql.unsafe(LEES_REVIEW_SQL, [verzoekId]);
-      const r = rijen[0];
-      if (r && (r.status_code !== null || r.error_msg !== null || r.timed_out === true)) {
-        antwoord = {
-          status_code: r.status_code === null ? null : Number(r.status_code),
-          content: r.content === null || r.content === undefined ? null : String(r.content),
-          error_msg: r.error_msg === null || r.error_msg === undefined ? null : String(r.error_msg),
-          timed_out: r.timed_out === true,
-        };
-        break;
+    const ronden = verdeling.ronden.length > 0 ? verdeling.ronden : [[]];
+    const oordelen: ModelReview[] = [];
+    let eersteVerzoek: number | null = null;
+    for (const [i, stukken] of ronden.entries()) {
+      const vraag = bouwReviewVraag({
+        repo: slug,
+        nummer,
+        kop: p.head.sha,
+        titel: p.title,
+        beschrijving,
+        stukken,
+        zonderTekst: verdeling.zonderTekst,
+        ronde: { nummer: i + 1, totaal: ronden.length },
+        dossier,
+        context,
+      });
+      const uit = await leesEenRonde(sql, model, vraag, ronden.length > 1 ? `, leesronde ${i + 1} van ${ronden.length}` : "");
+      if (typeof uit === "string") {
+        console.error(`jarvis review: ${uit}.`);
+        return 1;
       }
+      eersteVerzoek ??= uit.verzoekId;
+      oordelen.push(uit.review);
     }
-    if (antwoord === null) {
-      console.error(`jarvis review: geen antwoord binnen ${REVIEW_WACHT_SECONDEN} seconden (verzoek ${verzoekId}).`);
-      return 1;
-    }
-    if (antwoord.timed_out || antwoord.error_msg) {
-      console.error(`jarvis review: het verzoek is mislukt (${antwoord.timed_out ? "time-out" : antwoord.error_msg}).`);
-      return 1;
-    }
-    let lading: unknown = null;
-    try {
-      lading = antwoord.content === null ? null : JSON.parse(antwoord.content);
-    } catch {
-      lading = null;
-    }
-    if (antwoord.status_code !== 200) {
-      console.error(`jarvis review: de leverancier antwoordde HTTP ${antwoord.status_code}${leverancierFout(lading) ? ` — ${leverancierFout(lading)}` : ""}.`);
-      return 1;
-    }
-    const tekst = antwoordTekst(lading);
-    if (tekst === null) {
-      console.error("jarvis review: het antwoord bevat geen tekst.");
-      return 1;
-    }
-    const review = parseerReview(tekst);
-    if (typeof review === "string") {
-      console.error(`jarvis review: het oordeel is onleesbaar (${review}).`);
-      return 1;
-    }
+    const review = combineerReviews(oordelen);
 
     const door = dezeUitvoerder();
-    const document: ReviewDocument = { repo: slug, nummer, kop: p.head.sha, model, op: new Date().toISOString(), door, review, verzoek_id: verzoekId };
+    const document: ReviewDocument = { repo: slug, nummer, kop: p.head.sha, model, op: new Date().toISOString(), door, review, verzoek_id: eersteVerzoek };
     await sql.unsafe(DOCUMENT_SQL, [docId, JSON.stringify(document)]);
     await schrijfActiviteit({
       uitvoerder: door,

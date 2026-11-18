@@ -25,7 +25,7 @@ import { pasDoelMigratiesToe } from "./doel-migratie";
 import { herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
-import { antwoordTekst, bouwAanroep, bouwReviewVraag, leverancierFout, onvolledigGelezen, parseerReview, rendereerReview, type Review } from "./review";
+import { antwoordTekst, bouwAanroep, bouwReviewVraag, combineerReviews, leverancierFout, parseerReview, rendereerReview, verdeelDiff, type Review } from "./review";
 import { beoordeelHttpMeting, leesBouwmerkUitPagina } from "./v3";
 
 const OORDELEN_SQL =
@@ -98,32 +98,8 @@ async function reviewRepos(): Promise<{ readonly eigen: string; readonly alle: r
   return { eigen, alle: [eigen, ...(engine !== eigen ? [engine] : [])].filter(Boolean), bot, engine };
 }
 
-/** Het tweede model leest één pull request. Geeft het oordeel, of een foutmelding. */
-async function tweedeLezing(sql: DbClient, token: string, slug: string, nummer: number, doel: Doel | null): Promise<{ review: Review; kop: string } | string> {
-  const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
-  if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
-  const p = pr.lading as { title: string; body: string | null; head: { sha: string } };
-  const bestanden = await leesAllePaginas<{ filename: string; status: string; patch?: string }>(token, `/repos/${slug}/pulls/${nummer}/files`, 5);
-  if (typeof bestanden === "string") return bestanden;
-  // Is de pull request tijdens het lezen verder gegaan, dan hoort deze diff niet bij de kop: volgende ronde.
-  const opnieuw = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
-  if (opnieuw.status !== 200 || (opnieuw.lading as { head: { sha: string } }).head.sha !== p.head.sha) return "de kop veranderde tijdens het lezen";
-  // Wat de reviewer niet volledig kan lezen, krijgt geen GO maar een vastgelegde NO-GO met de reden (B3).
-  const onvolledig = onvolledigGelezen(bestanden.map((b) => ({ bestand: b.filename, patch: b.patch ?? null })));
-  if (onvolledig.length > 0) {
-    return {
-      kop: p.head.sha,
-      review: {
-        oordeel: "correctie",
-        samenvatting: "De reviewer kan deze wijziging niet volledig lezen; zonder volledige lezing geen GO.",
-        punten: onvolledig.map((tekst) => ({ ernst: "hoog" as const, tekst: `${tekst}; splits de wijziging of maak haar kleiner`, bestand: null })),
-        conclusie_eigenaar: "De wijziging is te groot om volledig na te lezen en gaat daarom nog niet door.",
-      },
-    };
-  }
-  const diff = bestanden.map((b) => ({ bestand: b.filename, status: b.status, patch: b.patch ?? "" }));
-  const dossier = doel === null ? null : `Doel van de eigenaar: ${doel.titel}\n\n${doel.opdracht}\n\nAcceptatie: ${doel.acceptatie_url ?? "(geen URL)"}`;
-  const vraag = bouwReviewVraag({ repo: slug, nummer, kop: p.head.sha, titel: p.title, beschrijving: p.body ?? "", diff, dossier, context: "" });
+/** Eén vraag aan de reviewer: versturen, wachten, het oordeel lezen. */
+async function eenLezing(sql: DbClient, vraag: string): Promise<Review | string> {
   const gevraagd = await sql.unsafe(VRAAG_REVIEW_SQL, [JSON.stringify(bouwAanroep(REVIEW_MODEL, vraag))]);
   const id = Number(gevraagd[0]?.["id"]);
   if (!Number.isInteger(id) || id <= 0) return "de database verstuurde het reviewverzoek niet";
@@ -144,9 +120,56 @@ async function tweedeLezing(sql: DbClient, token: string, slug: string, nummer: 
     if (tekst === null) return "het antwoord van de reviewer bevat geen tekst";
     // Streng: alleen een uitgesproken akkoord is een GO, geen "correctie zonder hoog punt".
     const review = parseerReview(tekst, false);
-    return typeof review === "string" ? `het oordeel is onleesbaar (${review})` : { review, kop: p.head.sha };
+    return typeof review === "string" ? `het oordeel is onleesbaar (${review})` : review;
   }
   return "geen antwoord van de reviewer binnen de wachttijd";
+}
+
+/** Het tweede model leest één pull request, zo nodig in meer leesronden. Geeft het oordeel, of een foutmelding. */
+async function tweedeLezing(sql: DbClient, token: string, slug: string, nummer: number, doel: Doel | null): Promise<{ review: Review; kop: string } | string> {
+  const pr = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
+  if (pr.status !== 200) return `pull request niet te lezen (${foutTekst(pr)})`;
+  const p = pr.lading as { title: string; body: string | null; head: { sha: string } };
+  const bestanden = await leesAllePaginas<{ filename: string; status: string; patch?: string; changes?: number }>(token, `/repos/${slug}/pulls/${nummer}/files`, 5);
+  if (typeof bestanden === "string") return bestanden;
+  // Is de pull request tijdens het lezen verder gegaan, dan hoort deze diff niet bij de kop: volgende ronde.
+  const opnieuw = await github(token, "GET", `/repos/${slug}/pulls/${nummer}`);
+  if (opnieuw.status !== 200 || (opnieuw.lading as { head: { sha: string } }).head.sha !== p.head.sha) return "de kop veranderde tijdens het lezen";
+  // Grote patches gaan in genummerde delen en grote diffs in meer leesronden; wat écht niet te lezen is,
+  // krijgt geen GO maar een vastgelegde NO-GO met de reden (B3).
+  const verdeling = verdeelDiff(bestanden.map((b) => ({ bestand: b.filename, status: b.status, patch: b.patch ?? null, wijzigingen: b.changes })));
+  if (verdeling.onvolledig.length > 0) {
+    return {
+      kop: p.head.sha,
+      review: {
+        oordeel: "correctie",
+        samenvatting: "De reviewer kan deze wijziging niet volledig lezen; zonder volledige lezing geen GO.",
+        punten: verdeling.onvolledig.map((tekst) => ({ ernst: "hoog" as const, tekst, bestand: null })),
+        conclusie_eigenaar: "Een deel van de wijziging is niet na te lezen en gaat daarom nog niet door.",
+      },
+    };
+  }
+  const dossier = doel === null ? null : `Doel van de eigenaar: ${doel.titel}\n\n${doel.opdracht}\n\nAcceptatie: ${doel.acceptatie_url ?? "(geen URL)"}`;
+  const ronden = verdeling.ronden.length > 0 ? verdeling.ronden : [[]];
+  const oordelen: Review[] = [];
+  for (const [i, stukken] of ronden.entries()) {
+    const vraag = bouwReviewVraag({
+      repo: slug,
+      nummer,
+      kop: p.head.sha,
+      titel: p.title,
+      beschrijving: p.body ?? "",
+      stukken,
+      zonderTekst: verdeling.zonderTekst,
+      ronde: { nummer: i + 1, totaal: ronden.length },
+      dossier,
+      context: "",
+    });
+    const uit = await eenLezing(sql, vraag);
+    if (typeof uit === "string") return uit;
+    oordelen.push(uit);
+  }
+  return { review: combineerReviews(oordelen), kop: p.head.sha };
 }
 
 /** De reviewjob. Een fout bij één pull request houdt de rest niet tegen. */
