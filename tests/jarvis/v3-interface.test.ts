@@ -135,7 +135,8 @@ describe("de V3-weergave", () => {
     expect(HTML).toContain('${repo ? `<p class="klein">Repository:');
   });
   it("wijst een doel toe aan project of subproject via de eerste regel van de opdracht", () => {
-    const regel = /const projectVan = (\(d\) => \{.*?\});/.exec(HTML)?.[1];
+    // De projectregel staat sinds het verplaatsen (D-20261118-192315736) in plekLabel; projectVan legt er de verplaatsingen overheen.
+    const regel = /const plekLabel = (\(d\) => \{.*?\});/.exec(HTML)?.[1];
     expect(regel).toBeTruthy();
     const projectVan = new Function(`return ${regel};`)() as (d: { opdracht: string }) => string | null;
     expect(projectVan({ opdracht: "Project: kasboek\n\nIets" })).toBe("kasboek");
