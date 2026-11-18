@@ -44,3 +44,18 @@ regels uit de echte database.
   D-20261117-194904457 in review stond op jarvis-engine#150.
 - `*-rust.jpg`: de werkelijke stand van 18 november 12:20 UTC — niets in
   uitvoering, niets in de wachtrij.
+
+## De automatische review kan deze wijziging niet lezen
+
+De onafhankelijke review (DEC-0046) knipt de patch van een bestand af op 12.000
+tekens. De patch van `v3.html` is 22.803 tekens, dus de reviewer zag ruim de
+helft niet en gaf daarom geen akkoord. Zijn twee zware punten gaan allebei over
+dat afkappen: hij zag `const d = new D` waar `const d = new Date(t);` staat.
+
+Dat is geen fout in de wijziging. Het scriptblok is gecontroleerd geparseerd,
+1480 tests zijn groen en de pagina is op drie breedtes nagelopen. Het is een
+grens van de review: een weergave die in één HTML-bestand woont, komt er met een
+nieuwe indeling nooit onder, en de opdracht vraagt om één pull request.
+
+De route die hier overblijft is de route die DEC-0043 al kent: de bot opent, de
+eigenaar keurt goed. Daarna voegt `jarvis pr mergen` samen.
