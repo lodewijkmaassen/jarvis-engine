@@ -14,8 +14,14 @@ describe("de V3-weergave", () => {
   });
   it("leest uitsluitend de doelen en roept uitsluitend de eigenaarsfuncties voor doelen aan (T-20261017-jarvis-vereenvoudigen, D-20261019-202736404)", () => {
     const views = [...HTML.matchAll(/from\("([a-z0-9_]+)"\)/g)].map((m) => m[1]);
-    // Naast de doelen alleen de twee tabellen van de bestaande approvalroute (D-20261020-210018901).
-    expect(new Set(views)).toEqual(new Set(["doelen", "berichten", "autorisaties"]));
+    // Naast de doelen alleen de twee tabellen van de bestaande approvalroute (D-20261020-210018901)
+    // en het activiteitenlogboek (opdracht 2026-11-18: het Command Center toont wat er daadwerkelijk is
+    // uitgevoerd en wanneer). Dat logboek is een bestaande tabel die de V2-pagina al leest, met een
+    // bestaand leesrecht voor de eigenaar; er komt geen tabel, migratie of schrijfpad bij.
+    expect(new Set(views)).toEqual(new Set(["doelen", "berichten", "autorisaties", "activiteit"]));
+    // Alleen lezen, begrensd, en in dezelfde ronde als de doelen: geen tweede klok en geen tweede verzoek per doel.
+    expect(HTML).toContain('client.from("activiteit").select("op, uitvoerder, rol, taak, project, soort, tekst, verwijzing").order("op", { ascending: false }).limit(60)');
+    expect(HTML).not.toMatch(/from\("activiteit"\)[\s\S]{0,400}?\.(insert|update|delete|upsert)\(/);
     const rpcs = new Set([...HTML.matchAll(/rpc\("([a-z0-9_]+)"/g)].map((m) => m[1]));
     expect(rpcs).toEqual(new Set(["doel_nieuw", "doel_reageer", "doel_sluit"]));
   });
