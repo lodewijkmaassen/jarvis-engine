@@ -22,6 +22,7 @@ import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
+import { vraagtSparproef, voerSparproefUit } from "./sparproef";
 import { herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
@@ -454,7 +455,17 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
           console.log(`jarvis eindcontrole: ${d.id} meet na ${Math.round(minuten)} min zonder uitrolbewijs — ${waarom}`);
         }
       }
-      const uitkomsten = await voerAcceptatieUit(sql, d, tests, prBewijs);
+      // Vraagt het doel om een sparringpartner, dan meet de eindcontrole het gedrag zelf met echte
+      // spargesprekken (sparproef.ts); dat verloop gaat vóór het overige bewijs. Pas hier, na het wachten
+      // op de uitrol: een ronde die nog wacht, maakt geen kosten.
+      let bewijsVooraf = prBewijs;
+      if (vraagtSparproef(d)) {
+        const spar = await voerSparproefUit(sql);
+        await schrijfAcceptatie(sql, d.id, `sparproef uitgevoerd: $${spar.besteedUsd.toFixed(4)}`);
+        console.log(`jarvis eindcontrole: ${d.id} sparproef uitgevoerd ($${spar.besteedUsd.toFixed(4)})`);
+        bewijsVooraf = prBewijs === null ? spar.bewijs : `${spar.bewijs}\n\n${prBewijs}`;
+      }
+      const uitkomsten = await voerAcceptatieUit(sql, d, tests, bewijsVooraf);
       const eind = eindoordeel(uitkomsten);
       if (eind.klaar) {
         await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, `acceptatietests geslaagd — ${eind.samenvatting}`]);
