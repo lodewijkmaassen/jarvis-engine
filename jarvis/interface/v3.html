@@ -55,6 +55,13 @@
   .chatvoorbeeld img, .bericht img { max-width:160px; max-height:120px; border-radius:8px; border:1px solid var(--lijn); display:block; }
   .bericht img { margin-bottom:6px; }
   .chatvorm .bijlage { padding:8px 10px; }
+  .chatmodus { display:flex; flex-wrap:wrap; gap:6px; margin-top:12px; }
+  .chatmodus button { margin:0; padding:6px 10px; }
+  .chatmodus button[aria-pressed="true"] { border-color:var(--accent); color:var(--accent); font-weight:600; }
+  .geheugen { text-align:left; margin:8px 0; max-height:240px; overflow-y:auto; }
+  .geheugen[hidden] { display:none; }
+  .geheugen .inzicht { display:flex; gap:8px; align-items:flex-start; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--lijn); }
+  .geheugen .inzicht button { margin:0; flex:none; padding:4px 8px; }
   .subtekst { color:var(--gedempt); font-size:12px; opacity:.8; margin:-8px 0 12px; }
   .activiteit { list-style:none; margin:0; padding:0; }
   .activiteit li { padding:7px 0; border-bottom:1px solid var(--lijn); font-size:14px; overflow-wrap:anywhere; }
@@ -311,17 +318,20 @@
 
   // Eigenaarsbeslissingen (DEC-0043): hetzelfde bericht met context.akkoord_pr en dezelfde tabel jarvis.autorisaties
   // als de oude interface; hier alleen zichtbaar en afhandelbaar gemaakt.
-  let berichten = [], autorisaties = [], beslissingFout = null;
+  let berichten = [], autorisaties = [], beslissingFout = null, inzichten = [];
   // Het activiteitenlogboek van de uitvoering (jarvis.activiteit), dezelfde tabel die de V2-pagina al leest.
   // Alleen lezen, begrensd op de laatste regels, en in dezelfde ronde als de doelen: geen tweede klok erbij.
   let activiteit = [], activiteitFout = null, leesFout = null;
   async function laadBeslissingen() {
-    const [b, a] = await Promise.all([
-      client.from("berichten").select("*").order("op"),
+    // Het geheugen van Jarvis Brein (context.kanaal = "brein") hoort niet in deze lijst: dat zou met elke sparbeurt groeien.
+    const [b, a, g] = await Promise.all([
+      client.from("berichten").select("*").or("context->>kanaal.is.null,context->>kanaal.neq.brein").order("op"),
       client.from("autorisaties").select("id, soort, pr_repo, pr_nummer, commit_sha, op").order("op", { ascending: false }),
+      client.from("berichten").select("id, tekst, op, context").eq("context->>kanaal", "brein").eq("context->>soort", "inzicht").order("op", { ascending: false }).limit(200),
     ]);
     beslissingFout = b.error || a.error ? `Beslissingen niet te lezen: ${(b.error ?? a.error).message}` : null;
     berichten = b.data ?? []; autorisaties = a.data ?? [];
+    inzichten = (g.data ?? []).filter((x) => { const c = objectVan(x.context); return !c.gewist && !c.vervallen && String(x.tekst ?? "").trim(); });
   }
   const objectVan = (c) => { if (typeof c === "string") { try { return JSON.parse(c); } catch { return {}; } } return c ?? {}; };
   const prSleutel = (v) => `${v.repo}#${v.nummer}@${v.commit_sha}`;
@@ -533,6 +543,9 @@
           <div class="klein" style="margin-top:10px;text-align:left">${esc(nieuwste ? `Laatste activiteit: ${geleden(nieuwste.op)}` : (activiteitFout ?? "Nog geen activiteit vastgelegd."))}</div>
           ${huidigBlok}
           ${drieluik}
+          <div class="chatmodus" role="group" aria-label="Modus van de chat"><button type="button" id="modus-sparren" aria-pressed="false">Sparren</button><button type="button" id="modus-opdracht" aria-pressed="false">Opdracht</button><button type="button" id="chatnieuw">Nieuw gesprek</button><button type="button" id="geheugenknop" aria-expanded="false">Wat Jarvis onthoudt (${inzichten.length})</button></div>
+          <div class="klein" id="modusuitleg" style="text-align:left"></div>
+          <div class="geheugen" id="geheugenlijst" hidden></div>
           <div class="chatlog" id="chatlog" role="log" aria-live="polite" aria-label="Gesprek met Jarvis"></div>
           <div class="chatvoorbeeld" id="chatvoorbeeld" hidden></div>
           <form class="chatvorm" id="chatvorm"><input type="file" id="chatbestand" accept="image/png,image/jpeg,image/gif,image/webp" hidden><button type="button" class="bijlage" id="chatbijlage" aria-label="Afbeelding toevoegen" title="Afbeelding toevoegen of hierheen slepen">📎</button><div class="invoer"><textarea id="chatin" rows="2" placeholder="Stel een vraag of geef een opdracht" aria-label="Bericht aan Jarvis"></textarea></div><button class="hoofd" id="chatstuur" type="submit">Stuur</button></form></div>
@@ -566,6 +579,14 @@
   try { chat = JSON.parse(sessionStorage.getItem("jarvis-chat") ?? "[]"); } catch { chat = []; }
   let chatBezig = false;
   let chatConcept = "";
+  // Sparmodus (Jarvis Brein): standaard. Daarin maakt Jarvis nooit zelf een doel; dat doet alleen de knop "Maak hier een doel van".
+  let chatModus = "sparren";
+  try { chatModus = sessionStorage.getItem("jarvis-chat-modus") === "opdracht" ? "opdracht" : "sparren"; } catch { /* standaard sparren */ }
+  const nieuwGesprekId = () => (crypto.randomUUID ? crypto.randomUUID() : `g-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`);
+  let gesprekId = null;
+  try { gesprekId = sessionStorage.getItem("jarvis-gesprek"); } catch { /* nieuw */ }
+  if (!gesprekId) gesprekId = nieuwGesprekId();
+  let geheugenOpen = false;
   // De afbeelding wordt vóór het versturen verkleind (de server accepteert maar een kleine aanvraag) en blijft alleen in het
   // geheugen; sessionStorage bewaart het gesprek zonder afbeeldingen.
   let chatAfbeelding = null;
@@ -595,7 +616,7 @@
     catch (e) { chat.push({ rol: "jarvis", tekst: e instanceof Error && !(e instanceof DOMException) ? e.message : "Die afbeelding kon ik niet lezen." }); tekenChat(); }
     tekenVoorbeeld();
   }
-  const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40).map(({ beeld, afbeelding, ...b }) => b))); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
+  const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40).map(({ beeld, afbeelding, ...b }) => b))); sessionStorage.setItem("jarvis-gesprek", gesprekId); sessionStorage.setItem("jarvis-chat-modus", chatModus); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
 
   function berichtHtml(b) {
     let extra = "";
@@ -607,7 +628,62 @@
       }
     }
     const beeld = b.beeld ? `<img src="${b.beeld}" alt="Bijgevoegde afbeelding">` : b.metBeeld ? `<div class="klein">[afbeelding]</div>` : "";
+    if (b.spar && b.rol !== "jij") {
+      if (b.onthouden?.length) extra += `<div class="klein">Onthouden: ${b.onthouden.map((o) => esc(`${o.soort}: ${o.tekst}`)).join(" · ")}</div>`;
+      extra += b.doelId ? "" : `<div><button type="button" class="klein" data-doelvan="${chat.indexOf(b)}">Maak hier een doel van</button></div>`;
+    }
     return `<div class="bericht ${b.rol === "jij" ? "jij" : "jarvis"}">${beeld}${esc(b.tekst)}${extra}</div>`;
+  }
+
+  // Een doel uit een sparsessie ontstaat alleen hier: de eigenaar drukt zelf op de knop (expliciete autorisatie).
+  async function doelUitSpar(index) {
+    const antwoord = chat[index];
+    const vraag = [...chat.slice(0, index)].reverse().find((b) => b.rol === "jij");
+    if (!antwoord || !vraag) return;
+    const eerste = String(vraag.tekst).split("\n").map((r) => r.trim()).find(Boolean) ?? "Doel uit sparsessie";
+    const titel = window.prompt("Titel van het doel", eerste.length > 80 ? `${eerste.slice(0, 77)}…` : eerste);
+    if (!titel) return;
+    const opdracht = `${vraag.tekst}\n\nUit een sparsessie met Jarvis; zijn laatste bijdrage:\n${antwoord.tekst}`;
+    try {
+      const id = await rpc("doel_nieuw", { p_titel: titel.slice(0, 120), p_opdracht: opdracht.slice(0, 20000), p_acceptatie_url: null });
+      antwoord.doelId = id;
+      bewaarChat();
+      await laad();
+    } catch (e) {
+      chat.push({ rol: "jarvis", tekst: `Doel maken lukte niet: ${e instanceof Error ? e.message : String(e)}` });
+      bewaarChat(); tekenChat();
+    }
+  }
+
+  function tekenGeheugen() {
+    const l = $("geheugenlijst");
+    if (!l) return;
+    l.hidden = !geheugenOpen;
+    $("geheugenknop").setAttribute("aria-expanded", String(geheugenOpen));
+    $("geheugenknop").textContent = `Wat Jarvis onthoudt (${inzichten.length})`;
+    l.innerHTML = inzichten.length
+      ? inzichten.map((x) => { const c = objectVan(x.context); return `<div class="inzicht"><div><b>${esc(c.inzicht_soort ?? "inzicht")}</b>${c.project ? ` · ${esc(c.project)}` : ""} — ${esc(x.tekst)}<div class="klein">${esc(tijd(x.op))}${c.bron?.gesprek ? ` · uit gesprek ${esc(String(c.bron.gesprek).slice(0, 8))}` : ""}</div></div><button type="button" data-vergeet="${esc(x.id)}">Vergeet</button></div>`; }).join("")
+      : `<div class="klein">Jarvis heeft nog niets onthouden. In de sparmodus legt hij besluiten, voorkeuren en feiten vast die later tellen.</div>`;
+  }
+
+  // Vergeten = de tekst wissen en het inzicht als gewist markeren; Jarvis leest het daarna nooit meer.
+  async function vergeet(id) {
+    const x = inzichten.find((i) => String(i.id) === id);
+    if (!x || !window.confirm(`Jarvis vergeet: "${x.tekst}"?`)) return;
+    const r = await client.from("berichten").update({ tekst: "", context: { ...objectVan(x.context), gewist: true, gewist_op: new Date().toISOString() } }).eq("id", x.id);
+    if (r.error) throw r.error;
+    inzichten = inzichten.filter((i) => i !== x);
+    tekenGeheugen();
+  }
+
+  function tekenModus() {
+    if (!$("modus-sparren")) return;
+    $("modus-sparren").setAttribute("aria-pressed", String(chatModus === "sparren"));
+    $("modus-opdracht").setAttribute("aria-pressed", String(chatModus === "opdracht"));
+    $("modusuitleg").textContent = chatModus === "sparren"
+      ? "Sparren: Jarvis denkt kritisch mee en onthoudt besluiten, maar start nooit zelf werk."
+      : "Opdracht: Jarvis maakt van een concrete opdracht een doel en de keten bouwt het.";
+    $("chatin").placeholder = chatModus === "sparren" ? "Waar wil je over sparren?" : "Stel een vraag of geef een opdracht";
   }
 
   function tekenChat() {
@@ -626,12 +702,12 @@
       const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ gesprek: chat.map((b) => ({ rol: b.rol, tekst: b.tekst, ...(b.afbeelding ? { afbeelding: b.afbeelding } : {}) })) }),
+        body: JSON.stringify({ modus: chatModus, gesprek_id: gesprekId, gesprek: chat.map((b) => ({ rol: b.rol, tekst: b.tekst, ...(b.afbeelding ? { afbeelding: b.afbeelding } : {}) })) }),
       });
       const uit = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(uit.fout ?? `Chat gaf ${r.status}`);
-      chat.push({ rol: "jarvis", tekst: uit.antwoord, doelId: uit.doel?.id ?? null });
-      if (uit.doel) await laad();
+      chat.push({ rol: "jarvis", tekst: uit.antwoord, doelId: uit.doel?.id ?? null, ...(uit.modus === "sparren" ? { spar: true, onthouden: uit.onthouden ?? [] } : {}) });
+      if (uit.doel || uit.onthouden?.length) await laad();
     } catch (e) {
       chat.push({ rol: "jarvis", tekst: `Dat lukte niet: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
@@ -658,6 +734,14 @@
     vorm.ondragleave = () => vorm.classList.remove("sleep");
     vorm.ondrop = (ev) => { ev.preventDefault(); vorm.classList.remove("sleep"); kiesBestand(ev.dataTransfer.files[0]); };
     $("chatin").onpaste = (ev) => { const f = [...ev.clipboardData.files].find((x) => x.type.startsWith("image/")); if (f) { ev.preventDefault(); kiesBestand(f); } };
+    $("modus-sparren").onclick = () => { chatModus = "sparren"; bewaarChat(); tekenModus(); };
+    $("modus-opdracht").onclick = () => { chatModus = "opdracht"; bewaarChat(); tekenModus(); };
+    $("chatnieuw").onclick = () => { if (chatBezig) return; chat = []; gesprekId = nieuwGesprekId(); bewaarChat(); tekenChat(); };
+    $("geheugenknop").onclick = () => { geheugenOpen = !geheugenOpen; tekenGeheugen(); };
+    $("geheugenlijst").onclick = (ev) => { const k = ev.target.closest("[data-vergeet]"); if (k) vergeet(k.dataset.vergeet).catch((e) => melding(e.message ?? String(e))); };
+    $("chatlog").onclick = (ev) => { const k = ev.target.closest("[data-doelvan]"); if (k) doelUitSpar(Number(k.dataset.doelvan)); };
+    tekenModus();
+    tekenGeheugen();
     tekenVoorbeeld();
     tekenChat();
   }
