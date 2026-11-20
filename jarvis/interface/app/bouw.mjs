@@ -118,7 +118,7 @@ for (const naam of ["manifest.webmanifest", "sw.js", "icon-192.png", "icon-512.p
 // De chat-endpoint (Vercel Function) naast de statische pagina. De functie heeft dezelfde publieke
 // identifiers nodig als de browser; ze worden uit config.js gelezen zodat er één bron blijft.
 mkdirSync(path.join(doel, "api"), { recursive: true });
-for (const naam of ["chat.mjs", "_chat-kern.mjs"]) copyFileSync(path.join(hier, "api", naam), path.join(doel, "api", naam));
+for (const naam of ["chat.mjs", "_chat-kern.mjs", "_brein.mjs"]) copyFileSync(path.join(hier, "api", naam), path.join(doel, "api", naam));
 {
   const cfg = {};
   new Function("window", readFileSync(configPad, "utf8"))(cfg);
