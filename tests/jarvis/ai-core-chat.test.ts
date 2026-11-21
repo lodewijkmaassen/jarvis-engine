@@ -151,6 +151,85 @@ describe("chat in de uitrol", () => {
     expect(oproepen.some((o) => o.url.includes("anthropic"))).toBe(false);
   });
 
+  // D-20261121-092556439: meerdere afbeeldingen en bestanden in één bericht.
+  it("geeft meerdere bijlagen in één bericht door: afbeeldingen, een PDF en een tekstbestand", async () => {
+    const { oproepen, fetchFn } = nep({ content: [{ type: "text", text: "Gezien." }] });
+    const bijlagen = [
+      { soort: "afbeelding", naam: "a.png", media: "image/png", data: "iVBORw0KGgo=" },
+      { soort: "afbeelding", naam: "b.jpg", media: "image/jpeg", data: "AAAA" },
+      { soort: "pdf", naam: "offerte.pdf", data: "JVBERi0=" },
+      { soort: "tekst", naam: "eisen.md", tekst: "# Eisen\n- snel" },
+    ];
+    const r = await verwerk({ token: "t", body: { gesprek: [{ rol: "jij", tekst: "Kijk hiernaar", bijlagen }] }, cfg, sleutel: "k", fetchFn });
+    expect(r.status).toBe(200);
+    const model = oproepen.find((o) => o.url.includes("anthropic"))!;
+    expect(JSON.parse(String(model.init.body)).messages[0].content).toEqual([
+      { type: "image", source: { type: "base64", media_type: "image/png", data: "iVBORw0KGgo=" } },
+      { type: "image", source: { type: "base64", media_type: "image/jpeg", data: "AAAA" } },
+      { type: "document", source: { type: "base64", media_type: "application/pdf", data: "JVBERi0=" }, title: "offerte.pdf" },
+      { type: "document", source: { type: "text", media_type: "text/plain", data: "# Eisen\n- snel" }, title: "eisen.md" },
+      { type: "text", text: "Kijk hiernaar" },
+    ]);
+  });
+  it("weigert te veel bijlagen in één bericht of een ongeldige bijlage, zonder het model aan te roepen", async () => {
+    const { oproepen, fetchFn } = nep({ content: [] });
+    const beeld = { soort: "afbeelding", naam: "x.png", media: "image/png", data: "AAAA" };
+    for (const bijlagen of [
+      Array.from({ length: 7 }, () => beeld),
+      [beeld, { soort: "word", naam: "x.docx", data: "AAAA" }],
+      [{ soort: "pdf", naam: "x.pdf", data: "geen base64!" }],
+      [{ soort: "tekst", naam: "x.txt", tekst: "" }],
+      [{ soort: "tekst", naam: "x.txt", tekst: "a".repeat(50_001) }],
+    ]) {
+      const r = await verwerk({ token: "t", body: { gesprek: [{ rol: "jij", tekst: "x", bijlagen }] }, cfg, sleutel: "k", fetchFn });
+      expect(r.status).toBe(400);
+    }
+    expect(oproepen.some((o) => o.url.includes("anthropic"))).toBe(false);
+  });
+  it("een doel uit een bericht met bijlagen noemt de bijlagen en neemt de tekst van een tekstbestand letterlijk op", async () => {
+    const { oproepen, fetchFn } = nep({ content: [{ type: "tool_use", name: "maak_doel", input: { titel: "Formulier", toelichting: "Op de schets staat een formulier met twee velden." } }] });
+    const bijlagen = [
+      { soort: "afbeelding", naam: "schets.png", media: "image/png", data: "AAAA" },
+      { soort: "tekst", naam: "velden.csv", tekst: "naam,email" },
+    ];
+    const r = await verwerk({ token: "t", body: { gesprek: [{ rol: "jij", tekst: "Bouw dit formulier", bijlagen }] }, cfg, sleutel: "k", fetchFn });
+    expect(r.lading.doel).toEqual({ id: "D-20261020-120000", titel: "Formulier" });
+    const body = JSON.parse(String(oproepen.find((o) => o.url.includes("doel_nieuw"))!.init.body));
+    expect(body.p_opdracht).toBe([
+      "Op de schets staat een formulier met twee velden.",
+      "Oorspronkelijke opdracht van de eigenaar:\nBouw dit formulier",
+      "Bijlagen van de eigenaar (2):\n- schets.png (afbeelding)\n- velden.csv (tekstbestand)",
+      "--- Inhoud van velden.csv ---\nnaam,email\n--- Einde van velden.csv ---",
+    ].join("\n\n"));
+  });
+  it("neemt van oudere berichten alleen bijlagen mee zolang ze binnen de grens passen, de nieuwste eerst", async () => {
+    const { oproepen, fetchFn } = nep({ content: [{ type: "text", text: "Ok." }] });
+    const groot = (naam: string) => ({ soort: "afbeelding", naam, media: "image/jpeg", data: "A".repeat(2_000_000) });
+    const gesprek = [
+      { rol: "jij", tekst: "eerste", bijlagen: [groot("oud.jpg")] },
+      { rol: "jarvis", tekst: "gezien" },
+      { rol: "jij", tekst: "tweede", bijlagen: [groot("nieuw.jpg")] },
+    ];
+    expect((await verwerk({ token: "t", body: { gesprek }, cfg, sleutel: "k", fetchFn })).status).toBe(200);
+    const berichten = JSON.parse(String(oproepen.find((o) => o.url.includes("anthropic"))!.init.body)).messages;
+    expect(berichten[0].content).toBe("eerste");
+    expect(berichten[2].content[0].type).toBe("image");
+  });
+  it("de sparmodus weigert een PDF en houdt het aantal bijlagen krap", async () => {
+    const { oproepen, fetchFn } = nep({ content: [] });
+    const r = await verwerk({ token: "t", body: { modus: "sparren", gesprek: [{ rol: "jij", tekst: "x", bijlagen: [{ soort: "pdf", naam: "x.pdf", data: "JVBERi0=" }] }] }, cfg, sleutel: "k", fetchFn });
+    expect(r.status).toBe(400);
+    expect(r.lading.fout).toMatch(/PDF/);
+    expect(oproepen.some((o) => o.url.includes("anthropic"))).toBe(false);
+  });
+  it("de interface laat meerdere bestanden tegelijk kiezen, slepen en plakken", () => {
+    const html = readFileSync(path.join(process.cwd(), "jarvis/interface/v3.html"), "utf8");
+    expect(html).toMatch(/<input type="file" id="chatbestand" multiple accept="[^"]*application\/pdf[^"]*text\/\*/);
+    expect(html).toContain("kiesBestanden(ev.target.files)");
+    expect(html).toContain("kiesBestanden(ev.dataTransfer.files)");
+    expect(html).toContain("gesprek: gesprekVoorServer()");
+  });
+
   it("haalt doelen zelf op voor een informatievraag en maakt geen doel aan", async () => {
     const oproepen: Oproep[] = [];
     let ronde = 0;

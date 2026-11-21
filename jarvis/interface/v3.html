@@ -50,7 +50,12 @@
   .chatvorm .invoer { flex:1; min-width:0; }
   .chatvorm .invoer textarea { width:100%; }
   .chatvorm.sleep { outline:2px dashed var(--accent); outline-offset:3px; border-radius:10px; }
-  .chatvoorbeeld { display:flex; align-items:center; gap:8px; margin:0 0 8px; }
+  .chatvoorbeeld { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 8px; }
+  .chatvoorbeeld .stuk { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--lijn); border-radius:8px; max-width:100%; }
+  .chatvoorbeeld .stuk button { margin:0; padding:2px 6px; }
+  .chatvoorbeeld img { max-width:72px; max-height:56px; }
+  .bestandnaam { font-size:12.5px; overflow-wrap:anywhere; }
+  .bericht .bijlagen { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
   .chatvoorbeeld[hidden] { display:none; }
   .chatvoorbeeld img, .bericht img { max-width:160px; max-height:120px; border-radius:8px; border:1px solid var(--lijn); display:block; }
   .bericht img { margin-bottom:6px; }
@@ -548,7 +553,7 @@
           <div class="geheugen" id="geheugenlijst" hidden></div>
           <div class="chatlog" id="chatlog" role="log" aria-live="polite" aria-label="Gesprek met Jarvis"></div>
           <div class="chatvoorbeeld" id="chatvoorbeeld" hidden></div>
-          <form class="chatvorm" id="chatvorm"><input type="file" id="chatbestand" accept="image/png,image/jpeg,image/gif,image/webp" hidden><button type="button" class="bijlage" id="chatbijlage" aria-label="Afbeelding toevoegen" title="Afbeelding toevoegen of hierheen slepen">📎</button><div class="invoer"><textarea id="chatin" rows="2" placeholder="Stel een vraag of geef een opdracht" aria-label="Bericht aan Jarvis"></textarea></div><button class="hoofd" id="chatstuur" type="submit">Stuur</button></form></div>
+          <form class="chatvorm" id="chatvorm"><input type="file" id="chatbestand" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf,text/*,.txt,.md,.csv,.json,.log,.xml,.yml,.yaml,.html,.sql,.ts,.js,.mjs,.css" hidden><button type="button" class="bijlage" id="chatbijlage" aria-label="Bijlagen toevoegen" title="Afbeeldingen of bestanden toevoegen (of hierheen slepen)">📎</button><div class="invoer"><textarea id="chatin" rows="2" placeholder="Stel een vraag of geef een opdracht" aria-label="Bericht aan Jarvis"></textarea></div><button class="hoofd" id="chatstuur" type="submit">Stuur</button></form></div>
         <div class="paneel"><h2>Recente activiteit</h2><div class="subtekst">Laatste activiteit van Jarvis</div>${
           activiteit.length
             ? `<ul class="activiteit">${activiteit.slice(0, 9).map((a) => `<li>${esc(a.tekst)}<div class="klein">${esc(tijd(a.op))}${a.taak ? " · " + esc(a.taak) : ""}${a.verwijzing ? " · " + esc(a.verwijzing) : ""}</div></li>`).join("")}</ul>`
@@ -587,12 +592,19 @@
   try { gesprekId = sessionStorage.getItem("jarvis-gesprek"); } catch { /* nieuw */ }
   if (!gesprekId) gesprekId = nieuwGesprekId();
   let geheugenOpen = false;
-  // De afbeelding wordt vóór het versturen verkleind (de server accepteert maar een kleine aanvraag) en blijft alleen in het
-  // geheugen; sessionStorage bewaart het gesprek zonder afbeeldingen.
-  let chatAfbeelding = null;
+  // Bijlagen (D-20261121-092556439): meerdere afbeeldingen, PDF's en tekstbestanden per bericht. Een afbeelding wordt
+  // vóór het versturen verkleind (de server accepteert maar een kleine aanvraag). Bijlagen blijven alleen in het geheugen;
+  // sessionStorage bewaart het gesprek met alleen hun namen.
+  let chatBijlagen = [];
+  const MAX_BIJLAGEN = 6;
+  // Binaire inhoud (base64) per aanvraag; de server hanteert dezelfde grens, Vercel weigert boven 4,5 MB.
+  const MAX_BINAIR = 3_400_000;
+  const MAX_PDF_BYTES = 2_000_000;
+  const MAX_BESTAND_TEKENS = 50_000;
   const BEELDTYPEN = ["image/png", "image/jpeg", "image/gif", "image/webp"];
+  const TEKSTEXTENSIES = /\.(txt|md|csv|json|log|xml|ya?ml|html?|sql|ts|js|mjs|css)$/i;
+  const isTekstbestand = (f) => f.type.startsWith("text/") || ["application/json", "application/xml"].includes(f.type) || TEKSTEXTENSIES.test(f.name);
   async function maakAfbeelding(bestand) {
-    if (!BEELDTYPEN.includes(bestand.type)) throw new Error("Kies een PNG-, JPEG-, GIF- of WebP-afbeelding.");
     const bron = await createImageBitmap(bestand);
     const f = Math.min(1, 1280 / Math.max(bron.width, bron.height));
     const c = document.createElement("canvas");
@@ -601,22 +613,52 @@
     g.fillStyle = "#fff"; g.fillRect(0, 0, c.width, c.height);
     g.drawImage(bron, 0, 0, c.width, c.height);
     const url = c.toDataURL("image/jpeg", 0.85);
-    return { media: "image/jpeg", data: url.slice(url.indexOf(",") + 1), url };
+    return { soort: "afbeelding", naam: bestand.name || "afbeelding", media: "image/jpeg", data: url.slice(url.indexOf(",") + 1), url };
   }
+  const leesBase64 = (bestand) => new Promise((ok, mis) => {
+    const r = new FileReader();
+    r.onload = () => { const u = String(r.result); ok(u.slice(u.indexOf(",") + 1)); };
+    r.onerror = () => mis(r.error);
+    r.readAsDataURL(bestand);
+  });
+  async function maakBijlage(bestand) {
+    if (BEELDTYPEN.includes(bestand.type)) return maakAfbeelding(bestand);
+    if (bestand.type === "application/pdf" || /\.pdf$/i.test(bestand.name)) {
+      if (bestand.size > MAX_PDF_BYTES) throw new Error(`${bestand.name} is te groot; een PDF mag hoogstens 2 MB zijn.`);
+      return { soort: "pdf", naam: bestand.name, data: await leesBase64(bestand) };
+    }
+    if (isTekstbestand(bestand)) {
+      let tekst = await bestand.text();
+      if (!tekst.trim()) throw new Error(`${bestand.name} is leeg.`);
+      if (tekst.length > MAX_BESTAND_TEKENS) tekst = tekst.slice(0, MAX_BESTAND_TEKENS - 40) + "\n…[afgekapt: bestand te lang]";
+      return { soort: "tekst", naam: bestand.name, tekst };
+    }
+    throw new Error(`${bestand.name}: dit bestandstype kan ik niet lezen. Kies een afbeelding, PDF of tekstbestand.`);
+  }
+  const binairVan = (lijst) => lijst.reduce((n, x) => n + (x.data?.length ?? 0), 0);
   function tekenVoorbeeld() {
     const v = $("chatvoorbeeld");
     if (!v) return;
-    v.hidden = !chatAfbeelding;
-    v.innerHTML = chatAfbeelding ? `<img src="${chatAfbeelding.url}" alt="Voorbeeld van de bijgevoegde afbeelding"><button type="button" id="chatwis" aria-label="Afbeelding verwijderen">Verwijder</button>` : "";
-    if ($("chatwis")) $("chatwis").onclick = () => { chatAfbeelding = null; tekenVoorbeeld(); };
+    v.hidden = !chatBijlagen.length;
+    v.innerHTML = chatBijlagen.map((x, i) => `<div class="stuk">${x.url ? `<img src="${x.url}" alt="Voorbeeld van ${esc(x.naam)}">` : `<span aria-hidden="true">📄</span>`}<span class="bestandnaam">${esc(x.naam)}</span><button type="button" data-wis="${i}" aria-label="${esc(x.naam)} verwijderen">Verwijder</button></div>`).join("");
+    v.onclick = (ev) => { const k = ev.target.closest("[data-wis]"); if (k) { chatBijlagen.splice(Number(k.dataset.wis), 1); tekenVoorbeeld(); } };
   }
-  async function kiesBestand(bestand) {
-    if (!bestand) return;
-    try { chatAfbeelding = await maakAfbeelding(bestand); }
-    catch (e) { chat.push({ rol: "jarvis", tekst: e instanceof Error && !(e instanceof DOMException) ? e.message : "Die afbeelding kon ik niet lezen." }); tekenChat(); }
+  async function kiesBestanden(bestanden) {
+    const lijst = [...(bestanden ?? [])];
+    if (!lijst.length) return;
+    const fouten = [];
+    for (const bestand of lijst) {
+      if (chatBijlagen.length >= MAX_BIJLAGEN) { fouten.push(`Hoogstens ${MAX_BIJLAGEN} bijlagen per bericht; de rest is niet toegevoegd.`); break; }
+      try {
+        const x = await maakBijlage(bestand);
+        if (binairVan([...chatBijlagen, x]) > MAX_BINAIR) { fouten.push(`${bestand.name} past niet meer in dit bericht; stuur het in een volgend bericht.`); continue; }
+        chatBijlagen.push(x);
+      } catch (e) { fouten.push(e instanceof Error && !(e instanceof DOMException) ? e.message : `${bestand.name} kon ik niet lezen.`); }
+    }
+    if (fouten.length) { chat.push({ rol: "jarvis", tekst: fouten.join("\n") }); tekenChat(); }
     tekenVoorbeeld();
   }
-  const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40).map(({ beeld, afbeelding, ...b }) => b))); sessionStorage.setItem("jarvis-gesprek", gesprekId); sessionStorage.setItem("jarvis-chat-modus", chatModus); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
+  const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40).map(({ beeld, afbeelding, bijlagen, ...b }) => b))); sessionStorage.setItem("jarvis-gesprek", gesprekId); sessionStorage.setItem("jarvis-chat-modus", chatModus); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
 
   function berichtHtml(b) {
     let extra = "";
@@ -627,7 +669,11 @@
         extra = `<div class="klein">${esc(LABEL[d.status] ?? d.status)}${d.status === "klaar" ? " — KLAAR" : ""}</div>${soort === "lopend" ? stappen(d.status) : ""}${["klaar", "vast"].includes(d.status) && d.uitkomst ? `<div class="klein">${esc(d.uitkomst)}</div>` : ""}`;
       }
     }
-    const beeld = b.beeld ? `<img src="${b.beeld}" alt="Bijgevoegde afbeelding">` : b.metBeeld ? `<div class="klein">[afbeelding]</div>` : "";
+    // Nieuwe berichten dragen hun bijlagen (met voorbeeld zolang ze in het geheugen staan) en de namen; oudere één afbeelding.
+    const stukken = b.bijlagen ? b.bijlagen.map((x) => x.url ? `<img src="${x.url}" alt="${esc(x.naam)}">` : `<span class="klein">📄 ${esc(x.naam)}</span>`)
+      : b.bijlageNamen?.length ? b.bijlageNamen.map((n) => `<span class="klein">📎 ${esc(n)}</span>`)
+      : b.beeld ? [`<img src="${b.beeld}" alt="Bijgevoegde afbeelding">`] : b.metBeeld ? [`<span class="klein">[afbeelding]</span>`] : [];
+    const beeld = stukken.length ? `<div class="bijlagen">${stukken.join("")}</div>` : "";
     if (b.spar && b.rol !== "jij") {
       if (b.onthouden?.length) extra += `<div class="klein">Onthouden: ${b.onthouden.map((o) => esc(`${o.soort}: ${o.tekst}`)).join(" · ")}</div>`;
       extra += b.doelId ? "" : `<div><button type="button" class="klein" data-doelvan="${chat.indexOf(b)}">Maak hier een doel van</button></div>`;
@@ -643,7 +689,11 @@
     const eerste = String(vraag.tekst).split("\n").map((r) => r.trim()).find(Boolean) ?? "Doel uit sparsessie";
     const titel = window.prompt("Titel van het doel", eerste.length > 80 ? `${eerste.slice(0, 77)}…` : eerste);
     if (!titel) return;
-    const opdracht = `${vraag.tekst}\n\nUit een sparsessie met Jarvis; zijn laatste bijdrage:\n${antwoord.tekst}`;
+    // Bijlagen gaan met naam mee, tekstbestanden letterlijk (zolang ze nog in het geheugen staan).
+    const namen = vraag.bijlageNamen ?? [];
+    const teksten = (vraag.bijlagen ?? []).filter((x) => x.soort === "tekst").map((x) => `--- Inhoud van ${x.naam} ---\n${x.tekst}\n--- Einde van ${x.naam} ---`);
+    const bijlageDeel = namen.length ? `\n\nBijlagen van de eigenaar (${namen.length}):\n${namen.map((n) => `- ${n}`).join("\n")}${teksten.length ? `\n\n${teksten.join("\n\n")}` : ""}` : "";
+    const opdracht = `${vraag.tekst}\n\nUit een sparsessie met Jarvis; zijn laatste bijdrage:\n${antwoord.tekst}${bijlageDeel}`;
     try {
       const id = await rpc("doel_nieuw", { p_titel: titel.slice(0, 120), p_opdracht: opdracht.slice(0, 20000), p_acceptatie_url: null });
       antwoord.doelId = id;
@@ -694,15 +744,40 @@
     if (onderaan || chatBezig) log.scrollTop = log.scrollHeight;
   }
 
-  async function stuurChat(tekst, afb) {
-    chat.push({ rol: "jij", tekst, ...(afb ? { beeld: afb.url, afbeelding: { media: afb.media, data: afb.data }, metBeeld: true } : {}) });
+  // Wat er per bericht naar de server gaat. Bijlagen van oudere berichten gaan alleen mee zolang ze binnen de grens passen
+  // (nieuwste eerst); daarbuiten blijft alleen hun naam in de tekst staan.
+  function gesprekVoorServer() {
+    let ruimte = MAX_BINAIR;
+    return [...chat].reverse().map((b) => {
+      const uit = { rol: b.rol, tekst: b.tekst };
+      if (b.bijlagen?.length) {
+        const mee = [];
+        const weg = [];
+        for (const x of b.bijlagen) {
+          const n = x.data?.length ?? 0;
+          if (n > ruimte) { weg.push(x.naam); continue; }
+          ruimte -= n;
+          mee.push(x.soort === "tekst" ? { soort: "tekst", naam: x.naam, tekst: x.tekst } : { soort: x.soort, naam: x.naam, ...(x.media ? { media: x.media } : {}), data: x.data });
+        }
+        if (mee.length) uit.bijlagen = mee;
+        if (weg.length) uit.tekst = `${uit.tekst}\n[eerder meegestuurd: ${weg.join(", ")}]`.trim();
+      } else if (b.afbeelding && b.afbeelding.data.length <= ruimte) {
+        ruimte -= b.afbeelding.data.length;
+        uit.afbeelding = b.afbeelding;
+      }
+      return uit;
+    }).reverse();
+  }
+
+  async function stuurChat(tekst, bijlagen) {
+    chat.push({ rol: "jij", tekst, ...(bijlagen.length ? { bijlagen, bijlageNamen: bijlagen.map((x) => x.naam) } : {}) });
     chatBezig = true; bewaarChat(); tekenChat();
     try {
       const { data: { session } } = await client.auth.getSession();
       const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${session?.access_token ?? ""}` },
-        body: JSON.stringify({ modus: chatModus, gesprek_id: gesprekId, gesprek: chat.map((b) => ({ rol: b.rol, tekst: b.tekst, ...(b.afbeelding ? { afbeelding: b.afbeelding } : {}) })) }),
+        body: JSON.stringify({ modus: chatModus, gesprek_id: gesprekId, gesprek: gesprekVoorServer() }),
       });
       const uit = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(uit.fout ?? `Chat gaf ${r.status}`);
@@ -722,18 +797,18 @@
     $("chatvorm").onsubmit = (ev) => {
       ev.preventDefault();
       const tekst = $("chatin").value.trim();
-      if ((!tekst && !chatAfbeelding) || chatBezig) return;
-      const afb = chatAfbeelding;
-      $("chatin").value = ""; chatConcept = ""; chatAfbeelding = null; tekenVoorbeeld();
-      stuurChat(tekst, afb);
+      if ((!tekst && !chatBijlagen.length) || chatBezig) return;
+      const mee = chatBijlagen;
+      $("chatin").value = ""; chatConcept = ""; chatBijlagen = []; tekenVoorbeeld();
+      stuurChat(tekst, mee);
     };
     $("chatbijlage").onclick = () => $("chatbestand").click();
-    $("chatbestand").onchange = (ev) => { kiesBestand(ev.target.files[0]); ev.target.value = ""; };
+    $("chatbestand").onchange = (ev) => { kiesBestanden(ev.target.files).finally(() => { ev.target.value = ""; }); };
     const vorm = $("chatvorm");
     vorm.ondragover = (ev) => { ev.preventDefault(); vorm.classList.add("sleep"); };
     vorm.ondragleave = () => vorm.classList.remove("sleep");
-    vorm.ondrop = (ev) => { ev.preventDefault(); vorm.classList.remove("sleep"); kiesBestand(ev.dataTransfer.files[0]); };
-    $("chatin").onpaste = (ev) => { const f = [...ev.clipboardData.files].find((x) => x.type.startsWith("image/")); if (f) { ev.preventDefault(); kiesBestand(f); } };
+    vorm.ondrop = (ev) => { ev.preventDefault(); vorm.classList.remove("sleep"); kiesBestanden(ev.dataTransfer.files); };
+    $("chatin").onpaste = (ev) => { const f = [...ev.clipboardData.files]; if (f.length) { ev.preventDefault(); kiesBestanden(f); } };
     $("modus-sparren").onclick = () => { chatModus = "sparren"; bewaarChat(); tekenModus(); };
     $("modus-opdracht").onclick = () => { chatModus = "opdracht"; bewaarChat(); tekenModus(); };
     $("chatnieuw").onclick = () => { if (chatBezig) return; chat = []; gesprekId = nieuwGesprekId(); bewaarChat(); tekenChat(); };
