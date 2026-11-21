@@ -30,8 +30,19 @@ const MAX_DOELEN = 25;
 // Een Vercel Function accepteert hoogstens 4,5 MB per aanvraag; de browser verkleint de afbeelding vooraf.
 const MAX_AFBEELDING = 2_500_000;
 const MAX_TOTAAL_AFBEELDING = 3_500_000;
-const MAX_AFBEELDINGEN = 2;
 const BEELDTYPEN = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+// Meerdere bijlagen per bericht (D-20261121-092556439): afbeeldingen, PDF's en tekstbestanden. Het totaal aan binaire
+// inhoud blijft onder MAX_TOTAAL_AFBEELDING, zodat de aanvraag onder de grens van Vercel blijft.
+export const MAX_BIJLAGEN_PER_BERICHT = 6;
+const MAX_PDF = 3_000_000;
+const MAX_BESTAND_TEKENS = 50_000;
+const MAX_NAAM = 120;
+// Per modus: hoeveel bijlagen het hele gesprek meeneemt (nieuwste eerst) en hoeveel tekst uit bestanden. De sparmodus
+// houdt het krap omdat de kostenreservering per beurt van een vaste invoergrens uitgaat; een PDF past daar niet in.
+const BIJLAGEGRENZEN = {
+  opdracht: { aantal: 10, tekens: 100_000, pdf: true },
+  sparren: { aantal: 3, tekens: 6_000, pdf: false },
+};
 
 const SYSTEEM = `Je bent Jarvis, de assistent van de eigenaar in het Command Center. Antwoord in het Nederlands, kort en feitelijk.
 Is het bericht alleen een vraag of gesprek: antwoord gewoon, zonder maak_doel. Bevat het bericht naast een vraag ook een concrete opdracht: beantwoord de vraag en maak voor de opdracht een doel aan.
@@ -40,7 +51,7 @@ De keten van een doel: open (nieuw, wacht tot de uitvoerder het oppakt) → bezi
 Vragen over de historie van een taak (wat is er gebeurd, waarom liep hij vast, welke NO-GO-feedback, wat is daarna aangepast, is hij hervat, hoe is het opgelost, welke pull requests): roep raadpleeg_doelen aan met het id van het doel; dat geeft de activiteit (stappen, fouten, herstel, pull requests, merge) en de reviewoordelen met rapport per kop van de pull request. Zonder id (bijvoorbeeld "welke taak liep het laatst vast") gebruik je historie: true, dat geeft de recentste vastgelopen doelen, hervatte doelen (heropend_op), statusovergangen (oud → nieuw, met reden), fouten en NO-GO's. Een doel dat is hervat staat niet meer op vast: kijk dus ook naar hervatte_doelen en statusovergangen. Haal daarna het gevonden doel met id op. Geef alleen wat daar staat; ontbreekt een gebeurtenis in de administratie, zeg dat dan. De uitvoerder draait periodiek; een doel op open kan dus even wachten.
 Is het een concrete opdracht om iets te bouwen of te wijzigen: roep het gereedschap maak_doel aan met een korte titel, en kies het project als het duidelijk is. De letterlijke tekst van de eigenaar gaat automatisch het doel in; herhaal die niet. Geef in toelichting alleen wat daar niet in staat: waar de eigenaar naar eerdere berichten verwijst, of wat er op een meegestuurde afbeelding staat.
 Projecten: tovas-flow (ToVas Flow: gemiste oproepen, offertes, reviews, inlogpagina), kasboek (Kasboek), tobias-leert (Tobias Leert). Subprojecten van tovas-flow: gemiste-oproepen, offerte-opvolging, reviews-verzamelen. Subproject van tobias-leert: woordbattle (WoordBattle).
-Bij een bericht kan een afbeelding zitten die de eigenaar ter toelichting meestuurt: kijk ernaar en gebruik wat erop staat. Neem bij een opdracht de relevante inhoud van de afbeelding in woorden op in de toelichting.
+Bij een bericht kunnen een of meer bijlagen zitten die de eigenaar ter toelichting meestuurt (afbeeldingen, PDF's, tekstbestanden): bekijk ze allemaal en gebruik wat erin staat. Neem bij een opdracht de relevante inhoud van de afbeeldingen en PDF's in woorden op in de toelichting; de namen van de bijlagen en de tekst van tekstbestanden gaan automatisch mee in het doel.
 Verzin geen resultaten en beloof niets over de uitkomst; de keten bouwt, beoordeelt en rolt uit.`;
 
 const GEREEDSCHAP = [{
@@ -64,7 +75,7 @@ const GEREEDSCHAP = [{
     type: "object",
     properties: {
       titel: { type: "string", description: "Korte titel, hoogstens 80 tekens" },
-      toelichting: { type: "string", description: "Optioneel en kort: context die niet in de tekst van de eigenaar staat (verwijzing naar eerdere berichten, inhoud van een afbeelding). De tekst van de eigenaar zelf wordt automatisch toegevoegd." },
+      toelichting: { type: "string", description: "Optioneel en kort: context die niet in de tekst van de eigenaar staat (verwijzing naar eerdere berichten, inhoud van afbeeldingen of PDF's). De tekst van de eigenaar zelf wordt automatisch toegevoegd." },
       project: { type: "string", description: "Optioneel: tovas-flow, kasboek, tobias-leert, of <project>/<subproject> zoals tovas-flow/offerte-opvolging of tobias-leert/woordbattle", pattern: "^[a-z0-9-]+(/[a-z0-9-]+)?$" },
     },
     required: ["titel"],
@@ -288,27 +299,77 @@ function schoonAfbeelding(a) {
   return /^[A-Za-z0-9+/]+={0,2}$/.test(a.data) ? { media: a.media, data: a.data } : null;
 }
 
-/** Geeft de berichten voor het model, of null; of { fout } als een afbeelding niet deugt. */
-function schoon(gesprek, { maxBerichten = MAX_BERICHTEN, maxTekens = MAX_TEKENS } = {}) {
+const isBase64 = (d) => /^[A-Za-z0-9+/]+={0,2}$/.test(d);
+const schoneNaam = (n, terugval) => String(n ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, MAX_NAAM) || terugval;
+
+/**
+ * Eén bijlage uit de browser, gecontroleerd. Geeft { soort, naam, ... } of null als ze niet deugt.
+ * soort: "afbeelding" (media + base64), "pdf" (base64) of "tekst" (de inhoud van een tekstbestand).
+ */
+export function schoonBijlage(b) {
+  if (!b || typeof b !== "object") return null;
+  const soort = b.soort ?? (b.media && BEELDTYPEN.includes(b.media) ? "afbeelding" : null);
+  if (soort === "afbeelding") {
+    const a = schoonAfbeelding(b);
+    return a ? { soort, naam: schoneNaam(b.naam, "afbeelding"), ...a } : null;
+  }
+  if (soort === "pdf") {
+    if (typeof b.data !== "string" || !b.data || b.data.length > MAX_PDF || !isBase64(b.data)) return null;
+    return { soort, naam: schoneNaam(b.naam, "document.pdf"), media: "application/pdf", data: b.data };
+  }
+  if (soort === "tekst") {
+    if (typeof b.tekst !== "string" || !b.tekst.trim() || b.tekst.length > MAX_BESTAND_TEKENS) return null;
+    return { soort, naam: schoneNaam(b.naam, "bestand.txt"), tekst: b.tekst };
+  }
+  return null;
+}
+
+/** De bijlagen van één bericht: het nieuwe veld bijlagen, of het oude enkele veld afbeelding. Of { fout }. */
+function bijlagenVan(b) {
+  const ruw = Array.isArray(b?.bijlagen) ? b.bijlagen : b?.afbeelding ? [{ soort: "afbeelding", ...b.afbeelding }] : [];
+  if (ruw.length > MAX_BIJLAGEN_PER_BERICHT) return { fout: `Hoogstens ${MAX_BIJLAGEN_PER_BERICHT} bijlagen per bericht.` };
+  const uit = [];
+  for (const r of ruw) {
+    const x = schoonBijlage(r);
+    if (!x) return { fout: b?.afbeelding && !b?.bijlagen ? "De afbeelding is ongeldig of te groot." : "Een bijlage is ongeldig of te groot." };
+    uit.push(x);
+  }
+  return uit;
+}
+
+function blokVan(x) {
+  if (x.soort === "afbeelding") return { type: "image", source: { type: "base64", media_type: x.media, data: x.data } };
+  if (x.soort === "pdf") return { type: "document", source: { type: "base64", media_type: "application/pdf", data: x.data }, title: x.naam };
+  return { type: "document", source: { type: "text", media_type: "text/plain", data: x.tekst }, title: x.naam };
+}
+
+/** Geeft de berichten voor het model, of null; of { fout } als een bijlage niet deugt. */
+function schoon(gesprek, { maxBerichten = MAX_BERICHTEN, maxTekens = MAX_TEKENS, modus = "opdracht" } = {}) {
   if (!Array.isArray(gesprek) || gesprek.length === 0) return null;
+  const grens = BIJLAGEGRENZEN[modus] ?? BIJLAGEGRENZEN.opdracht;
   let totaal = 0;
   let aantal = 0;
+  let tekens = 0;
   const rest = [];
-  // Van achteren naar voren, zodat de nieuwste afbeeldingen voorrang krijgen binnen het totaal.
+  // Van achteren naar voren, zodat de nieuwste bijlagen voorrang krijgen binnen het totaal.
   for (const b of gesprek.slice(-maxBerichten).reverse()) {
     const tekst = String(b?.tekst ?? "").slice(0, maxTekens);
     const role = b?.rol === "jarvis" ? "assistant" : "user";
-    let afb = null;
-    if (role === "user" && b?.afbeelding) {
-      afb = schoonAfbeelding(b.afbeelding);
-      if (!afb) return { fout: "De afbeelding is ongeldig of te groot." };
-      if (aantal >= MAX_AFBEELDINGEN || totaal + afb.data.length > MAX_TOTAAL_AFBEELDING) afb = null;
-      else { aantal += 1; totaal += afb.data.length; }
+    const mee = [];
+    if (role === "user") {
+      const lijst = bijlagenVan(b);
+      if (!Array.isArray(lijst)) return lijst;
+      if (!grens.pdf && lijst.some((x) => x.soort === "pdf")) return { fout: "In de sparmodus lees ik geen PDF; kies de opdrachtmodus of plak de tekst." };
+      for (const x of lijst) {
+        const binair = x.data?.length ?? 0;
+        const tekst_ = x.tekst?.length ?? 0;
+        if (aantal >= grens.aantal || totaal + binair > MAX_TOTAAL_AFBEELDING || tekens + tekst_ > grens.tekens) continue;
+        aantal += 1; totaal += binair; tekens += tekst_;
+        mee.push(x);
+      }
     }
-    if (!tekst.trim() && !afb) continue;
-    const content = afb
-      ? [{ type: "image", source: { type: "base64", media_type: afb.media, data: afb.data } }, ...(tekst.trim() ? [{ type: "text", text: tekst }] : [])]
-      : tekst;
+    if (!tekst.trim() && !mee.length) continue;
+    const content = mee.length ? [...mee.map(blokVan), ...(tekst.trim() ? [{ type: "text", text: tekst }] : [])] : tekst;
     rest.push({ role, content });
   }
   rest.reverse();
@@ -317,13 +378,20 @@ function schoon(gesprek, { maxBerichten = MAX_BERICHTEN, maxTekens = MAX_TEKENS 
   return rest.length && rest[rest.length - 1].role === "user" ? rest : null;
 }
 
+/** De bijlagen van het laatste bericht van de eigenaar, gecontroleerd; voor het doel dat daaruit ontstaat. */
+export function laatsteBijlagen(gesprek) {
+  const laatste = Array.isArray(gesprek) ? [...gesprek].reverse().find((b) => b?.rol !== "jarvis") : null;
+  const lijst = laatste ? bijlagenVan(laatste) : [];
+  return Array.isArray(lijst) ? lijst : [];
+}
+
 /** Controleert de sessie bij Supabase en geeft de gebruiker terug, of null. */
 async function gebruiker(cfg, token, fetchFn) {
   const r = await fetchFn(`${cfg.url}/auth/v1/user`, { headers: { apikey: cfg.key, authorization: `Bearer ${token}` } });
   return r.ok ? await r.json() : null;
 }
 
-/** De tekst van het laatste bericht van de eigenaar (zonder afbeelding). */
+/** De tekst van het laatste bericht van de eigenaar (zonder bijlagen). */
 export function laatsteTekst(berichten) {
   const laatste = [...berichten].reverse().find((b) => b.role === "user");
   if (!laatste) return "";
@@ -336,7 +404,7 @@ export function laatsteTekst(berichten) {
  * zodat niets van de opdracht verloren gaat; de titel valt terug op de eerste regel van die tekst. Zo mislukt een
  * doel niet meer doordat het model een veld leeg liet of de aanroep werd afgekapt.
  */
-export function doelVelden(doel, origineel) {
+export function doelVelden(doel, origineel, bijlagen = []) {
   const tekst = String(origineel ?? "").trim();
   const eerste = tekst.split("\n").map((r) => r.trim()).find(Boolean) ?? "";
   const titel = (String(doel?.titel ?? "").trim() || (eerste.length > 80 ? `${eerste.slice(0, 77)}…` : eerste)).slice(0, 120);
@@ -345,11 +413,18 @@ export function doelVelden(doel, origineel) {
   const delen = [];
   if (toelichting && toelichting !== tekst) delen.push(toelichting);
   if (tekst) delen.push(delen.length ? `Oorspronkelijke opdracht van de eigenaar:\n${tekst}` : tekst);
+  // De bijlagen gaan met naam mee; de tekst van een tekstbestand letterlijk, zodat de uitvoerder het bestand zelf heeft.
+  // Afbeeldingen en PDF's kan het doel niet bewaren: hun inhoud staat in woorden in de toelichting.
+  if (bijlagen.length) {
+    const soortLabel = { afbeelding: "afbeelding", pdf: "PDF", tekst: "tekstbestand" };
+    delen.push(`Bijlagen van de eigenaar (${bijlagen.length}):\n${bijlagen.map((b) => `- ${b.naam} (${soortLabel[b.soort] ?? b.soort})`).join("\n")}`);
+    for (const b of bijlagen.filter((x) => x.soort === "tekst")) delen.push(`--- Inhoud van ${b.naam} ---\n${b.tekst}\n--- Einde van ${b.naam} ---`);
+  }
   return { titel, opdracht: delen.join("\n\n").slice(0, MAX_OPDRACHT) };
 }
 
-async function maakDoel(cfg, token, doel, fetchFn, origineel = "") {
-  let { titel, opdracht } = doelVelden(doel, origineel);
+async function maakDoel(cfg, token, doel, fetchFn, origineel = "", bijlagen = []) {
+  let { titel, opdracht } = doelVelden(doel, origineel, bijlagen);
   if (!titel || !opdracht) throw new Error("doel mist titel of opdracht");
   const project = typeof doel.project === "string" && /^[a-z0-9-]+(\/[a-z0-9-]+)?$/.test(doel.project) ? doel.project : null;
   if (project) opdracht = `Project: ${project}\n\n${opdracht}`;
@@ -411,7 +486,7 @@ export async function verwerk({ token, body, cfg, sleutel, fetchFn = fetch }) {
   if (!token) return { status: 401, lading: { fout: "Niet ingelogd." } };
   // Sparmodus alleen als de interface erom vraagt; zonder modus blijft de chat precies zoals hij was.
   const sparren = body?.modus === "sparren";
-  const berichten = schoon(body?.gesprek, sparren ? { maxBerichten: MAX_SPAR_BERICHTEN, maxTekens: MAX_SPAR_TEKENS } : {});
+  const berichten = schoon(body?.gesprek, sparren ? { maxBerichten: MAX_SPAR_BERICHTEN, maxTekens: MAX_SPAR_TEKENS, modus: "sparren" } : {});
   if (!berichten) return { status: 400, lading: { fout: "Geen bericht." } };
   if (!Array.isArray(berichten)) return { status: 400, lading: { fout: berichten.fout } };
   const gesprekId = typeof body?.gesprek_id === "string" && /^[A-Za-z0-9-]{8,64}$/.test(body.gesprek_id) ? body.gesprek_id : null;
@@ -437,7 +512,7 @@ export async function verwerk({ token, body, cfg, sleutel, fetchFn = fetch }) {
     if (sparren) return await sparBeurt({ berichten, geheugen: berichtenGeheugen(cfg, token, fetchFn), sleutel, fetchFn, lees, gesprekId, metLimiet: true });
     const { tekst, doel } = await vraagModel(berichten, { sleutel, fetchFn, lees });
     if (doel) {
-      const nieuw = await maakDoel(cfg, token, doel, fetchFn, laatsteTekst(berichten));
+      const nieuw = await maakDoel(cfg, token, doel, fetchFn, laatsteTekst(berichten), laatsteBijlagen(body?.gesprek));
       return { status: 200, lading: { antwoord: tekst || `Doel gestart: ${nieuw.titel}`, doel: nieuw } };
     }
     return { status: 200, lading: { antwoord: tekst || "Ik heb daar geen antwoord op." } };
