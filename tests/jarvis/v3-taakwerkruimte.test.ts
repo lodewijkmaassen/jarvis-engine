@@ -227,4 +227,68 @@ describe.skipIf(playwright === null)("de werkruimte in een echte browser (Chromi
       expect(fouten).toEqual([]);
     } finally { await browser.close(); }
   }, 60_000);
+
+  // De meting die de eerste acceptatieronde miste: op elk gangbaar schermformaat en in elk tabblad geen
+  // horizontaal scrollen, geen element buiten het scherm, geen overlappende blokken of knoppen, en de volgorde
+  // taakidentiteit → resultaat → belangrijkste resultaten → tabbladen, met het resultaat direct in beeld.
+  const SCHERMEN = [
+    { naam: "kleine telefoon", width: 320, height: 568 },
+    { naam: "Android", width: 360, height: 640 },
+    { naam: "iPhone SE", width: 375, height: 667 },
+    { naam: "iPhone 14", width: 390, height: 844 },
+    { naam: "grote Android", width: 412, height: 915 },
+    { naam: "tablet", width: 768, height: 1024 },
+    { naam: "bureaublad", width: 1366, height: 820 },
+  ];
+  for (const scherm of SCHERMEN) {
+    it(`${scherm.naam} (${scherm.width}×${scherm.height}): volgorde, resultaat direct in beeld, niets overlapt of steekt uit, in alle vier tabbladen`, async () => {
+      const { browser, page, fouten } = await open({ width: scherm.width, height: scherm.height });
+      try {
+        await page.click('button[data-actie="vouw"][data-blok="cc:klaar"]');
+        await page.click('a.kop[data-doel="D-1"]');
+        await page.waitForSelector("article.taak");
+        await page.evaluate(() => window.scrollTo(0, 0));
+        const meet = () => page.evaluate(() => {
+          const box = (s: string) => { const e = document.querySelector(s); if (!e) return null; const r = e.getBoundingClientRect(); return { top: r.top, bottom: r.bottom }; };
+          const vw = document.documentElement.clientWidth;
+          const uitsteken = Array.from(document.querySelectorAll("article.taak *"))
+            .filter((e) => { const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 && (r.right > vw + 0.5 || r.left < -0.5); })
+            .map((e) => `${e.tagName.toLowerCase()}.${String((e as HTMLElement).className)} "${(e.textContent ?? "").trim().slice(0, 40)}" ${Math.round(e.getBoundingClientRect().left)}-${Math.round(e.getBoundingClientRect().right)}`);
+          const knoppen = Array.from(document.querySelectorAll(".reactiebalk .knoppen button")).map((e) => e.getBoundingClientRect());
+          const knoppenOverlap = knoppen.some((a, i) => knoppen.some((b, j) => i < j && a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5));
+          return {
+            horizontaal: document.documentElement.scrollWidth > window.innerWidth || document.body.scrollWidth > window.innerWidth,
+            uitsteken, knoppenOverlap, hoogte: window.innerHeight,
+            kop: box(".taakkop"), resultaat: box(".resultaat"), punten: box(".punten"), tabs: box(".tabs"), paneel: box("#tabpaneel"), balk: box(".reactiebalk"),
+          };
+        });
+        const m = await meet();
+        // Volgorde zonder overlap: kop boven resultaat boven belangrijkste resultaten boven tabbladen boven paneel.
+        expect(m.kop!.bottom).toBeLessThanOrEqual(m.resultaat!.top + 0.5);
+        expect(m.resultaat!.bottom).toBeLessThanOrEqual(m.punten!.top + 0.5);
+        expect(m.punten!.bottom).toBeLessThanOrEqual(m.tabs!.top + 0.5);
+        expect(m.tabs!.bottom).toBeLessThanOrEqual(m.paneel!.top + 0.5);
+        // Het resultaat staat direct bij openen volledig in beeld, boven het reactieveld, zonder te scrollen.
+        expect(m.resultaat!.top).toBeGreaterThanOrEqual(0);
+        expect(m.resultaat!.bottom).toBeLessThanOrEqual(m.balk!.top + 0.5);
+        expect(m.balk!.bottom).toBeLessThanOrEqual(m.hoogte + 1);
+        // Met SCHERMAFDRUK=<map> legt de test vast wat hij meet, als bewijs bij de pull request.
+        if (process.env["SCHERMAFDRUK"]) await page.screenshot({ path: path.join(process.env["SCHERMAFDRUK"], `werkruimte-${scherm.width}x${scherm.height}.jpg`), quality: 70 });
+        for (const tab of ["overzicht", "bewijs", "opdracht", "historie"]) {
+          await page.click(`button[data-tab="${tab}"]`);
+          await page.waitForSelector(`button[data-tab="${tab}"][aria-selected="true"]`);
+          for (const y of [0, 100_000]) {
+            await page.evaluate((s: number) => window.scrollTo(0, s), y);
+            const t = await meet();
+            expect({ tab, y, horizontaal: t.horizontaal, uitsteken: t.uitsteken, knoppenOverlap: t.knoppenOverlap })
+              .toEqual({ tab, y, horizontaal: false, uitsteken: [], knoppenOverlap: false });
+            // Het reactieveld blijft onderaan in beeld, wat er ook gescrold is.
+            expect(t.balk!.top).toBeGreaterThan(0);
+            expect(t.balk!.bottom).toBeLessThanOrEqual(t.hoogte + 1);
+          }
+        }
+        expect(fouten).toEqual([]);
+      } finally { await browser.close(); }
+    }, 60_000);
+  }
 });

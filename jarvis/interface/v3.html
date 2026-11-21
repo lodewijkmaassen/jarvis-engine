@@ -249,6 +249,10 @@
     .reactiebalk .uitleg { display:none; }
     .tabs { gap:0; } .tabs button { padding:10px 8px; font-size:13.5px; flex:1 0 auto; }
   }
+  /* Smalle telefoons (320 px): alle vier tabbladen zichtbaar, zonder verborgen horizontale tabstrook. */
+  @media (max-width: 374px) {
+    .tabs { flex-wrap:wrap; overflow-x:visible; } .tabs button { padding:9px 6px; font-size:13px; flex:1 1 auto; }
+  }
 </style>
 </head>
 <body>
