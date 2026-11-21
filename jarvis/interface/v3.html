@@ -49,6 +49,7 @@
   .chatvorm button { margin:0; flex:none; }
   .chatvorm .invoer { flex:1; min-width:0; }
   .chatvorm .invoer textarea { width:100%; }
+  .invoer.sleep { outline:2px dashed var(--accent); outline-offset:3px; border-radius:10px; }
   .chatvorm.sleep { outline:2px dashed var(--accent); outline-offset:3px; border-radius:10px; }
   .chatvoorbeeld { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin:0 0 8px; }
   .chatvoorbeeld .stuk { display:flex; align-items:center; gap:6px; padding:4px 6px; border:1px solid var(--lijn); border-radius:8px; max-width:100%; }
@@ -329,8 +330,9 @@
   let activiteit = [], activiteitFout = null, leesFout = null;
   async function laadBeslissingen() {
     // Het geheugen van Jarvis Brein (context.kanaal = "brein") hoort niet in deze lijst: dat zou met elke sparbeurt groeien.
+    // De bijlagen bij een doel (context.kanaal = "bijlagen") ook niet: die zijn groot en worden hier niet getoond.
     const [b, a, g] = await Promise.all([
-      client.from("berichten").select("*").or("context->>kanaal.is.null,context->>kanaal.neq.brein").order("op"),
+      client.from("berichten").select("*").or("context->>kanaal.is.null,context->>kanaal.not.in.(brein,bijlagen)").order("op"),
       client.from("autorisaties").select("id, soort, pr_repo, pr_nummer, commit_sha, op").order("op", { ascending: false }),
       client.from("berichten").select("id, tekst, op, context").eq("context->>kanaal", "brein").eq("context->>soort", "inzicht").order("op", { ascending: false }).limit(200),
     ]);
@@ -426,7 +428,9 @@
     return `<div class="invoer"><h2>${plek ? `Nieuw doel voor ${esc(plek.naam)}` : "Nieuw doel"}</h2>
         <div class="rij"><input id="nt" placeholder="Titel" aria-label="Titel"><input id="nu" placeholder="Waar het te zien is (https://…), optioneel" aria-label="Waar het te zien is, optioneel">
           <textarea class="breed" id="no" rows="4" placeholder="Wat wil je dat Jarvis bereikt?" aria-label="Opdracht"></textarea>
-          <button type="button" class="bijlage" id="nspraak" aria-pressed="false" aria-label="Spraakinvoer voor de omschrijving" title="Spreek de omschrijving in" hidden>🎤 Spreek in</button></div>
+          <button type="button" class="bijlage" id="nspraak" aria-pressed="false" aria-label="Spraakinvoer voor de omschrijving" title="Spreek de omschrijving in" hidden>🎤 Spreek in</button>
+          <input type="file" id="nbestand" multiple accept="image/png,image/jpeg,image/gif,image/webp,application/pdf,.pdf,text/*,.txt,.md,.csv,.json,.log,.xml,.yml,.yaml,.html,.sql,.ts,.js,.mjs,.css" hidden><button type="button" class="bijlage" id="nbijlage" aria-label="Bijlagen toevoegen aan dit doel" title="Afbeeldingen of bestanden toevoegen (of hierheen slepen)">📎 Bijlagen</button>
+          <div class="chatvoorbeeld breed" id="nvoorbeeld" hidden></div></div>
         <button class="hoofd" id="nv">Geef doel</button></div>`;
   }
 
@@ -452,9 +456,22 @@
 
   function koppelInvoer(plek) {
     koppelSpraak();
+    koppelDoelBijlagen();
     $("nv").onclick = () => zeg(async () => {
-      const opdracht = plek ? "Project: " + plek.label + "\n\n" + $("no").value : $("no").value;
-      await rpc("doel_nieuw", { p_titel: $("nt").value, p_opdracht: opdracht, p_acceptatie_url: $("nu").value || null });
+      const mee = doelBijlagen;
+      const basis = plek ? "Project: " + plek.label + "\n\n" + $("no").value : $("no").value;
+      const opdracht = basis + doelBijlageDeel(mee);
+      const id = await rpc("doel_nieuw", { p_titel: $("nt").value, p_opdracht: opdracht, p_acceptatie_url: $("nu").value || null });
+      doelBijlagen = []; tekenDoelVoorbeeld();
+      // Afbeeldingen en PDF's passen niet in de tekst van het doel: ze gaan als verwerkt bericht van de eigenaar met
+      // context.kanaal "bijlagen" en het doel-id mee (geen wachtrij pakt 'verwerkt' op; geen nieuwe tabel nodig).
+      const binair = mee.filter((x) => x.soort !== "tekst").map(({ soort, naam, media, data }) => ({ soort, naam, ...(media ? { media } : {}), data }));
+      if (binair.length && id) {
+        const r = await client.from("berichten").insert({ van: "eigenaar", tekst: `Bijlagen bij doel ${id}: ${binair.map((x) => x.naam).join(", ")}`,
+          status: "verwerkt", verwerkt_op: new Date().toISOString(), verwerking: "Bijlagen van de eigenaar bij een doel; geen opdracht.",
+          context: { kanaal: "bijlagen", doel: id, bijlagen: binair } });
+        if (r.error) throw new Error(`Het doel staat er, maar de bijlagen niet: ${r.error.message}`);
+      }
     });
   }
 
@@ -596,6 +613,8 @@
   // vóór het versturen verkleind (de server accepteert maar een kleine aanvraag). Bijlagen blijven alleen in het geheugen;
   // sessionStorage bewaart het gesprek met alleen hun namen.
   let chatBijlagen = [];
+  // Dezelfde bijlagen bij "Nieuw doel": tekstbestanden gaan letterlijk de opdracht in, afbeeldingen en PDF's als bericht.
+  let doelBijlagen = [];
   const MAX_BIJLAGEN = 6;
   // Binaire inhoud (base64) per aanvraag; de server hanteert dezelfde grens, Vercel weigert boven 4,5 MB.
   const MAX_BINAIR = 3_400_000;
@@ -643,20 +662,59 @@
     v.innerHTML = chatBijlagen.map((x, i) => `<div class="stuk">${x.url ? `<img src="${x.url}" alt="Voorbeeld van ${esc(x.naam)}">` : `<span aria-hidden="true">📄</span>`}<span class="bestandnaam">${esc(x.naam)}</span><button type="button" data-wis="${i}" aria-label="${esc(x.naam)} verwijderen">Verwijder</button></div>`).join("");
     v.onclick = (ev) => { const k = ev.target.closest("[data-wis]"); if (k) { chatBijlagen.splice(Number(k.dataset.wis), 1); tekenVoorbeeld(); } };
   }
-  async function kiesBestanden(bestanden) {
-    const lijst = [...(bestanden ?? [])];
-    if (!lijst.length) return;
+  // Voegt gekozen bestanden toe aan doel (een lijst bijlagen) binnen dezelfde grenzen; geeft de foutmeldingen terug.
+  async function voegBijlagenToe(doel, bestanden, waar) {
     const fouten = [];
-    for (const bestand of lijst) {
-      if (chatBijlagen.length >= MAX_BIJLAGEN) { fouten.push(`Hoogstens ${MAX_BIJLAGEN} bijlagen per bericht; de rest is niet toegevoegd.`); break; }
+    for (const bestand of [...(bestanden ?? [])]) {
+      if (doel.length >= MAX_BIJLAGEN) { fouten.push(`Hoogstens ${MAX_BIJLAGEN} bijlagen per ${waar}; de rest is niet toegevoegd.`); break; }
       try {
         const x = await maakBijlage(bestand);
-        if (binairVan([...chatBijlagen, x]) > MAX_BINAIR) { fouten.push(`${bestand.name} past niet meer in dit bericht; stuur het in een volgend bericht.`); continue; }
-        chatBijlagen.push(x);
+        if (binairVan([...doel, x]) > MAX_BINAIR) { fouten.push(`${bestand.name} past niet meer in dit ${waar}.`); continue; }
+        doel.push(x);
       } catch (e) { fouten.push(e instanceof Error && !(e instanceof DOMException) ? e.message : `${bestand.name} kon ik niet lezen.`); }
     }
+    return fouten;
+  }
+  async function kiesBestanden(bestanden) {
+    if (!bestanden?.length) return;
+    const fouten = await voegBijlagenToe(chatBijlagen, bestanden, "bericht");
     if (fouten.length) { chat.push({ rol: "jarvis", tekst: fouten.join("\n") }); tekenChat(); }
     tekenVoorbeeld();
+  }
+  // Het stuk dat bij "Nieuw doel" achter de opdracht komt: de namen, de letterlijke tekst van tekstbestanden en waar
+  // de afbeeldingen en PDF's staan.
+  function doelBijlageDeel(lijst) {
+    if (!lijst.length) return "";
+    const teksten = lijst.filter((x) => x.soort === "tekst").map((x) => `--- Inhoud van ${x.naam} ---\n${x.tekst}\n--- Einde van ${x.naam} ---`);
+    const binair = lijst.filter((x) => x.soort !== "tekst").length;
+    return `\n\nBijlagen van de eigenaar (${lijst.length}):\n${lijst.map((x) => `- ${x.naam}`).join("\n")}`
+      + (teksten.length ? `\n\n${teksten.join("\n\n")}` : "")
+      + (binair ? `\n\nAfbeeldingen en PDF's staan in jarvis.berichten met context.kanaal = "bijlagen" en context.doel = het id van dit doel.` : "");
+  }
+  function tekenDoelVoorbeeld() {
+    const v = $("nvoorbeeld");
+    if (!v) return;
+    v.hidden = !doelBijlagen.length;
+    v.innerHTML = doelBijlagen.map((x, i) => `<div class="stuk">${x.url ? `<img src="${x.url}" alt="Voorbeeld van ${esc(x.naam)}">` : `<span aria-hidden="true">📄</span>`}<span class="bestandnaam">${esc(x.naam)}</span><button type="button" data-wis="${i}" aria-label="${esc(x.naam)} verwijderen">Verwijder</button></div>`).join("");
+    v.onclick = (ev) => { const k = ev.target.closest("[data-wis]"); if (k) { doelBijlagen.splice(Number(k.dataset.wis), 1); tekenDoelVoorbeeld(); } };
+  }
+  async function kiesDoelBestanden(bestanden) {
+    if (!bestanden?.length) return;
+    const fouten = await voegBijlagenToe(doelBijlagen, bestanden, "doel");
+    if (fouten.length) melding(fouten.join(" "));
+    tekenDoelVoorbeeld();
+  }
+  function koppelDoelBijlagen() {
+    const knop = $("nbijlage"), invoer = $("nbestand"), vak = $("no");
+    if (!knop || !invoer) return;
+    knop.onclick = () => invoer.click();
+    invoer.onchange = (ev) => { kiesDoelBestanden(ev.target.files).finally(() => { ev.target.value = ""; }); };
+    const blok = knop.closest(".invoer");
+    blok.ondragover = (ev) => { ev.preventDefault(); blok.classList.add("sleep"); };
+    blok.ondragleave = () => blok.classList.remove("sleep");
+    blok.ondrop = (ev) => { ev.preventDefault(); blok.classList.remove("sleep"); kiesDoelBestanden(ev.dataTransfer.files); };
+    if (vak) vak.onpaste = (ev) => { const f = [...ev.clipboardData.files]; if (f.length) { ev.preventDefault(); kiesDoelBestanden(f); } };
+    tekenDoelVoorbeeld();
   }
   const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40).map(({ beeld, afbeelding, bijlagen, ...b }) => b))); sessionStorage.setItem("jarvis-gesprek", gesprekId); sessionStorage.setItem("jarvis-chat-modus", chatModus); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
 
