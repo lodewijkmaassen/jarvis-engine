@@ -4,7 +4,7 @@ Afdruk van tests/jarvis/v3-taakwerkruimte.test.ts in Chromium (Playwright): taak
 vier tabbladen (Overzicht, Bewijs & tests, Opdracht, Historie) gemeten bovenaan en na scrollen naar onderen.
 De test faalt als dit bestand afwijkt van wat hij meet.
 
-| formaat | metingen | paginabreedte (px) | horizontaal scrollen | elementen buiten beeld | knoppen overlappen | resultaat direct in beeld | reactieveld in beeld |
+| formaat | metingen | paginabreedte (px) | horizontaal scrollen | elementen buiten beeld | knoppen overlappen | resultaat in beeld bij openen (vóór scrollen) | reactieveld in beeld |
 |---|---|---|---|---|---|---|---|
 | 320×568 kleine telefoon | 8 | 320 van 320 | nee | 0 | nee | ja | ja |
 | 360×640 Android | 8 | 360 van 360 | nee | 0 | nee | ja | ja |

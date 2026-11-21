@@ -241,7 +241,7 @@ describe.skipIf(playwright === null)("de werkruimte in een echte browser (Chromi
     { naam: "bureaublad", width: 1366, height: 820 },
   ];
   // Wat elk formaat werkelijk mat, voor het meetrapport onderaan dit blok.
-  const gemeten = new Map<string, { metingen: number; paginabreedte: number; horizontaal: boolean; uitsteken: number; knoppenOverlap: boolean; resultaatInBeeld: boolean; balkInBeeld: boolean }>();
+  const gemeten = new Map<string, { metingen: number; paginabreedte: number; horizontaal: boolean; uitsteken: number; knoppenOverlap: boolean; resultaatBijOpenen: boolean; balkInBeeld: boolean }>();
   for (const scherm of SCHERMEN) {
     it(`${scherm.naam} (${scherm.width}×${scherm.height}): volgorde, resultaat direct in beeld, niets overlapt of steekt uit, in alle vier tabbladen`, async () => {
       const { browser, page, fouten } = await open({ width: scherm.width, height: scherm.height });
@@ -265,8 +265,11 @@ describe.skipIf(playwright === null)("de werkruimte in een echte browser (Chromi
           };
         });
         const m = await meet();
-        const r = { metingen: 0, paginabreedte: 0, horizontaal: false, uitsteken: 0, knoppenOverlap: false, balkInBeeld: true,
-          resultaatInBeeld: m.resultaat!.top >= 0 && m.resultaat!.bottom <= m.balk!.top + 0.5 && m.balk!.bottom <= m.hoogte + 1 };
+        // "Direct in beeld" is één meting, op het moment van openen en vóór enig scrollen; daarom wordt dit veld hier
+        // gezet en verderop niet meer bijgewerkt. Alle andere velden tellen over alle tabbladen en scrollposities.
+        const resultaatBijOpenen = m.resultaat!.top >= 0 && m.resultaat!.bottom <= m.balk!.top + 0.5 && m.balk!.bottom <= m.hoogte + 1;
+        expect(resultaatBijOpenen).toBe(true);
+        const r = { metingen: 0, paginabreedte: 0, horizontaal: false, uitsteken: 0, knoppenOverlap: false, balkInBeeld: true, resultaatBijOpenen };
         // Volgorde zonder overlap: kop boven resultaat boven belangrijkste resultaten boven tabbladen boven paneel.
         expect(m.kop!.bottom).toBeLessThanOrEqual(m.resultaat!.top + 0.5);
         expect(m.resultaat!.bottom).toBeLessThanOrEqual(m.punten!.top + 0.5);
@@ -307,12 +310,14 @@ describe.skipIf(playwright === null)("de werkruimte in een echte browser (Chromi
   // in de tweede ronde buiten, en schermafdrukken kan de beoordelaar niet lezen. Daarom staat de uitkomst van de
   // meting ook als kort tekstbestand in de repository. Het is geen beschrijving maar een afdruk van wat deze test
   // meet: met MEETRAPPORT=1 schrijft de test het bestand, anders moet het bestand exact gelijk zijn aan de meting.
+  // Vitest draait de tests van één bestand op volgorde; deze controle staat daarom als laatste. Draait zij toch
+  // los (bijvoorbeeld met -t), dan ontbreken de metingen en faalt zij hieronder hard in plaats van iets te beweren.
   it("het vastgelegde meetrapport is precies wat de meting nu oplevert", () => {
-    expect(gemeten.size).toBe(SCHERMEN.length);
+    expect([...gemeten.keys()]).toEqual(SCHERMEN.map((s) => `${s.width}x${s.height}`));
     const jn = (b: boolean) => (b ? "ja" : "nee");
     const regels = SCHERMEN.map((s) => {
       const r = gemeten.get(`${s.width}x${s.height}`)!;
-      return `| ${s.width}×${s.height} ${s.naam} | ${r.metingen} | ${r.paginabreedte} van ${s.width} | ${jn(r.horizontaal)} | ${r.uitsteken} | ${jn(r.knoppenOverlap)} | ${jn(r.resultaatInBeeld)} | ${jn(r.balkInBeeld)} |`;
+      return `| ${s.width}×${s.height} ${s.naam} | ${r.metingen} | ${r.paginabreedte} van ${s.width} | ${jn(r.horizontaal)} | ${r.uitsteken} | ${jn(r.knoppenOverlap)} | ${jn(r.resultaatBijOpenen)} | ${jn(r.balkInBeeld)} |`;
     });
     const rapport = [
       "# Meting taakwerkruimte V3 per schermformaat (D-20261121-105625624)",
@@ -321,7 +326,7 @@ describe.skipIf(playwright === null)("de werkruimte in een echte browser (Chromi
       "vier tabbladen (Overzicht, Bewijs & tests, Opdracht, Historie) gemeten bovenaan en na scrollen naar onderen.",
       "De test faalt als dit bestand afwijkt van wat hij meet.",
       "",
-      "| formaat | metingen | paginabreedte (px) | horizontaal scrollen | elementen buiten beeld | knoppen overlappen | resultaat direct in beeld | reactieveld in beeld |",
+      "| formaat | metingen | paginabreedte (px) | horizontaal scrollen | elementen buiten beeld | knoppen overlappen | resultaat in beeld bij openen (vóór scrollen) | reactieveld in beeld |",
       "|---|---|---|---|---|---|---|---|",
       ...regels,
       "",
