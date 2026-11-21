@@ -18,7 +18,10 @@ describe("de V3-weergave", () => {
     // en het activiteitenlogboek (opdracht 2026-11-18: het Command Center toont wat er daadwerkelijk is
     // uitgevoerd en wanneer). Dat logboek is een bestaande tabel die de V2-pagina al leest, met een
     // bestaand leesrecht voor de eigenaar; er komt geen tabel, migratie of schrijfpad bij.
-    expect(new Set(views)).toEqual(new Set(["doelen", "berichten", "autorisaties", "activiteit"]));
+    // De taakwerkruimte (D-20261121-105625624) leest daarnaast de reviews van de pull request van één doel uit
+    // jarvis.toetsingen: een bestaande tabel met een bestaand leesrecht voor de eigenaar (eigenaar_leest_toetsingen).
+    expect(new Set(views)).toEqual(new Set(["doelen", "berichten", "autorisaties", "activiteit", "toetsingen"]));
+    expect(HTML).not.toMatch(/from\("toetsingen"\)[\s\S]{0,400}?\.(insert|update|delete|upsert)\(/);
     // Alleen lezen, begrensd, en in dezelfde ronde als de doelen: geen tweede klok en geen tweede verzoek per doel.
     expect(HTML).toContain('client.from("activiteit").select("op, uitvoerder, rol, taak, project, soort, tekst, verwijzing").order("op", { ascending: false }).limit(60)');
     expect(HTML).not.toMatch(/from\("activiteit"\)[\s\S]{0,400}?\.(insert|update|delete|upsert)\(/);
@@ -42,19 +45,19 @@ describe("de V3-weergave", () => {
     expect(bouw([bericht], [{ soort: "pr", pr_repo: "o/r", pr_nummer: 5, commit_sha: "abc1234" }], objectVan, prSleutel)()).toHaveLength(0);
     expect(bouw([bericht, { id: 2, van: "eigenaar", context: { akkoord_pr_afgewezen: v } }], [], objectVan, prSleutel)()).toHaveLength(0);
   });
-  it("geeft een vastgelopen doel een reactieveld, 'Reageer en hervat' en 'Sluiten' (D-20261019-202736404)", () => {
-    // Sluiten alleen bij een vastgelopen doel.
-    expect(HTML).toContain('d.status === "vast" ? `<button data-actie="sluit">Sluiten</button>`');
-    expect(HTML).toContain('data-actie="reageer">${knop}</button>');
-    expect(HTML).toContain('"Reageer en hervat"');
+  it("geeft een vastgelopen doel een reactieveld, opnieuw uitvoeren en 'Sluiten' (D-20261019-202736404, D-20261121-105625624)", () => {
+    // Sluiten alleen bij een vastgelopen doel; hervatten heet sinds de taakwerkruimte "Opnieuw uitvoeren" en is een
+    // aparte, bevestigde knop naast de gewone reactie.
+    expect(HTML).toContain('${d.status === "vast" ? `<button data-actie="sluit">Sluiten</button>` : ""}');
+    expect(HTML).toContain('<button type="button" data-actie="reageer">${stil ? "Opnieuw uitvoeren" : "Meegeven als instructie"}</button>');
     expect(HTML).toContain('rpc("doel_reageer", { p_id: id, p_reactie: reactie })');
     expect(HTML).toContain('rpc("doel_sluit", { p_id: id })');
   });
-  it("houdt kaarten compact tot ze worden aangeklikt; dan komen details, reactieveld en knoppen (D-20261020-190814438)", () => {
-    expect(HTML).toContain('${(open ? doelActies(d) : "")}');
-    expect(HTML).toContain('data-actie="open" aria-expanded="${esc(open)}"');
-    expect(HTML).not.toContain('vastActies');
-    expect(HTML).toContain('if (geopend.has(wie)) geopend.delete(wie); else geopend.add(wie);');
+  it("houdt kaarten compact; een doel opent in een eigen werkruimte met details, reactieveld en knoppen (D-20261020-190814438, D-20261121-105625624)", () => {
+    expect(HTML).toContain('<a class="kop" href="#/doel/${esc(d.id)}" data-doel="${esc(d.id)}">');
+    expect(HTML).toContain("function weergaveDoel(d)");
+    expect(HTML).not.toContain("vastActies");
+    expect(HTML).not.toContain("doelActies");
   });
   it("legt de databasekant van reageren op elk doel vast in het dossier (D-20261020-190814438)", () => {
     const sql = readFileSync(path.join(process.cwd(), "tasks/D-20261020-190814438/0001_reageren_op_elk_doel.sql"), "utf8");

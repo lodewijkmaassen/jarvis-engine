@@ -23,7 +23,7 @@ import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokka
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
 import { vraagtSparproef, voerSparproefUit } from "./sparproef";
-import { herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { begrens, MAX_LOGREGEL_TEKENS, herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, combineerReviews, leverancierFout, parseerReview, rendereerReview, verdeelDiff, type Review } from "./review";
@@ -385,7 +385,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
         const bevoegdheid = mig.open.some((o) => o.bevoegdheid);
         const blok = classificeerBlokkade(bevoegdheid ? `${tekst} (ontbrekende bevoegdheid)` : tekst);
         const naar = vanDeEigenaar(blok) ? "vast" : "bezig";
-        await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(rendereerBlokkade(tekst, blok).slice(0, 1700), versie)]);
+        await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(begrens(rendereerBlokkade(tekst, blok)), versie)]);
         console.log(`jarvis eindcontrole: ${d.id} → ${naar} (${tekst.slice(0, 160)})`);
         continue;
       }
@@ -412,7 +412,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
             const h = await herhalingVan(sql, d.id);
             const naar = h.besluit === "vast" ? "vast" : "bezig";
             const tekst = `productie na ${Math.round(minuten)} min niet in orde: ${uitkomst.bewijs}${herhalingsZin(h)}`;
-            await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, tekst.slice(0, 1700)]);
+            await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, begrens(tekst)]);
             console.log(`jarvis eindcontrole: ${d.id} → ${naar} (${uitkomst.bewijs})`);
           } else {
             console.log(`jarvis eindcontrole: ${d.id} wacht op de uitrol (${Math.round(minuten)} min): ${uitkomst.bewijs}`);
@@ -468,7 +468,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       const uitkomsten = await voerAcceptatieUit(sql, d, tests, bewijsVooraf);
       const eind = eindoordeel(uitkomsten);
       if (eind.klaar) {
-        await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, `acceptatietests geslaagd — ${eind.samenvatting}`]);
+        await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, begrens(`acceptatietests geslaagd — ${eind.samenvatting}`)]);
         console.log(`jarvis eindcontrole: ${d.id} → klaar (${uitkomsten.length} acceptatietest(s) geslaagd)`);
         continue;
       }
@@ -484,7 +484,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       const blok = classificeerBlokkade(eind.onmeetbaar ? `${tekst} (ontbrekende bevoegdheid)` : tekst);
       const h = await herhalingVan(sql, d.id);
       const naar = vanDeEigenaar(blok) || rondes >= MAX_ACCEPTATIE_RONDES || h.besluit === "vast" ? "vast" : "bezig";
-      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(`${rendereerBlokkade(tekst, blok).slice(0, 1500)}${herhalingsZin(h)}`, versie)]);
+      await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(`${begrens(rendereerBlokkade(tekst, blok))}${herhalingsZin(h)}`, versie)]);
       await schrijfAcceptatie(sql, d.id, `eindoordeel: ${naar} — ${tekst}`);
       console.log(`jarvis eindcontrole: ${d.id} → ${naar} [${blok.soort}] (${tekst.slice(0, 200)})`);
     } catch (fout) {
@@ -725,7 +725,7 @@ async function leg(sql: DbClient, id: string, van: string, naar: string, pr: str
     const p = pr === null ? null : (JSON.parse(pr) as { repo?: string; nummer?: number });
     if (p?.repo && p.nummer) verwijzing = `${p.repo.split("/").pop()}#${p.nummer}`;
   } catch { /* pr is al gevalideerd door de aanroeper */ }
-  const tekst = `Status ${van} → ${naar}${uitkomst ? `: ${uitkomst}` : ""}`.slice(0, 500);
+  const tekst = begrens(`Status ${van} → ${naar}${uitkomst ? `: ${uitkomst}` : ""}`, MAX_LOGREGEL_TEKENS);
   try {
     await sql.unsafe(ACTIVITEIT_SQL, [process.env.JARVIS_UITVOERDER ?? "cloud", "developer", id, null, soort, tekst, verwijzing]);
   } catch {
