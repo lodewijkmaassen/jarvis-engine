@@ -12,7 +12,7 @@ _Gegenereerd op 2026-11-21._
 |---|---|
 | Hoofdbranch | `main` |
 | Hoogste migratie | onbekend |
-| Testbestanden | 71 |
+| Testbestanden | 72 |
 | Kennisrecords | DEC 0 · CON 0 · LRN 0 · RSK 0 · CFL 0 |
 | Open conflicten | geen |
 
@@ -34,6 +34,16 @@ _Gegenereerd op 2026-11-21._
 <!-- jarvis:feiten:eind -->
 
 ## Waar staan we
+
+Taken in V3 openen in een eigen werkruimte (D-20261121-105625624): route
+`#/doel/<id>`, op het bureaublad naast de takenlijst, op de telefoon
+schermvullend. Bovenaan resultaat en belangrijkste resultaten, daaronder de
+tabbladen Overzicht, Bewijs & tests, Opdracht en Historie, en onderaan een
+vast reactieveld. Een gewone reactie is een verwerkt bericht
+(`context.doel_reactie`) en start niets; opnieuw uitvoeren is een aparte,
+bevestigde knop (`doel_reageer`). Lange uitkomsten worden niet meer bij het
+opslaan afgekapt: de vaste grenzen van 500–1800 tekens zijn vervangen door
+`begrens()` met een ruime grens (20 000) die zelf meldt als er iets wegvalt.
 
 Een doel is pas klaar als het eindresultaat aantoonbaar is bereikt
 (D-20261115-095941788). De eindcontrole zette een samengevoegd doel zonder
