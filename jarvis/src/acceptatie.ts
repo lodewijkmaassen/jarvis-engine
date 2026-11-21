@@ -219,7 +219,8 @@ export function parseerBeoordeling(tekst: string): { readonly geslaagd: boolean;
     const r = JSON.parse(t) as { geslaagd?: unknown; reden?: unknown };
     const geslaagd = r.geslaagd === true;
     const reden = typeof r.reden === "string" && r.reden.trim() !== "" ? r.reden.trim() : geslaagd ? "geslaagd" : "geen reden gegeven";
-    return { geslaagd, reden: reden.slice(0, 600) };
+    // Volledig: de reden is het bewijs dat de eigenaar leest (D-20261121-105625624); de uitkomst begrenst zelf.
+    return { geslaagd, reden };
   } catch {
     return { geslaagd: false, reden: `het oordeel is niet te lezen: ${t.slice(0, 200)}` };
   }
@@ -243,7 +244,7 @@ export function eindoordeel(uitkomsten: readonly AcceptatieUitkomst[]): {
   return {
     klaar: uitkomsten.every((u) => u.staat === "geslaagd"),
     onmeetbaar: uitkomsten.some((u) => u.staat === "niet-meetbaar"),
-    samenvatting: regels.join(" | ").slice(0, 1800),
+    samenvatting: regels.join(" | "),
   };
 }
 

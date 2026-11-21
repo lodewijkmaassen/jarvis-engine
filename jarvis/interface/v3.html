@@ -2,7 +2,7 @@
 <html lang="nl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="robots" content="noindex">
 <meta name="theme-color" content="#070b12">
 <meta name="mobile-web-app-capable" content="yes">
@@ -182,6 +182,73 @@
     body { padding-bottom:88px; }
     .ai-kern { min-height:0; }
   }
+  /* Taakwerkruimte (D-20261121-105625624): een doel opent in een eigen werkruimte in plaats van uit te klappen.
+     Bureaublad: navigatie, takenlijst en taak naast elkaar. Telefoon: alleen de taak, schermvullend, zonder zijbalk.
+     Het reactieveld staat altijd onderaan in beeld (sticky), ook met het toetsenbord open (interactive-widget). */
+  .kaart h3 a.kop { display:inline-flex; align-items:center; min-height:44px; color:inherit; text-decoration:none; font-weight:600; overflow-wrap:anywhere; }
+  .kaart h3 a.kop::after { content:"›"; margin-left:8px; color:var(--gedempt); font-size:16px; }
+  .kaart h3 a.kop:hover, .kaart h3 a.kop:focus-visible { color:var(--accent); }
+  .werk { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; align-items:start; }
+  @media (min-width:1000px) { .werk { grid-template-columns:minmax(250px,320px) minmax(0,1fr); } }
+  .werklijst { position:sticky; top:12px; max-height:calc(100dvh - 24px); overflow-y:auto; padding:12px; }
+  .werklijst h2 { margin:12px 0 6px; } .werklijst h2:first-child { margin-top:0; }
+  .werklijst a { display:block; padding:9px 10px; border-radius:10px; border:1px solid transparent; color:var(--tekst); text-decoration:none; font-size:14px; overflow-wrap:anywhere; }
+  .werklijst a:hover, .werklijst a:focus-visible { border-color:var(--lijn); background:var(--kaart2); }
+  .werklijst a[aria-current="page"] { border-color:rgba(76,195,255,.55); background:rgba(76,195,255,.08); }
+  .werklijst a .klein { display:block; font-size:12px; }
+  .stip { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:7px; background:var(--accent); vertical-align:middle; flex:none; }
+  .stip.goed { background:var(--goed); } .stip.fout { background:var(--fout); } .stip.wacht { background:var(--wacht); } .stip.neutraal { background:var(--gedempt); }
+  .taak { display:flex; flex-direction:column; min-height:calc(100dvh - 36px); padding:0; overflow:visible; min-width:0; }
+  .taakkop { position:sticky; top:0; z-index:3; padding:12px 16px; border-bottom:1px solid var(--lijn); background:linear-gradient(160deg, var(--kaart2), var(--kaart)); border-radius:12px 12px 0 0; }
+  .taakkop .terugknop { margin:0 0 6px; padding:6px 12px; min-height:40px; }
+  .taakkop h1 { font-size:20px; letter-spacing:0; text-transform:none; margin:2px 0 6px; overflow-wrap:anywhere; }
+  .taakkop .meta { display:flex; flex-wrap:wrap; gap:6px 12px; align-items:center; color:var(--gedempt); font-size:13px; }
+  .taakkop .meta .badge { margin-left:0; }
+  .taakinhoud { flex:1; padding:14px 16px 18px; min-width:0; }
+  .resultaat { border:1px solid var(--lijn); border-left:3px solid var(--accent); border-radius:12px; padding:12px 14px; background:var(--bg); }
+  .resultaat.goed { border-left-color:var(--goed); } .resultaat.fout { border-left-color:var(--fout); } .resultaat.neutraal { border-left-color:var(--gedempt); }
+  .resultaat h2 { margin:0 0 6px; }
+  .resultaat p { margin:0; font-size:15.5px; overflow-wrap:anywhere; white-space:pre-wrap; }
+  .punten { list-style:none; margin:12px 0 0; padding:0; display:grid; gap:8px; }
+  .punten li { border:1px solid var(--lijn); border-radius:10px; padding:9px 12px; background:var(--bg); font-size:14px; overflow-wrap:anywhere; }
+  .punten li b { font-weight:600; }
+  .punten .reden { margin:4px 0 0; color:var(--tekst); white-space:pre-wrap; }
+  .punten .reden.kort { display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden; }
+  .tabs { display:flex; gap:4px; margin:16px 0 0; border-bottom:1px solid var(--lijn); overflow-x:auto; scrollbar-width:none; }
+  .tabs button { margin:0; border:0; border-bottom:2px solid transparent; border-radius:0; background:none; color:var(--gedempt); padding:10px 12px; white-space:nowrap; font-size:14px; }
+  .tabs button[aria-selected="true"] { color:var(--tekst); border-bottom-color:var(--accent); }
+  .tabpaneel { padding-top:14px; min-width:0; }
+  .tabpaneel h3 { font-size:12.5px; margin:16px 0 8px; text-transform:uppercase; letter-spacing:.12em; color:var(--gedempt); font-weight:600; }
+  .tabpaneel h3:first-child { margin-top:0; }
+  .tekstblok { white-space:pre-wrap; overflow-wrap:anywhere; margin:0; font-size:14.5px; }
+  details.lang { border:1px solid var(--lijn); border-radius:10px; padding:8px 12px; margin:8px 0; background:var(--bg); }
+  details.lang > summary { cursor:pointer; min-height:32px; display:flex; align-items:center; gap:8px; color:var(--tekst); font-size:14px; overflow-wrap:anywhere; }
+  details.lang[open] > summary { margin-bottom:8px; }
+  .gebeurtenissen { list-style:none; margin:0; padding:0 0 0 18px; border-left:2px solid rgba(76,195,255,.3); display:grid; gap:10px; }
+  .gebeurtenissen li { position:relative; font-size:14px; overflow-wrap:anywhere; }
+  .gebeurtenissen li::before { content:""; position:absolute; left:-24px; top:7px; width:9px; height:9px; border-radius:50%; background:rgba(76,195,255,.6); }
+  .gebeurtenissen li.eigenaar::before { background:var(--wacht); }
+  .gebeurtenissen .klein { display:block; }
+  .reactiebalk { position:sticky; bottom:0; z-index:4; padding:10px 16px calc(10px + env(safe-area-inset-bottom)); border-top:1px solid rgba(76,195,255,.3); background:linear-gradient(180deg, rgba(11,22,38,.97), rgba(5,10,20,.99)); border-radius:0 0 12px 12px; box-shadow:0 -12px 24px rgba(5,10,20,.6); }
+  .reactiebalk textarea { min-height:56px; max-height:38dvh; resize:vertical; }
+  .reactiebalk .knoppen { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; }
+  .reactiebalk .knoppen button { margin:0; }
+  .reactiebalk .uitleg { flex:1 1 220px; font-size:12.5px; }
+  @media (max-width:999px) {
+    .werklijst { display:none; }
+    body.werkruimte { padding:0; }
+    body.werkruimte .zijbalk { display:none; }
+    body.werkruimte main { margin-left:0; padding:0; }
+    body.werkruimte #melding:not(:empty) { padding:0 12px; }
+    body.werkruimte .taak { min-height:100dvh; border-radius:0; border-left:0; border-right:0; }
+    body.werkruimte .taakkop, body.werkruimte .reactiebalk { border-radius:0; }
+    .taakkop { padding:10px 12px; } .taakinhoud { padding:12px 12px 16px; } .reactiebalk { padding:8px 12px calc(8px + env(safe-area-inset-bottom)); }
+    .reactiebalk textarea { min-height:46px; padding:9px 11px; }
+    .reactiebalk .knoppen { flex-wrap:nowrap; margin-top:6px; }
+    .reactiebalk .knoppen button { flex:1 1 0; padding:8px 10px; font-size:14px; min-height:42px; }
+    .reactiebalk .uitleg { display:none; }
+    .tabs { gap:0; } .tabs button { padding:10px 8px; font-size:13.5px; flex:1 0 auto; }
+  }
 </style>
 </head>
 <body>
@@ -294,33 +361,192 @@
   // Wat de eigenaar bij een vastgelopen doel al typte, per doel; een verversing op de klok tekent de kaart opnieuw.
   const concepten = {};
 
-  // Welke kaarten de eigenaar heeft opengeklapt; een verversing op de klok tekent ze weer open.
-  const geopend = new Set();
-
-  // Na het aanklikken van een kaart: de details en het reactieveld. Reageren kan bij elk doel (bij een afgerond of
-  // gesloten doel hervat Jarvis het); sluiten alleen bij een vastgelopen doel.
-  function doelActies(d) {
-    const sluit = d.status === "vast" ? `<button data-actie="sluit">Sluiten</button>` : "";
-    const knop = ["klaar", "vast", "gesloten"].includes(d.status) ? "Reageer en hervat" : "Reageer";
-    return `<div class="acties" data-id="${esc(d.id)}">
-        <div class="klein">Opdracht</div><p class="opdracht">${esc(zonderLabel(d.opdracht))}</p>
-        <textarea rows="3" data-concept="${esc(d.id)}" placeholder="Aanvullende informatie of instructie voor Jarvis" aria-label="Reactie op ${esc(d.titel)}">${esc(concepten[d.id] ?? "")}</textarea>
-        <button class="hoofd" data-actie="reageer">${knop}</button>${sluit}
-        <div class="verplaats"><select data-plek="${esc(d.id)}" aria-label="Project of subproject voor ${esc(d.titel)}">${plekKeuzes(PROJECTEN).map((k) =>
-          `<option value="${esc(k.plek)}"${k.plek === (projectVan(d) ?? "") ? " selected" : ""}>${esc(k.naam)}</option>`).join("")}</select>
-          <button data-actie="verplaats">Verplaats</button></div></div>`;
+  // werkruimte:begin
+  // De opdracht van een doel groeit met elke reactie van de eigenaar (doel_reageer plakt "Reactie van de eigenaar
+  // (datum):" eronder, en bij hervatten "(Vorige uitkomst: …)"). Hier wordt dat weer uit elkaar gehaald: de
+  // oorspronkelijke opdracht hoort in het tabblad Opdracht, de reacties en vorige uitkomsten in de Historie.
+  const REACTIE_MERK = /\n\nReactie van de eigenaar \((\d{4}-\d{2}-\d{2} \d{2}:\d{2})\):\n/g;
+  const VORIGE_MERK = "\n\n(Vorige uitkomst: ";
+  function splitsOpdracht(tekst) {
+    const t = String(tekst ?? "").replace(/^Project:[^\n]*\n+/i, "");
+    const merken = [...t.matchAll(REACTIE_MERK)];
+    const basis = merken.length ? t.slice(0, merken[0].index) : t;
+    const reacties = merken.map((m, i) => {
+      const van = m.index + m[0].length;
+      let stuk = t.slice(van, i + 1 < merken.length ? merken[i + 1].index : t.length);
+      let vorige = null;
+      const v = stuk.indexOf(VORIGE_MERK);
+      if (v >= 0) { vorige = stuk.slice(v + VORIGE_MERK.length).replace(/\)\s*$/, ""); stuk = stuk.slice(0, v); }
+      return { op: m[1], tekst: stuk.trim(), vorige };
+    });
+    return { basis: basis.trim(), reacties };
   }
+  // Een uitkomst bestaat uit een conclusie en, als de keten die meegaf, losse resultaten met een eigen staat.
+  // Er wordt niets bij verzonnen: wat niet in de uitkomst staat, verschijnt ook niet.
+  function staatVan(t) {
+    const s = String(t ?? "").toLowerCase();
+    if (/\bno-go\b|niet[- ]geslaagd|niet[- ]meetbaar|niet te meten|mislukt|niet in orde|niet bereikbaar|\bvast\b/.test(s)) return "fout";
+    if (/\bgo\b|geslaagd|akkoord|http 200|klaar|samengevoegd/.test(s)) return "goed";
+    return "neutraal";
+  }
+  function leesUitkomst(tekst) {
+    let t = String(tekst ?? "").trim();
+    if (!t) return null;
+    let keten = null;
+    const k = /\s*\[keten ([0-9a-zA-Z._-]{1,12})\]\s*$/.exec(t);
+    if (k) { keten = k[1]; t = t.slice(0, k.index).trim(); }
+    const volledig = t;
+    const review = /^Review (GO|NO-GO) op ([0-9a-f]{7,40}) \(([^)]*)\):\n?/.exec(t);
+    if (review) {
+      const rest = t.slice(review[0].length);
+      const eerdere = rest.indexOf("\n\n— Eerdere uitkomst —\n");
+      const rapport = (eerdere >= 0 ? rest.slice(0, eerdere) : rest).trim();
+      return { conclusie: `Review ${review[1]} op ${review[2]} (${review[3]})`, staat: review[1] === "GO" ? "goed" : "fout", punten: [], volledig, keten, rapport };
+    }
+    const scheiding = t.indexOf(" — ");
+    if (scheiding > 0 && scheiding < 200) {
+      const conclusie = t.slice(0, scheiding);
+      const punten = t.slice(scheiding + 3).split(" | ").map((p) => {
+        const m = /^([^:\n]{1,80}): (geslaagd|niet-geslaagd|niet-meetbaar) — ([\s\S]*)$/.exec(p.trim());
+        return m ? { titel: m[1], staat: staatVan(m[2]), label: m[2], reden: m[3].trim() } : { titel: null, staat: staatVan(p), label: null, reden: p.trim() };
+      }).filter((p) => p.reden);
+      return { conclusie, staat: staatVan(conclusie), punten, volledig, keten, rapport: null };
+    }
+    const eerste = /^[\s\S]*?(?:[.!?](?=\s)|\n|$)/.exec(t)[0].trim();
+    return { conclusie: eerste || t, staat: staatVan(t), punten: [], volledig, keten, rapport: null };
+  }
+  // werkruimte:einde
 
+  // Een doel opent in zijn eigen werkruimte (#/doel/<id>, D-20261121-105625624) in plaats van uit te klappen.
+  // De kaart blijft compact: titel, status, datum en een samenvatting van twee regels. Alles daarna staat in de werkruimte.
   function kaartDoel(d) {
     const pr = d.pr && typeof d.pr.repo === "string" && Number.isInteger(d.pr.nummer) ? ` · <a href="https://github.com/${esc(d.pr.repo)}/pull/${esc(d.pr.nummer)}">${esc(d.pr.repo.split("/")[1])} #${esc(d.pr.nummer)}</a>` : "";
     const soort = ["klaar", "vast", "gesloten"].includes(d.status) ? d.status : "lopend";
-    const open = geopend.has(d.id);
-    return `<div class="kaart ${esc(soort)}${open ? " open" : ""}"><h3><button type="button" class="kop" data-actie="open" aria-expanded="${esc(open)}" data-id="${esc(d.id)}">${esc(d.titel)}</button><span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
+    const u = leesUitkomst(d.uitkomst);
+    return `<div class="kaart ${esc(soort)}"><h3><a class="kop" href="#/doel/${esc(d.id)}" data-doel="${esc(d.id)}">${esc(d.titel)}</a><span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span></h3>
       <div class="klein">${esc(d.id)} · bijgewerkt ${esc(tijd(d.bijgewerkt))}${pr}</div>
       ${(soort === "lopend" ? stappen(d.status) : "")}
-      ${d.uitkomst ? `<p class="klein${open ? "" : " samengevat"}">${esc(d.uitkomst)}</p>` : ""}
-      ${(open ? doelActies(d) : "")}</div>`;
+      ${u ? `<p class="klein samengevat">${esc(u.conclusie)}</p>` : ""}</div>`;
   }
+
+
+  // Waar de eigenaar vandaan kwam toen hij een doel opende: daar brengt "Terug" hem weer, op dezelfde hoogte.
+  let terugNaar = null;
+  let getoondDoel = null;
+  let herstelScroll = null;
+  const tabVan = {};
+  // Per geopend doel: het volledige logboek en de reviews, gelezen bij het openen en bij elke verversing.
+  const detail = {};
+  async function laadDetail(d) {
+    const pr = prVan(d);
+    const [a, t] = await Promise.all([
+      client.from("activiteit").select("op, uitvoerder, rol, taak, soort, tekst, verwijzing").eq("taak", d.id).order("op", { ascending: false }).limit(200),
+      pr ? client.from("toetsingen").select("pr_repo, pr_nummer, commit_sha, oordeel, rapport, door, op").eq("pr_repo", pr.repo).eq("pr_nummer", pr.nummer).order("op", { ascending: false }).limit(20) : Promise.resolve({ data: [], error: null }),
+    ]);
+    detail[d.id] = { activiteit: a.data ?? [], toetsingen: t.data ?? [], fout: a.error || t.error ? `Niet alles te lezen: ${(a.error ?? t.error).message}` : null };
+  }
+  // De notities die de eigenaar bij een doel plaatste zonder iets te starten: verwerkte berichten met context.doel_reactie.
+  const notitiesVan = (id) => berichten.filter((b) => b.van === "eigenaar" && objectVan(b.context).doel_reactie?.doel === id);
+
+  function werklijst(huidig) {
+    const bron = terugNaar && terugNaar.plek ? alleDoelen.filter((d) => { const p = projectVan(d) ?? ""; return p === terugNaar.plek || p.startsWith(terugNaar.plek + "/"); }) : alleDoelen;
+    const { lopend, vast, klaar, gesloten } = splits(bron);
+    const item = (d) => `<a href="#/doel/${esc(d.id)}" data-doel="${esc(d.id)}"${d.id === huidig.id ? ' aria-current="page"' : ""}><span class="stip ${d.status === "klaar" ? "goed" : d.status === "vast" ? "fout" : d.status === "gesloten" ? "neutraal" : ""}"></span>${esc(d.titel)}<span class="klein">${esc(LABEL[d.status] ?? d.status)} · ${esc(tijd(d.bijgewerkt))}</span></a>`;
+    const groep = (titel, arr, max) => (arr.length ? `<h2>${esc(titel)} <span class="tel">${arr.length}</span></h2>${arr.slice(0, max).map(item).join("")}${arr.length > max ? `<div class="klein" style="padding:4px 10px">en ${arr.length - max} oudere</div>` : ""}` : "");
+    return `<aside class="paneel werklijst" aria-label="Takenlijst">${groep("Lopend", lopend, 30)}${groep("Vastgelopen", vast, 30)}${groep("Klaar", klaar, 15)}${groep("Gesloten", gesloten, 8)}</aside>`;
+  }
+
+  const LANG = 600;
+  const langeTekst = (titel, tekst) => (String(tekst).length > LANG
+    ? `<details class="lang"><summary>${esc(titel)} <span class="klein">(${String(tekst).length} tekens)</span></summary><p class="tekstblok">${esc(tekst)}</p></details>`
+    : `<p class="tekstblok">${esc(tekst)}</p>`);
+
+  function tabOverzicht(d, u) {
+    const stap = volgendeStap(d);
+    const pr = prVan(d);
+    const link = veiligeLink(d.acceptatie_url);
+    return `${stap ? `<h3>Volgende stap</h3><p class="tekstblok">${esc(stap.tekst)}</p>` : ""}
+      ${u && u.volledig.length > u.conclusie.length + 2 && !u.punten.length ? `<h3>Volledige uitkomst</h3>${langeTekst("Lees de volledige uitkomst", u.rapport ?? u.volledig)}` : ""}
+      ${pr || link ? `<h3>Verwijzingen</h3><p class="tekstblok">${pr ? prKnop(pr, "Pull request " + prKort(pr)) : ""}${pr && link ? " · " : ""}${link ? `<a href="${esc(link)}" rel="noopener">Bekijk het resultaat</a>` : ""}</p>` : ""}
+      ${u && u.keten ? `<p class="klein">Gemeten door keten ${esc(u.keten)}.</p>` : ""}
+      <h3>Beheer</h3>
+      <div class="acties" data-id="${esc(d.id)}" style="margin:0;padding:0;border:0">
+        <div class="verplaats" style="margin:0"><select data-plek="${esc(d.id)}" aria-label="Project of subproject voor ${esc(d.titel)}">${plekKeuzes(PROJECTEN).map((k) =>
+          `<option value="${esc(k.plek)}"${k.plek === (projectVan(d) ?? "") ? " selected" : ""}>${esc(k.naam)}</option>`).join("")}</select>
+          <button data-actie="verplaats">Verplaats</button>${d.status === "vast" ? `<button data-actie="sluit">Sluiten</button>` : ""}</div></div>`;
+  }
+
+  function tabBewijs(d, x) {
+    const link = veiligeLink(d.acceptatie_url);
+    const metingen = x ? x.activiteit.filter((a) => a.soort === "acceptatie") : [];
+    const reviews = x ? x.toetsingen : [];
+    const delen = [];
+    if (link) delen.push(`<h3>Acceptatie-URL</h3><p class="tekstblok"><a href="${esc(link)}" rel="noopener">${esc(link)}</a></p>`);
+    if (metingen.length) delen.push(`<h3>Acceptatietests en metingen <span class="tel">${metingen.length}</span></h3><ul class="gebeurtenissen">${metingen.map((a) =>
+      `<li><span class="stip ${staatVan(a.tekst)}"></span>${langeTekst(a.tekst.split("\n")[0].slice(0, 120), a.tekst)}<span class="klein">${esc(tijd(a.op))}</span></li>`).join("")}</ul>`);
+    if (reviews.length) delen.push(`<h3>Reviews <span class="tel">${reviews.length}</span></h3>${reviews.map((r) =>
+      `<details class="lang"><summary><span class="stip ${r.oordeel === "GO" ? "goed" : "fout"}"></span>Review ${esc(r.oordeel)} op ${esc(String(r.commit_sha).slice(0, 7))} · ${esc(tijd(r.op))}</summary><p class="tekstblok">${esc(r.rapport ?? "")}</p></details>`).join("")}`);
+    if (!x) return `<div class="leeg">Bewijs wordt geladen…</div>`;
+    return (x.fout ? `<div class="melding">${esc(x.fout)}</div>` : "") + (delen.length ? delen.join("") : `<div class="leeg">Voor dit doel is nog geen bewijs vastgelegd.</div>`);
+  }
+
+  function tabOpdracht(d, o) {
+    return `<h3>Oorspronkelijke opdracht</h3><p class="tekstblok">${esc(o.basis)}</p>
+      ${o.reacties.length ? `<p class="klein">Daarna ${o.reacties.length} ${o.reacties.length === 1 ? "aanvulling" : "aanvullingen"} van jou; die staan in Historie.</p>` : ""}
+      <p class="klein">Aangemaakt ${esc(tijd(d.aangemaakt))}${d.pogingen ? ` · ${esc(d.pogingen)} herstelpoging(en)` : ""}</p>`;
+  }
+
+  function tabHistorie(d, o, x) {
+    // Een reactie die het doel hervatte, draagt de vorige uitkomst; die staat er inklapbaar bij.
+    const regels = [
+      ...(x ? x.activiteit : []).map((a) => ({ op: new Date(a.op), html: `${langeTekst(a.tekst.split("\n")[0].slice(0, 140), a.tekst)}<span class="klein">${esc(tijd(a.op))} · ${esc(a.rol)}${a.verwijzing ? " · " + esc(a.verwijzing) : ""}</span>`, wie: "" })),
+      ...o.reacties.map((r) => ({ op: new Date(r.op.replace(" ", "T")), html: `<b>Jouw instructie</b><p class="tekstblok">${esc(r.tekst)}</p>${r.vorige ? langeTekst("Uitkomst vóór deze instructie", r.vorige) : ""}<span class="klein">${esc(r.op)}</span>`, wie: "eigenaar" })),
+      ...notitiesVan(d.id).map((b) => ({ op: new Date(b.op), html: `<b>Jouw reactie</b><p class="tekstblok">${esc(objectVan(b.context).doel_reactie?.tekst ?? b.tekst)}</p><span class="klein">${esc(tijd(b.op))} · startte niets</span>`, wie: "eigenaar" })),
+    ].filter((r) => !Number.isNaN(r.op.getTime())).sort((a, b) => b.op - a.op);
+    return (x && x.fout ? `<div class="melding">${esc(x.fout)}</div>` : "") + (regels.length
+      ? `<ul class="gebeurtenissen">${regels.map((r) => `<li class="${r.wie}">${r.html}</li>`).join("")}</ul>`
+      : `<div class="leeg">${x ? "Nog geen gebeurtenissen vastgelegd." : "Historie wordt geladen…"}</div>`);
+  }
+
+  const TABS = [["overzicht", "Overzicht"], ["bewijs", "Bewijs & tests"], ["opdracht", "Opdracht"], ["historie", "Historie"]];
+  function weergaveDoel(d) {
+    document.body.classList.add("werkruimte");
+    const u = leesUitkomst(d.uitkomst);
+    const o = splitsOpdracht(d.opdracht);
+    const x = detail[d.id] ?? null;
+    const pr = prVan(d);
+    const plek = projectVan(d);
+    const tab = tabVan[d.id] ?? "overzicht";
+    const stil = ["klaar", "vast", "gesloten"].includes(d.status);
+    const paneel = { overzicht: () => tabOverzicht(d, u), bewijs: () => tabBewijs(d, x), opdracht: () => tabOpdracht(d, o), historie: () => tabHistorie(d, o, x) }[tab]();
+    $("inhoud").innerHTML = `<div class="werk">${werklijst(d)}
+      <article class="paneel taak" data-taak="${esc(d.id)}">
+        <div class="taakkop"><button type="button" class="terugknop" data-actie="terug">← Terug</button>
+          <h1>${esc(d.titel)}</h1>
+          <div class="meta"><span class="badge ${esc(KLEUR[d.status] ?? "")}">${esc(LABEL[d.status] ?? d.status)}</span><span>bijgewerkt ${esc(tijd(d.bijgewerkt))}</span><span>${esc(d.id)}</span>
+            ${plek ? `<span>project ${esc(plekKeuzes(PROJECTEN).find((k) => k.plek === plek)?.naam ?? plek)}</span>` : ""}${pr ? `<span>${prKnop(pr, prKort(pr))}</span>` : ""}</div>
+          ${stil ? "" : stappen(d.status)}</div>
+        <div class="taakinhoud">
+          <section class="resultaat ${esc(u ? u.staat : "neutraal")}"><h2>Resultaat</h2><p>${esc(u ? u.conclusie : "Nog geen resultaat vastgelegd.")}</p></section>
+          ${u && u.punten.length ? `<h2 style="margin-top:16px">Belangrijkste resultaten <span class="tel">${u.punten.length}</span></h2><ul class="punten">${u.punten.map((p) =>
+            `<li><span class="stip ${esc(p.staat)}"></span>${p.titel ? `<b>${esc(p.titel)}</b>${p.label ? ` · ${esc(p.label)}` : ""}` : ""}${p.reden.length > 320
+              ? `<p class="reden kort">${esc(p.reden)}</p><details class="lang"><summary>Lees volledig (${p.reden.length} tekens)</summary><p class="tekstblok">${esc(p.reden)}</p></details>`
+              : `<p class="reden">${esc(p.reden)}</p>`}</li>`).join("")}</ul>` : ""}
+          <div class="tabs" role="tablist" aria-label="Details van het doel">${TABS.map(([k, n]) => `<button type="button" role="tab" id="tab-${k}" aria-controls="tabpaneel" aria-selected="${k === tab}" data-tab="${k}">${esc(n)}</button>`).join("")}</div>
+          <div class="tabpaneel" id="tabpaneel" role="tabpanel" aria-labelledby="tab-${esc(tab)}">${paneel}</div>
+        </div>
+        <form class="reactiebalk acties" data-id="${esc(d.id)}">
+          <textarea rows="2" data-concept="${esc(d.id)}" placeholder="${stil ? "Reactie (start niets) of nieuwe instructie" : "Reactie (start niets) of aanvullende instructie"}" aria-label="Reactie op ${esc(d.titel)}">${esc(concepten[d.id] ?? "")}</textarea>
+          <div class="knoppen"><button type="submit" class="hoofd" data-actie="notitie">Reactie plaatsen</button>
+            <button type="button" data-actie="reageer">${stil ? "Opnieuw uitvoeren" : "Meegeven als instructie"}</button>
+            <span class="klein uitleg">${stil
+              ? "Een reactie wordt bewaard en start niets. Opnieuw uitvoeren zet Jarvis weer aan het werk met deze instructie."
+              : "Een reactie wordt bewaard en start niets. Als instructie leest Jarvis haar bij zijn volgende stap; de status blijft."}</span></div>
+        </form>
+      </article></div>`;
+    if (!x) laadDetail(d).then(() => { if (huidigDoelId() === d.id) teken(); }).catch((e) => melding(e.message ?? String(e)));
+  }
+  const huidigDoelId = () => { const m = /^#\/doel\/([^/]+)$/.exec(location.hash); return m ? decodeURIComponent(m[1]) : null; };
 
   // Eigenaarsbeslissingen (DEC-0043): hetzelfde bericht met context.akkoord_pr en dezelfde tabel jarvis.autorisaties
   // als de oude interface; hier alleen zichtbaar en afhandelbaar gemaakt.
@@ -391,6 +617,9 @@
     await laadBeslissingen();
     PROJECTEN = bouwProjecten(VASTE_PROJECTEN, berichten, objectVan);
     verplaatst = bouwVerplaatsingen(berichten, objectVan);
+    // In een werkruimte ook het logboek en de reviews van dat doel opnieuw lezen.
+    const open = huidigDoelId() ? alleDoelen.find((d) => d.id === huidigDoelId()) : null;
+    if (open) await laadDetail(open).catch((e) => { detail[open.id] = { activiteit: [], toetsingen: [], fout: e.message ?? String(e) }; });
     const lopend = splits(alleDoelen).lopend;
     $("status").textContent = `laatste controle ${new Date().toLocaleTimeString("nl-NL")} · ${lopend.length} lopend`;
     teken();
@@ -533,7 +762,7 @@
       ? `<div class="huidig"><div class="kop"><h2 style="margin:0">Huidige activiteit</h2>
             <span class="badge">${esc(LABEL[huidig.status] ?? huidig.status)}</span>
             <span class="klein">sinds ${esc(tijdKort(huidig.bijgewerkt))}</span></div>
-          <h3>${esc(huidig.titel)}</h3>
+          <h3><a href="#/doel/${esc(huidig.id)}" data-doel="${esc(huidig.id)}" style="color:inherit">${esc(huidig.titel)}</a></h3>
           ${stappen(huidig.status)}
           ${stappenNu.length
             ? `<ul class="tijdlijn">${stappenNu.map((a) => `<li><span class="t">${esc(tijdKort(a.op))}</span><span>${esc(a.tekst)}${a.verwijzing ? ` <span class="klein">· ${esc(a.verwijzing)}</span>` : ""}</span></li>`).join("")}</ul>`
@@ -1024,11 +1253,26 @@
   function teken() {
     const route = location.hash.replace(/^#\/?/, "");
     const [deel, sleutel, subsleutel] = route.split("/");
+    // De werkruimte van één doel. Een onbekend doel (bijvoorbeeld net gesloten of een oude link) valt terug op het overzicht.
+    const doelId = huidigDoelId();
+    const doel = doelId ? alleDoelen.find((d) => d.id === doelId) : null;
+    if (doel) {
+      // Een ander doel openen begint bovenaan; een verversing van hetzelfde doel laat de hoogte staan.
+      const nieuw = getoondDoel !== doel.id;
+      getoondDoel = doel.id;
+      weergaveDoel(doel);
+      if (nieuw) window.scrollTo(0, 0);
+      return;
+    }
+    getoondDoel = null;
+    document.body.classList.remove("werkruimte");
     for (const n of ["nav-cc", "nav-pr", "nav-id"]) $(n).removeAttribute("aria-current");
     const project = deel === "projecten" ? PROJECTEN.find((p) => p.sleutel === sleutel) : null;
     const sub = project && subsleutel ? (project.subprojecten ?? []).find((sp) => sp.sleutel === subsleutel) : null;
     $("nav-" + (deel === "projecten" ? "pr" : deel === "ideeen" ? "id" : "cc")).setAttribute("aria-current", "page");
     if (deel === "ideeen") weergaveIdeeen(); else if (sub) weergaveSubproject(project, sub); else if (project) weergaveProject(project); else if (deel === "projecten") weergaveProjecten(); else weergaveCommandCenter();
+    // Terug uit een werkruimte: weer op de hoogte waar de eigenaar het doel opende.
+    if (herstelScroll !== null) { const y = herstelScroll; herstelScroll = null; requestAnimationFrame(() => window.scrollTo(0, y)); }
   }
 
   // Eén luisteraar voor het openklappen en de knoppen op alle doelkaarten, in elke weergave.
@@ -1062,19 +1306,41 @@
       teken();
       return;
     }
-    if (knop?.dataset.actie === "open") {
-      const wie = knop.dataset.id;
-      if (geopend.has(wie)) geopend.delete(wie); else geopend.add(wie);
-      teken();
+    // Een doel openen: onthoud waar de eigenaar stond, zodat Terug hem daar weer brengt. Binnen de werkruimte
+    // (de takenlijst) blijft het oorspronkelijke vertrekpunt staan.
+    const doelLink = ev.target.closest("a[data-doel]");
+    if (doelLink && !ev.metaKey && !ev.ctrlKey && !ev.shiftKey) {
+      if (!huidigDoelId()) {
+        const [deel, sleutel, subsleutel] = location.hash.replace(/^#\/?/, "").split("/");
+        terugNaar = { hash: location.hash || "#/", scroll: window.scrollY, plek: deel === "projecten" && sleutel ? (subsleutel ? `${sleutel}/${subsleutel}` : sleutel) : null };
+      }
+      return; // de link zelf wijzigt de hash; hashchange tekent de werkruimte
+    }
+    const tabKnop = ev.target.closest("button[data-tab]");
+    if (tabKnop) {
+      const id = huidigDoelId();
+      if (id) { tabVan[id] = tabKnop.dataset.tab; teken(); $("tab-" + tabKnop.dataset.tab)?.focus(); }
+      return;
+    }
+    if (knop?.dataset.actie === "terug") {
+      const naar = terugNaar ?? (() => { const d = alleDoelen.find((x) => x.id === huidigDoelId()); const p = d ? projectVan(d) : null; return { hash: p ? "#/projecten/" + p : "#/", scroll: 0 }; })();
+      herstelScroll = naar.scroll;
+      terugNaar = null;
+      location.hash = naar.hash;
       return;
     }
     const blok = knop?.closest(".acties");
     if (!blok) return;
     const id = blok.dataset.id;
+    if (knop.dataset.actie === "notitie") return; // het formulier handelt dit af (submit)
     if (knop.dataset.actie === "reageer") {
       const reactie = blok.querySelector("textarea").value.trim();
-      if (!reactie) { melding("Schrijf eerst je reactie; Jarvis pakt het doel daarmee weer op."); return; }
-      zeg(async () => { await rpc("doel_reageer", { p_id: id, p_reactie: reactie }); delete concepten[id]; geopend.delete(id); });
+      const d = alleDoelen.find((x) => x.id === id);
+      const stil = d && ["klaar", "vast", "gesloten"].includes(d.status);
+      if (!reactie) { melding(stil ? "Schrijf eerst de instructie waarmee Jarvis opnieuw begint." : "Schrijf eerst de instructie voor Jarvis."); return; }
+      // Opnieuw uitvoeren is een bewuste keuze: het zet een nieuwe uitvoeringsketen in gang.
+      if (stil && !confirm("Jarvis opnieuw laten uitvoeren met deze instructie? Er start dan een nieuwe uitvoeringsketen.")) return;
+      zeg(async () => { await rpc("doel_reageer", { p_id: id, p_reactie: reactie }); delete concepten[id]; delete detail[id]; });
     } else if (knop.dataset.actie === "verplaats") {
       const plek = blok.querySelector("select[data-plek]").value;
       const d = alleDoelen.find((x) => x.id === id);
@@ -1087,8 +1353,28 @@
         if (r.error) throw r.error;
       });
     } else if (knop.dataset.actie === "sluit" && confirm("Dit doel sluiten? Jarvis werkt er niet meer aan en het verdwijnt uit Vastgelopen.")) {
-      zeg(async () => { await rpc("doel_sluit", { p_id: id }); delete concepten[id]; geopend.delete(id); });
+      zeg(async () => { await rpc("doel_sluit", { p_id: id }); delete concepten[id]; });
     }
+  });
+
+  // Een gewone reactie: bewaard bij het doel als verwerkt bericht (zoals een idee of een verplaatsing). Geen wachtrij
+  // pakt een verwerkt bericht op en de status van het doel verandert niet: er start dus nooit een nieuwe uitvoering.
+  $("inhoud").addEventListener("submit", (ev) => {
+    const vorm = ev.target.closest("form.reactiebalk");
+    if (!vorm) return;
+    ev.preventDefault();
+    const id = vorm.dataset.id;
+    const tekst = vorm.querySelector("textarea").value.trim();
+    const d = alleDoelen.find((x) => x.id === id);
+    if (!d) return;
+    if (!tekst) { melding("Schrijf eerst je reactie."); return; }
+    zeg(async () => {
+      const r = await client.from("berichten").insert({ van: "eigenaar", tekst: `Reactie op doel ${d.titel}: ${tekst}`.slice(0, 20000), status: "verwerkt",
+        verwerkt_op: new Date().toISOString(), verwerking: "Reactie van de eigenaar bij een doel; geen opdracht, start niets.", context: { doel_reactie: { doel: id, tekst } } });
+      if (r.error) throw r.error;
+      delete concepten[id];
+      tabVan[id] = "historie";
+    });
   });
 
   function login(melding_) {

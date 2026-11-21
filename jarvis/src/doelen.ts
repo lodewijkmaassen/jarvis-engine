@@ -73,6 +73,28 @@ export function doelUitPrTekst(tekst: string): string | null {
  * versie is de commit van de engine die in deze repository is vastgepind — en
  * die wijzigt precies dan, en alleen dan, wanneer er aan de keten is gewerkt.
  */
+/**
+ * De ruimste uitkomst die de keten bij een doel bewaart (D-20261121-105625624).
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * Lange uitkomsten werden bij het opslaan stil afgekapt (op 1500, 1700 en 1800 tekens; de reden van een
+ * acceptatietest op 600 en een regel in het logboek op 500), terwijl de database geen grens kent. De
+ * eigenaar zag dan een resultaat dat midden in een zin ophield, en de interface kon dat niet herstellen:
+ * de rest was er nooit. Nu gaat de volledige tekst de database in. Alleen een tekst die echt absurd lang
+ * is, wordt begrensd, en dan zegt de tekst zelf dat en hoeveel er wegviel; nooit meer stil.
+ */
+export const MAX_UITKOMST_TEKENS = 20_000;
+/** De ruimste regel die de keten in het activiteitenlogboek zet. */
+export const MAX_LOGREGEL_TEKENS = 4_000;
+
+/** Begrenst een tekst alleen als het moet, en zegt dan zelf dat er iets is weggevallen. */
+export function begrens(tekst: string, max: number = MAX_UITKOMST_TEKENS): string {
+  if (tekst.length <= max) return tekst;
+  const merk = `\n… [afgekapt na ${max} van ${tekst.length} tekens]`;
+  return tekst.slice(0, Math.max(0, max - merk.length)) + merk;
+}
+
 export function metKetenVersie(tekst: string, versie: string | null): string {
   const kort = (versie ?? "").trim().slice(0, 12);
   return kort === "" ? tekst : `${tekst} [keten ${kort}]`;

@@ -22,7 +22,7 @@ import {
 } from "./acceptatie";
 import { ACTIVITEIT_SQL, DOEL_ACTIVITEIT_SQL, LEES_REVIEW_SQL, VRAAG_REVIEW_SQL } from "./db";
 import { bewijsVoorTest } from "./doel-bewijs";
-import { REVIEW_MODEL, REVIEW_WACHT_MS, type Doel } from "./doelen";
+import { begrens, MAX_LOGREGEL_TEKENS, REVIEW_MODEL, REVIEW_WACHT_MS, type Doel } from "./doelen";
 import type { DbClient } from "./opdrachten";
 import { antwoordTekst, bouwAanroep, leverancierFout } from "./review";
 
@@ -62,7 +62,7 @@ export async function schrijfAcceptatie(
       doel,
       null,
       "acceptatie",
-      tekst.slice(0, 500),
+      begrens(tekst, MAX_LOGREGEL_TEKENS),
       null,
     ]);
   } catch (fout) {
