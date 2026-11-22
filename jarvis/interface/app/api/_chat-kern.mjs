@@ -46,6 +46,8 @@ const BIJLAGEGRENZEN = {
 
 // Eén regel met de projecten, gedeeld door de opdrachtmodus en de sparmodus: de sparmodus kende ze eerst niet.
 const PROJECTEN_REGEL = "Projecten: tovas-flow (ToVas Flow: gemiste oproepen, offertes, reviews, inlogpagina), kasboek (Kasboek), tobias-leert (Tobias Leert). Subprojecten van tovas-flow: gemiste-oproepen, offerte-opvolging, reviews-verzamelen. Subproject van tobias-leert: woordbattle (WoordBattle).";
+/** De projectsleutels uit die regel: de sparmodus herkent een genoemd project ook als het geheugen er (nog) niets over heeft. */
+export const BEKENDE_PROJECTEN = [...PROJECTEN_REGEL.split(".")[0].matchAll(/(?:: |, )([a-z0-9-]+) \(/g)].map((m) => m[1]);
 
 const SYSTEEM = `Je bent Jarvis, de assistent van de eigenaar in het Command Center. Antwoord in het Nederlands, kort en feitelijk.
 Is het bericht alleen een vraag of gesprek: antwoord gewoon, zonder maak_doel. Bevat het bericht naast een vraag ook een concrete opdracht: beantwoord de vraag en maak voor de opdracht een doel aan.
@@ -517,7 +519,7 @@ async function sparBeurt({ berichten, geheugen, sleutel, fetchFn, lees, gesprekI
   const uitsluiten = berichten.filter((b) => b.role === "user").map(tekstVan);
   const alles = await geheugen.lees();
   const geselecteerd = selecteer(alles, vraag, { uitsluiten });
-  const projectDoelen = await doelenVanProjecten(genoemdeProjecten(alles, vraag), lees);
+  const projectDoelen = await doelenVanProjecten(genoemdeProjecten(alles, vraag, BEKENDE_PROJECTEN), lees);
   const { tekst, kosten, onthouden, geraadpleegd } = await vraagModel(metGeheugen(berichten, geselecteerd, projectDoelen), {
     sleutel,
     fetchFn,

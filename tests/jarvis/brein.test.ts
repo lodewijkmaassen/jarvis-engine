@@ -245,6 +245,13 @@ describe("contextintegratie (D-20261121-235241117): projectkennis en doelstellin
     expect(genoemdeProjecten(items(rijen), "Kasboek en ToVas Flow")).toEqual(["kasboek", "tovas-flow"]);
   });
 
+  it("herkent een project uit de vaste projectenlijst ook met een leeg geheugen (D-20261121-235241117)", () => {
+    expect(genoemdeProjecten([], "Een nieuwe dienst naast ToVas Flow?")).toEqual([]);
+    expect(genoemdeProjecten([], "Een nieuwe dienst naast ToVas Flow?", ["tovas-flow", "kasboek"])).toEqual(["tovas-flow"]);
+    expect(genoemdeProjecten([], "De flow van mijn dag", ["tovas-flow"])).toEqual([]);
+    expect(genoemdeProjecten(items(rijen), "Kasboek en ToVas Flow", ["kasboek"])).toEqual(["kasboek", "tovas-flow"]);
+  });
+
   it("de sparbeurt geeft de recente doelen van het project en de geraadpleegde bronnen mee, en kent de projecten in de prompt", async () => {
     const doelen = [
       { id: "D-2", titel: "Offerte opvolgen", status: "klaar", bijgewerkt: "2026-11-02T00:00:00Z", opdracht: "Project: tovas-flow" },
@@ -277,6 +284,24 @@ describe("contextintegratie (D-20261121-235241117): projectkennis en doelstellin
     expect(bronnen.geheugen.map((g) => g.id)).toEqual(expect.arrayContaining(["p1", "d1", "b1"]));
     expect(bronnen.doelen[0].ids).toEqual(["D-2", "D-1"]);
     expect(bronnen.gereedschap).toEqual([{ gereedschap: "raadpleeg_geheugen", invoer: { zoek: "ToVas Flow" } }]);
+  });
+
+  it("met een leeg geheugen haalt de sparbeurt toch de doelen op van een genoemd project uit de projectenlijst", async () => {
+    const w = wereld([tekst("ToVas Flow loopt; zie D-2.")], { rijen: [] });
+    const basis = w.fetchFn;
+    const zoekOproepen: string[] = [];
+    const fetchFn = async (url: string, init: RequestInit = {}) => {
+      if (url.includes("/rest/v1/doelen")) {
+        zoekOproepen.push(decodeURIComponent(url));
+        return new Response(JSON.stringify([{ id: "D-2", titel: "Offerte opvolgen", status: "klaar", bijgewerkt: "2026-11-02T00:00:00Z" }]), { status: 200 });
+      }
+      return basis(url, init);
+    };
+    const r = await verwerk({ token: "t", body: spar("Ik overweeg een nieuwe commerciële AI-dienst naast ToVas Flow."), cfg, sleutel: "k", fetchFn });
+    expect(r.status).toBe(200);
+    expect(zoekOproepen.some((u) => u.includes("*tovas-flow*"))).toBe(true);
+    const bronnen = r.lading.bronnen as { doelen: { project: string; ids: string[] }[] };
+    expect(bronnen.doelen).toEqual([{ project: "tovas-flow", ids: ["D-2"] }]);
   });
 
   it("zonder genoemd project geen extra doelenlezing; onthoud kent de nieuwe soorten", async () => {

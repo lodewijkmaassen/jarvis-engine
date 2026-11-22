@@ -12,6 +12,7 @@ import {
   PRAKTIJK_GEHEUGEN_SQL,
   PRAKTIJK_VRAAG_SQL,
   bronnenRegel,
+  exacteVraagUit,
   leesPraktijk,
   SPARPROEF,
   sparproefBewijs,
@@ -205,9 +206,31 @@ describe("praktijkherhaling (D-20261121-235241117): de echte vraag met het echte
       end: async () => {},
     } as unknown as DbClient;
     const p = await leesPraktijk(sql);
-    expect(p).toEqual({ vraag: "Echte vraag?", geheugen: echtGeheugen });
+    expect(p).toEqual({ vraag: "Echte vraag?", geheugen: echtGeheugen, herkomst: "de laatste echte sparvraag van de eigenaar", leesfout: null });
     expect(PRAKTIJK_VRAAG_SQL).toContain("not like 'sparproef-%'");
     const leeg = { unsafe: async () => [], end: async () => {} } as unknown as DbClient;
     expect(await leesPraktijk(leeg)).toBeNull();
+  });
+
+  it("stelt de exacte vraag uit de opdracht en zet een leesfout zichtbaar in het bewijs in plaats van hem weg te vangen", async () => {
+    const opdracht = 'Stel in een echte sparsessie exact deze vraag:\n\n"Ik overweeg een nieuwe dienst naast Product X. Is dat verstandig?"\n\nJarvis moet ...';
+    const vraag = exacteVraagUit(opdracht);
+    expect(vraag).toBe("Ik overweeg een nieuwe dienst naast Product X. Is dat verstandig?");
+    expect(exacteVraagUit("Geen voorgeschreven vraag.")).toBeNull();
+    const geweigerd = {
+      unsafe: async () => {
+        throw new Error("permission denied for table berichten");
+      },
+      end: async () => {},
+    } as unknown as DbClient;
+    const p = await leesPraktijk(geweigerd, vraag);
+    expect(p).toMatchObject({ vraag, geheugen: [], herkomst: "de exacte vraag uit de opdracht van het doel" });
+    expect(p?.leesfout).toContain("permission denied for table berichten");
+    const uitkomst = await voerSparproef(async () => ({ status: 200, lading: { antwoord: "Antwoord.", kosten_usd: 0.01, bronnen: { geheugen: [], doelen: [{ project: "product-x", ids: ["D-1"] }], gereedschap: [] } } }), [], () => new Date("2026-11-22T00:00:00Z"), p);
+    const bewijs = sparproefBewijs(uitkomst, "https://geheim-host/api/chat", [], p);
+    expect(bewijs).toContain(`[eigenaar] ${vraag}`);
+    expect(bewijs).toContain("LEESFOUT: persoonlijk geheugen (jarvis.berichten) niet te lezen voor de eindcontrole: permission denied");
+    expect(bewijs).toContain("doelen: product-x: D-1");
+    expect(sparproefBewijs({ beurten: [], besteedUsd: 0, gestopt: null }, "https://x/api/chat", [], null)).toContain("praktijkherhaling) niet uitgevoerd");
   });
 });
