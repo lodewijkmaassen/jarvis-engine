@@ -44,6 +44,8 @@
   .bericht.jij { align-self:flex-end; border-color:rgba(76,195,255,.45); background:rgba(76,195,255,.08); }
   .bericht.jarvis { align-self:flex-start; }
   .bericht .voortgang { margin:8px 0 2px; }
+  .bericht .reactieknoppen { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; white-space:normal; }
+  .bericht .reactieknoppen button { margin:0; padding:4px 10px; min-height:32px; font-size:13px; letter-spacing:0; text-transform:none; }
   .chatvorm { display:flex; gap:8px; align-items:flex-end; }
   .chatvorm textarea { resize:none; }
   .chatvorm button { margin:0; flex:none; }
@@ -978,7 +980,60 @@
       }
       extra += b.doelId ? "" : `<div><button type="button" class="klein" data-doelvan="${chat.indexOf(b)}">Maak hier een doel van</button></div>`;
     }
+    if (b.rol !== "jij" && reactieTekst(b)) extra += reactieKnoppen(chat.indexOf(b), kanDelen(), kanVoorlezen());
     return `<div class="bericht ${b.rol === "jij" ? "jij" : "jarvis"}">${beeld}${esc(b.tekst)}${extra}</div>`;
+  }
+
+  // Een reactie van Jarvis met één knop kopiëren, delen of laten voorlezen (D-20261121-235758541). Delen en voorlezen
+  // verschijnen alleen als de browser het kan (Web Share API, spraaksynthese); kopiëren kan altijd.
+  const reactieTekst = (b) => String(b?.tekst ?? "").trim();
+  const kanDelen = () => typeof navigator !== "undefined" && typeof navigator.share === "function";
+  const kanVoorlezen = () => typeof window !== "undefined" && "speechSynthesis" in window && typeof window.SpeechSynthesisUtterance === "function";
+  let voorleesIndex = null;
+  function reactieKnoppen(i, delen, voorlezen) {
+    const leest = voorleesIndex === i;
+    return `<div class="reactieknoppen">`
+      + `<button type="button" data-reactie="kopieer" data-i="${i}" aria-label="Reactie kopiëren" title="Kopiëren">📋 Kopieer</button>`
+      + (delen ? `<button type="button" data-reactie="deel" data-i="${i}" aria-label="Reactie delen" title="Delen">📤 Deel</button>` : "")
+      + (voorlezen ? `<button type="button" data-reactie="voorlees" data-i="${i}" aria-pressed="${leest}" aria-label="${leest ? "Voorlezen stoppen" : "Reactie voorlezen"}" title="${leest ? "Stop" : "Voorlezen"}">${leest ? "⏹ Stop" : "🔊 Lees voor"}</button>` : "")
+      + `</div>`;
+  }
+  async function kopieerTekst(tekst) {
+    try { if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(tekst); return true; } } catch { /* val terug op het tekstvak */ }
+    const t = document.createElement("textarea");
+    t.value = tekst; t.setAttribute("readonly", ""); t.style.position = "fixed"; t.style.opacity = "0";
+    document.body.appendChild(t); t.select();
+    let gelukt = false;
+    try { gelukt = document.execCommand("copy"); } catch { gelukt = false; }
+    t.remove();
+    return gelukt;
+  }
+  function voorlees(i, tekst) {
+    const s = window.speechSynthesis;
+    const wasDeze = voorleesIndex === i;
+    s.cancel(); voorleesIndex = null;
+    if (!wasDeze) {
+      const u = new SpeechSynthesisUtterance(tekst);
+      u.lang = "nl-NL";
+      const klaar = () => { if (voorleesIndex === i) { voorleesIndex = null; tekenChat(); } };
+      u.onend = klaar; u.onerror = klaar;
+      voorleesIndex = i;
+      s.speak(u);
+    }
+    tekenChat();
+  }
+  async function reactieActie(knop) {
+    const i = Number(knop.dataset.i), b = chat[i], tekst = reactieTekst(b);
+    if (!tekst) return;
+    const actie = knop.dataset.reactie;
+    if (actie === "kopieer") {
+      const ok = await kopieerTekst(tekst);
+      knop.textContent = ok ? "✓ Gekopieerd" : "Kopiëren lukte niet";
+      setTimeout(() => { if (knop.isConnected) knop.textContent = "📋 Kopieer"; }, 1600);
+    } else if (actie === "deel") {
+      try { await navigator.share({ title: "Reactie van Jarvis", text: tekst }); }
+      catch (e) { if (!(e instanceof DOMException && e.name === "AbortError")) melding("Delen lukte niet."); }
+    } else if (actie === "voorlees") voorlees(i, tekst);
   }
 
   // Een doel uit een sparsessie ontstaat alleen hier: de eigenaar drukt zelf op de knop (expliciete autorisatie).
@@ -1111,10 +1166,14 @@
     $("chatin").onpaste = (ev) => { const f = [...ev.clipboardData.files]; if (f.length) { ev.preventDefault(); kiesBestanden(f); } };
     $("modus-sparren").onclick = () => { chatModus = "sparren"; bewaarChat(); tekenModus(); };
     $("modus-opdracht").onclick = () => { chatModus = "opdracht"; bewaarChat(); tekenModus(); };
-    $("chatnieuw").onclick = () => { if (chatBezig) return; chat = []; gesprekId = nieuwGesprekId(); bewaarChat(); tekenChat(); };
+    $("chatnieuw").onclick = () => { if (chatBezig) return; if (voorleesIndex !== null) { window.speechSynthesis.cancel(); voorleesIndex = null; } chat = []; gesprekId = nieuwGesprekId(); bewaarChat(); tekenChat(); };
     $("geheugenknop").onclick = () => { geheugenOpen = !geheugenOpen; tekenGeheugen(); };
     $("geheugenlijst").onclick = (ev) => { const k = ev.target.closest("[data-vergeet]"); if (k) vergeet(k.dataset.vergeet).catch((e) => melding(e.message ?? String(e))); };
-    $("chatlog").onclick = (ev) => { const k = ev.target.closest("[data-doelvan]"); if (k) doelUitSpar(Number(k.dataset.doelvan)); };
+    $("chatlog").onclick = (ev) => {
+      const r = ev.target.closest("[data-reactie]");
+      if (r) { reactieActie(r).catch((e) => melding(e.message ?? String(e))); return; }
+      const k = ev.target.closest("[data-doelvan]"); if (k) doelUitSpar(Number(k.dataset.doelvan));
+    };
     tekenModus();
     tekenGeheugen();
     tekenVoorbeeld();
