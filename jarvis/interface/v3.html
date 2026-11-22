@@ -967,6 +967,15 @@
     const beeld = stukken.length ? `<div class="bijlagen">${stukken.join("")}</div>` : "";
     if (b.spar && b.rol !== "jij") {
       if (b.onthouden?.length) extra += `<div class="klein">Onthouden: ${b.onthouden.map((o) => esc(`${o.soort}: ${o.tekst}`)).join(" · ")}</div>`;
+      // Waar Jarvis zijn kennis vandaan had (D-20261121-235241117): geheugenitems per categorie en doelen per project.
+      if (b.bronnen) {
+        const g = Array.isArray(b.bronnen.geheugen) ? b.bronnen.geheugen : [];
+        const per = {};
+        for (const x of g) per[x.categorie ?? "geheugen"] = (per[x.categorie ?? "geheugen"] ?? 0) + 1;
+        const delen = Object.entries(per).map(([k, n]) => `${n}× ${k}`);
+        for (const d of Array.isArray(b.bronnen.doelen) ? b.bronnen.doelen : []) delen.push(`${(d.ids ?? []).length} doelen van ${d.project}`);
+        if (delen.length) extra += `<div class="klein">Geraadpleegd: ${esc(delen.join(" · "))}</div>`;
+      }
       extra += b.doelId ? "" : `<div><button type="button" class="klein" data-doelvan="${chat.indexOf(b)}">Maak hier een doel van</button></div>`;
     }
     return `<div class="bericht ${b.rol === "jij" ? "jij" : "jarvis"}">${beeld}${esc(b.tekst)}${extra}</div>`;
@@ -1004,7 +1013,7 @@
     $("geheugenknop").textContent = `Wat Jarvis onthoudt (${inzichten.length})`;
     l.innerHTML = inzichten.length
       ? inzichten.map((x) => { const c = objectVan(x.context); return `<div class="inzicht"><div><b>${esc(c.inzicht_soort ?? "inzicht")}</b>${c.project ? ` · ${esc(c.project)}` : ""} — ${esc(x.tekst)}<div class="klein">${esc(tijd(x.op))}${c.bron?.gesprek ? ` · uit gesprek ${esc(String(c.bron.gesprek).slice(0, 8))}` : ""}</div></div><button type="button" data-vergeet="${esc(x.id)}">Vergeet</button></div>`; }).join("")
-      : `<div class="klein">Jarvis heeft nog niets onthouden. In de sparmodus legt hij besluiten, voorkeuren en feiten vast die later tellen.</div>`;
+      : `<div class="klein">Jarvis heeft nog niets onthouden. In de sparmodus legt hij besluiten, voorkeuren, doelstellingen, projectinformatie en feiten vast die later tellen.</div>`;
   }
 
   // Vergeten = de tekst wissen en het inzicht als gewist markeren; Jarvis leest het daarna nooit meer.
@@ -1072,7 +1081,7 @@
       });
       const uit = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(uit.fout ?? `Chat gaf ${r.status}`);
-      chat.push({ rol: "jarvis", tekst: uit.antwoord, doelId: uit.doel?.id ?? null, ...(uit.modus === "sparren" ? { spar: true, onthouden: uit.onthouden ?? [] } : {}) });
+      chat.push({ rol: "jarvis", tekst: uit.antwoord, doelId: uit.doel?.id ?? null, ...(uit.modus === "sparren" ? { spar: true, onthouden: uit.onthouden ?? [], bronnen: uit.bronnen ?? null } : {}) });
       if (uit.doel || uit.onthouden?.length) await laad();
     } catch (e) {
       chat.push({ rol: "jarvis", tekst: `Dat lukte niet: ${e instanceof Error ? e.message : String(e)}` });

@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error — gewone .mjs zonder typen
 import { SPAR_MODEL, SPAR_GRENZEN, MODEL, verwerk } from "../../jarvis/interface/app/api/_chat-kern.mjs";
 // @ts-expect-error — gewone .mjs zonder typen
-import { MAAND_LIMIET_USD, bovengrens, items, kostenVan, selecteer, termen } from "../../jarvis/interface/app/api/_brein.mjs";
+import { MAAND_LIMIET_USD, bovengrens, genoemdeProjecten, items, kostenVan, selecteer, termen } from "../../jarvis/interface/app/api/_brein.mjs";
 
 type Rij = { id: string; van: string; tekst: string; op: string; status: string; context: Record<string, unknown> };
 type Oproep = { url: string; method: string; body: unknown };
@@ -204,5 +204,89 @@ describe("acceptatiedeur in de sparmodus", () => {
     const v = w2.modelVerzoeken[0] as { messages: { content: { text: string }[] }[]; tools: { name: string }[] };
     expect(JSON.stringify(v.messages)).toContain("vrijdag niet aan klantprojecten");
     expect(v.tools.some((t) => t.name === "maak_doel")).toBe(false);
+  });
+});
+
+describe("contextintegratie (D-20261121-235241117): projectkennis en doelstellingen in de sparmodus", () => {
+  const nu = "2026-11-21T12:00:00Z";
+  const inzicht = (id: string, inzicht_soort: string, t: string, extra: object = {}, op = nu): Rij =>
+    ({ id, van: "eigenaar", tekst: t, op, status: "verwerkt", context: { kanaal: "brein", soort: "inzicht", inzicht_soort, ...extra } });
+  const rijen = [
+    inzicht("p1", "projectinfo", "SaaS voor mkb-ondernemers die telefoontjes missen: gemiste oproep wordt via WhatsApp en AI-intake een lead.", { project: "tovas-flow", bron: { document: "project/PROJECT.md" } }),
+    inzicht("d1", "doelstelling", "100 betalende klanten eind 2027 tegen 79 euro per maand.", { project: "tovas-flow", bron: { document: "vastgoedstrategie" } }),
+    inzicht("b1", "besluit", "Geen vectordatabase; deterministische selectie.", { bron: { document: "DEC-0028" } }),
+    inzicht("a1", "aanname", "Operationele kosten zijn ongeveer 20% van de omzet.", { project: "tovas-flow" }, "2026-01-01T00:00:00Z"),
+    inzicht("k1", "projectinfo", "Kasboek houdt kasstromen en saldo bij.", { project: "kasboek" }),
+  ];
+
+  it("de vraag noemt ToVas Flow: projectinformatie gaat mee zonder dat de woorden van de inzichttekst in de vraag staan", () => {
+    const g = selecteer(items(rijen), "Ik overweeg een nieuwe commerciële AI-dienst naast ToVas Flow. Verstandig?", { nu: new Date(nu) });
+    const ids = g.map((x: { id: string }) => x.id);
+    expect(ids).toContain("p1");
+    expect(ids).toContain("d1"); // doelstellingen gaan altijd mee
+    expect(ids).toContain("b1");
+    expect(ids).not.toContain("k1"); // ander project, niet genoemd
+    const p1 = g.find((x: { id: string }) => x.id === "p1");
+    expect(p1).toMatchObject({ categorie: "projectinformatie", project: "tovas-flow", bron: { document: "project/PROJECT.md" } });
+    expect(g.find((x: { id: string }) => x.id === "d1").let_op).toContain("geen behaald resultaat");
+  });
+
+  it("een aanname en een oud inzicht krijgen een voorbehoud mee, zodat ze niet als actueel feit worden gebracht", () => {
+    const g = selecteer(items(rijen), "Wat kost ToVas Flow ons aan operationele kosten?", { nu: new Date(nu) });
+    const a1 = g.find((x: { id: string }) => x.id === "a1");
+    expect(a1.categorie).toBe("aanname");
+    expect(a1.let_op).toContain("geen vastgesteld feit");
+    expect(a1.let_op).toContain("controleer of dit nog geldt");
+  });
+
+  it("herkent genoemde projecten alleen als alle woorden van de sleutel in de vraag staan", () => {
+    expect(genoemdeProjecten(items(rijen), "Iets over ToVas Flow")).toEqual(["tovas-flow"]);
+    expect(genoemdeProjecten(items(rijen), "Iets over de flow van mijn dag")).toEqual([]);
+    expect(genoemdeProjecten(items(rijen), "Kasboek en ToVas Flow")).toEqual(["kasboek", "tovas-flow"]);
+  });
+
+  it("de sparbeurt geeft de recente doelen van het project en de geraadpleegde bronnen mee, en kent de projecten in de prompt", async () => {
+    const doelen = [
+      { id: "D-2", titel: "Offerte opvolgen", status: "klaar", bijgewerkt: "2026-11-02T00:00:00Z", opdracht: "Project: tovas-flow" },
+      { id: "D-1", titel: "Inlogpagina ToVas Flow", status: "klaar", bijgewerkt: "2026-10-18T00:00:00Z", opdracht: "x" },
+    ];
+    const w = wereld([
+      { content: [{ type: "tool_use", id: "g", name: "raadpleeg_geheugen", input: { zoek: "ToVas Flow" } }], usage: { input_tokens: 10, output_tokens: 10 } },
+      tekst("[feit] ToVas Flow richt zich op mkb (bron p1)."),
+    ], { rijen });
+    const basis = w.fetchFn;
+    const zoekOproepen: string[] = [];
+    const fetchFn = async (url: string, init: RequestInit = {}) => {
+      if (url.includes("/rest/v1/doelen")) {
+        zoekOproepen.push(decodeURIComponent(url));
+        return new Response(JSON.stringify(doelen), { status: 200 });
+      }
+      return basis(url, init);
+    };
+    const r = await verwerk({ token: "t", body: spar("Ik overweeg een nieuwe commerciële AI-dienst naast ToVas Flow."), cfg, sleutel: "k", fetchFn });
+    expect(r.status).toBe(200);
+    expect(zoekOproepen.some((u) => u.includes("*tovas-flow*"))).toBe(true);
+    expect(zoekOproepen.some((u) => u.includes("*tovas flow*"))).toBe(true);
+    const v = w.modelVerzoeken[0] as { system: { text: string }[]; messages: { content: { text: string }[] }[] };
+    const laatste = JSON.stringify(v.messages[v.messages.length - 1]);
+    expect(laatste).toContain("Recente doelen van project tovas-flow");
+    expect(laatste).toContain("D-2");
+    expect(laatste).toContain("projectinformatie");
+    expect(v.system.map((s) => s.text).join("\n")).toContain("tovas-flow (ToVas Flow");
+    const bronnen = r.lading.bronnen as { geheugen: { id: string }[]; doelen: { ids: string[] }[]; gereedschap: { gereedschap: string }[] };
+    expect(bronnen.geheugen.map((g) => g.id)).toEqual(expect.arrayContaining(["p1", "d1", "b1"]));
+    expect(bronnen.doelen[0].ids).toEqual(["D-2", "D-1"]);
+    expect(bronnen.gereedschap).toEqual([{ gereedschap: "raadpleeg_geheugen", invoer: { zoek: "ToVas Flow" } }]);
+  });
+
+  it("zonder genoemd project geen extra doelenlezing; onthoud kent de nieuwe soorten", async () => {
+    const w = wereld([
+      { content: [{ type: "tool_use", id: "o", name: "onthoud", input: { soort: "doelstelling", tekst: "In 2030 stoppen met loondienst.", project: "tovas-flow" } }], usage: { input_tokens: 1, output_tokens: 1 } },
+      tekst("Onthouden: doelstelling."),
+    ]);
+    const r = await verwerk({ token: "t", body: spar("Mijn doel: in 2030 stoppen met loondienst."), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(w.oproepen.some((o) => o.url.includes("/rest/v1/doelen"))).toBe(false);
+    expect(r.lading.onthouden).toHaveLength(1);
+    expect(w.tabel.find((x) => x.context.soort === "inzicht")!.context.inzicht_soort).toBe("doelstelling");
   });
 });

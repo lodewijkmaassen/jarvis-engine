@@ -7,13 +7,29 @@
 //   beurt   — één sparbeurt: tekst = vraag van de eigenaar, context.antwoord = het antwoord, context.gesprek,
 //             context.kosten_usd (eerst de gereserveerde bovengrens, daarna het gemeten bedrag).
 //   inzicht — iets wat Jarvis onthoudt: tekst = het inzicht, context.inzicht_soort (besluit | feit | aanname |
-//             voorkeur), context.bron (gesprek en beurt), eventueel context.vervangt / context.vervallen /
-//             context.gewist. Herleidbaar via de bron, corrigeerbaar via vervangen, verwijderbaar via wissen.
+//             voorkeur | doelstelling | projectinfo), context.bron (gesprek en beurt, of het brondocument),
+//             eventueel context.project, context.vervangt / context.vervallen / context.gewist. Herleidbaar via de
+//             bron, corrigeerbaar via vervangen, verwijderbaar via wissen.
+//
+// Herstel contextintegratie (D-20261121-235241117): de eerste praktijkvraag ("een nieuwe commerciële AI-dienst naast
+// ToVas Flow?") kreeg als antwoord dat Jarvis niets wist over het project of de doelstellingen van de eigenaar. Oorzaak:
+// het geheugen kende alleen gespreksinzichten (en was nog leeg), projectinformatie en persoonlijke doelstellingen hadden
+// geen eigen soort, en een inzicht over een project telde alleen mee als de vraag toevallig dezelfde woorden gebruikte
+// als de inzichttekst. Nu: twee soorten erbij (projectinfo, doelstelling), het project van een inzicht telt mee bij de
+// selectie (de vraag noemt "ToVas Flow" → de projectinformatie van tovas-flow gaat mee), doelstellingen gaan net als
+// besluiten altijd mee, en elk item draagt zijn categorie, datum en bron, met een waarschuwing als het oud is of een
+// aanname. Nog steeds één geheugen in dezelfde tabel; geen tweede kennissysteem.
 //
 // Alles is deterministisch: dezelfde vraag op hetzelfde geheugen geeft dezelfde selectie.
 
 export const KANAAL = "brein";
-export const INZICHT_SOORTEN = ["besluit", "feit", "aanname", "voorkeur"];
+export const INZICHT_SOORTEN = ["besluit", "feit", "aanname", "voorkeur", "doelstelling", "projectinfo"];
+/** Hoe een soort in de context heet: het model moet projectinformatie, doelstellingen, besluiten en aannames uit elkaar houden. */
+export const CATEGORIE = { besluit: "besluit", feit: "feit", aanname: "aanname", voorkeur: "voorkeur", doelstelling: "persoonlijke doelstelling", projectinfo: "projectinformatie" };
+/** Soorten die altijd meegaan: ze moeten worden toegepast zonder dat de eigenaar ze herhaalt. */
+const ALTIJD = new Set(["besluit", "voorkeur", "doelstelling"]);
+/** Na zoveel dagen krijgt een inzicht een waarschuwing mee: niet zonder voorbehoud als actueel feit brengen. */
+export const VEROUDERD_DAGEN = 180;
 
 // Gecontroleerd op 2026-11-20: Sonnet 5.5 $2 in / $10 uit per miljoen tokens, cache lezen $0,10; Haiku 5.5 $0,10 / $0,50.
 export const TARIEVEN = {
@@ -60,17 +76,35 @@ export function items(rijen) {
   return uit;
 }
 
+/** De woorden van een projectsleutel ("tovas-flow/offerte-opvolging" → tovas, flow, offert, opvolg). */
+const projectTermen = (project) => termen(String(project ?? "").replace(/[/-]/g, " "));
+
+/** De projecten in het geheugen die de vraag noemt: alle woorden van de projectsleutel staan in de vraag. */
+export function genoemdeProjecten(geheugen, vraag) {
+  const v = termen(vraag);
+  const uit = new Set();
+  for (const it of geheugen) {
+    if (it.soort !== "inzicht" || !it.project) continue;
+    const hoofd = String(it.project).split("/")[0];
+    const t = projectTermen(hoofd);
+    if (t.size && [...t].every((w) => v.has(w))) uit.add(hoofd);
+  }
+  return [...uit].sort();
+}
+
 /**
- * Selecteert het relevante geheugen voor een vraag, binnen een vaste omvang. Besluiten en voorkeuren gaan altijd mee
- * (die moeten worden toegepast zonder dat de eigenaar ze herhaalt); feiten, aannames en eerdere beurten alleen als ze
- * met de vraag overlappen. Beurten die al in het meegestuurde gesprek staan (`uitsluiten`: de teksten van de eigenaar
- * daarin) gaan niet nog eens mee.
+ * Selecteert het relevante geheugen voor een vraag, binnen een vaste omvang. Besluiten, voorkeuren en doelstellingen
+ * gaan altijd mee (die moeten worden toegepast zonder dat de eigenaar ze herhaalt); projectinformatie, feiten,
+ * aannames en eerdere beurten alleen als ze met de vraag overlappen. Het project van een inzicht telt mee als woorden:
+ * noemt de vraag het project, dan gaat de projectinformatie ervan mee. Beurten die al in het meegestuurde gesprek
+ * staan (`uitsluiten`: de teksten van de eigenaar daarin) gaan niet nog eens mee.
  */
-export function selecteer(geheugen, vraag, { uitsluiten = [], maxTekens = MAX_GEHEUGEN_TEKENS } = {}) {
+export function selecteer(geheugen, vraag, { uitsluiten = [], maxTekens = MAX_GEHEUGEN_TEKENS, nu = new Date() } = {}) {
   const al = new Set([...uitsluiten].map((t) => String(t).trim().slice(0, MAX_TEKST)));
   const v = termen(vraag);
   const score = (it) => {
     const t = termen(it.soort === "beurt" ? `${it.tekst} ${it.antwoord}` : it.tekst);
+    if (it.soort === "inzicht") for (const w of projectTermen(it.project)) t.add(w);
     let s = 0;
     for (const w of v) if (t.has(w)) s += 1;
     return s;
@@ -78,7 +112,7 @@ export function selecteer(geheugen, vraag, { uitsluiten = [], maxTekens = MAX_GE
   const tijd = (it) => (it.op ? Date.parse(it.op) || 0 : 0);
   const kandidaten = geheugen
     .filter((it) => !(it.soort === "beurt" && al.has(it.tekst.trim().slice(0, MAX_TEKST))))
-    .map((it) => ({ it, s: score(it), vast: it.soort === "inzicht" && (it.inzicht_soort === "besluit" || it.inzicht_soort === "voorkeur") }))
+    .map((it) => ({ it, s: score(it), vast: it.soort === "inzicht" && ALTIJD.has(it.inzicht_soort) }))
     .filter((k) => k.vast || k.s > 0)
     // Vaste inzichten eerst, dan op overlap, dan nieuwste eerst, dan id: volledig deterministisch.
     .sort((a, b) => (Number(b.vast) - Number(a.vast)) || (b.s - a.s) || (tijd(b.it) - tijd(a.it)) || a.it.id.localeCompare(b.it.id));
@@ -86,14 +120,33 @@ export function selecteer(geheugen, vraag, { uitsluiten = [], maxTekens = MAX_GE
   let tekens = 0;
   for (const { it } of kandidaten) {
     const regel = it.soort === "inzicht"
-      ? { id: it.id, soort: it.inzicht_soort, tekst: kort(it.tekst, 600), project: it.project, op: it.op, bron: it.bron }
-      : { id: it.id, soort: "eerder gesprek", op: it.op, eigenaar: kort(it.tekst, 500), jarvis: kort(it.antwoord, 700) };
+      ? inzichtRegel(it, nu)
+      : { id: it.id, soort: "eerder gesprek", categorie: "gespreksgeschiedenis", op: it.op, eigenaar: kort(it.tekst, 500), jarvis: kort(it.antwoord, 700) };
     const n = JSON.stringify(regel).length;
     if (tekens + n > maxTekens) continue;
     gekozen.push(regel);
     tekens += n;
   }
   return gekozen;
+}
+
+/** Eén inzicht zoals het model het ziet: categorie, datum en bron erbij, en een voorbehoud waar dat nodig is. */
+function inzichtRegel(it, nu) {
+  const dagen = it.op ? Math.floor((nu.getTime() - (Date.parse(it.op) || nu.getTime())) / 864e5) : null;
+  const let_op = [];
+  if (it.inzicht_soort === "aanname") let_op.push("aanname, geen vastgesteld feit");
+  if (it.inzicht_soort === "doelstelling") let_op.push("doel of plan van de eigenaar, geen behaald resultaat");
+  if (dagen !== null && dagen > VEROUDERD_DAGEN) let_op.push(`vastgelegd ${dagen} dagen geleden; controleer of dit nog geldt`);
+  return {
+    id: it.id,
+    soort: it.inzicht_soort,
+    categorie: CATEGORIE[it.inzicht_soort] ?? it.inzicht_soort,
+    tekst: kort(it.tekst, 600),
+    project: it.project,
+    op: it.op,
+    bron: it.bron,
+    ...(let_op.length ? { let_op: let_op.join("; ") } : {}),
+  };
 }
 
 /** Wat een sparbeurt hoogstens kan kosten, gegeven de grenzen per aanroep. Wordt vooraf gereserveerd. */
