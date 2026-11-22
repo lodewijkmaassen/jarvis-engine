@@ -460,7 +460,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       // op de uitrol: een ronde die nog wacht, maakt geen kosten.
       let bewijsVooraf = prBewijs;
       if (vraagtSparproef(d)) {
-        const spar = await voerSparproefUit(sql);
+        const spar = await voerSparproefUit(sql, fetch, d.opdracht);
         await schrijfAcceptatie(sql, d.id, `sparproef uitgevoerd: $${spar.besteedUsd.toFixed(4)}`);
         console.log(`jarvis eindcontrole: ${d.id} sparproef uitgevoerd ($${spar.besteedUsd.toFixed(4)})`);
         bewijsVooraf = prBewijs === null ? spar.bewijs : `${spar.bewijs}\n\n${prBewijs}`;

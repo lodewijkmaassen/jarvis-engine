@@ -118,8 +118,19 @@ export type SparBeurt = {
   readonly bronnen?: Lading | null;
 };
 
-/** De praktijkherhaling: een echte eerdere vraag van de eigenaar en zijn echte geheugen. */
-export type Praktijk = { readonly vraag: string; readonly geheugen: readonly Lading[] };
+/**
+ * De praktijkherhaling: een echte vraag van de eigenaar en zijn echte geheugen, voor zover de eindcontrole dat mag
+ * lezen. `herkomst` zegt waar de vraag vandaan kwam; `leesfout` staat er als het geheugen of de vraag niet te lezen
+ * was. Die fout gaat woordelijk in het bewijs: tot D-20261121-235241117 ving de proef haar stil af, viel de
+ * praktijkherhaling weg en zag de beoordelaar alleen het fictieve scenario — twee rondes lang, zonder dat het bewijs
+ * zei waarom.
+ */
+export type Praktijk = {
+  readonly vraag: string;
+  readonly geheugen: readonly Lading[];
+  readonly herkomst?: string;
+  readonly leesfout?: string | null;
+};
 
 /** Het nummer van de praktijkherhaling in het bewijs; het vaste scenario begint bij 1. */
 export const PRAKTIJK_NUMMER = 0;
@@ -244,6 +255,7 @@ export function sparproefBewijs(
   uitkomst: { readonly beurten: readonly SparBeurt[]; readonly besteedUsd: number; readonly gestopt: string | null },
   url: string,
   scenario: readonly SparGesprek[] = SPARPROEF,
+  praktijkBron?: Praktijk | null,
 ): string {
   const regels: string[] = [
     `live sparproef (zojuist door de eindcontrole uitgevoerd tegen productie: POST <AI Core>${zonderHost(url)}, modus "sparren", alleen_lezen; ` +
@@ -259,6 +271,16 @@ export function sparproefBewijs(
       `=== gesprek ${PRAKTIJK_NUMMER} (praktijkherhaling) — de laatste echte sparvraag van de eigenaar opnieuw gesteld, met zijn echte geheugen ` +
         `(inzichten uit de database, alleen gelezen); laat zien: of Jarvis de bestaande kennis over projecten, doelstellingen en besluiten gebruikt zonder dat die in de vraag staat ===`,
     );
+    if (praktijkBron) {
+      regels.push(
+        `[herkomst van de vraag] ${praktijkBron.herkomst ?? "onbekend"}; persoonlijke geheugenitems meegegeven: ${praktijkBron.geheugen.length}` +
+          (praktijkBron.leesfout
+            ? `. LEESFOUT: ${praktijkBron.leesfout}. De projectkennis komt dan alleen uit de doelenadministratie (via de acceptatiedeur, alleen lezen) en uit de projectenlijst van de AI Core; persoonlijke doelstellingen en inzichten van de eigenaar zijn voor de eindcontrole bewust niet leesbaar.`
+            : ""),
+      );
+    }
+  } else if (praktijkBron === null) {
+    regels.push("", `=== gesprek ${PRAKTIJK_NUMMER} (praktijkherhaling) niet uitgevoerd: geen vraag gevonden (geen exacte vraag in de opdracht en geen echte sparvraag leesbaar) ===`);
   }
   for (const b of praktijk) beurtRegels(regels, b);
   for (const g of scenario) {
@@ -293,20 +315,41 @@ export const PRAKTIJK_GEHEUGEN_SQL =
   "and context->>'soort' = 'inzicht' order by op desc limit 200";
 
 /** Leest de praktijkherhaling; ontbreekt de vraag of mislukt het lezen, dan geen praktijkherhaling. */
-export async function leesPraktijk(sql: DbClient): Promise<Praktijk | null> {
-  const vraagRij = await sql.unsafe(PRAKTIJK_VRAAG_SQL).catch(() => [] as Record<string, unknown>[]);
-  const vraag = vraagRij[0]?.["tekst"];
-  if (typeof vraag !== "string" || !vraag.trim()) return null;
-  const rijen = await sql.unsafe(PRAKTIJK_GEHEUGEN_SQL).catch(() => [] as Record<string, unknown>[]);
+export async function leesPraktijk(sql: DbClient, exacteVraag: string | null = null): Promise<Praktijk | null> {
+  const fouten: string[] = [];
+  const meld = (wat: string) => (fout: unknown): Record<string, unknown>[] => {
+    fouten.push(`${wat}: ${fout instanceof Error ? fout.message : String(fout)}`);
+    return [];
+  };
+  let vraag: string | null = exacteVraag && exacteVraag.trim() ? exacteVraag.trim() : null;
+  let herkomst = "de exacte vraag uit de opdracht van het doel";
+  if (!vraag) {
+    const vraagRij = await sql.unsafe(PRAKTIJK_VRAAG_SQL).catch(meld("laatste echte sparvraag niet te lezen"));
+    const t = vraagRij[0]?.["tekst"];
+    if (typeof t === "string" && t.trim()) vraag = t;
+    herkomst = "de laatste echte sparvraag van de eigenaar";
+  }
+  if (!vraag) return null;
+  const rijen = await sql.unsafe(PRAKTIJK_GEHEUGEN_SQL).catch(meld("persoonlijk geheugen (jarvis.berichten) niet te lezen voor de eindcontrole"));
   const geheugen = rijen.filter((r) => r["context"] && typeof r["context"] === "object" && typeof r["tekst"] === "string");
-  return { vraag: vraag.slice(0, 4000), geheugen };
+  return { vraag: vraag.slice(0, 4000), geheugen, herkomst, leesfout: fouten.length ? fouten.join("; ") : null };
+}
+
+/** De vraag die de eigenaar in de opdracht woordelijk voorschrijft ("exact deze vraag: “…”"), of null. */
+export function exacteVraagUit(opdracht: string): string | null {
+  const m = /exact deze vraag\s*:?\s*["“„]([^"”]{10,2000})["”]/i.exec(opdracht);
+  return m ? m[1]!.trim() : null;
 }
 
 /**
  * De I/O: sleutel en adres van de acceptatiedeur uit de database, dan het scenario. Ontbreekt de deur, dan zegt
  * het bewijs dat — de beoordelaar ziet dan geen gesprek en oordeelt daarnaar.
  */
-export async function voerSparproefUit(sql: DbClient, fetchFn: typeof fetch = fetch): Promise<{ readonly bewijs: string; readonly besteedUsd: number }> {
+export async function voerSparproefUit(
+  sql: DbClient,
+  fetchFn: typeof fetch = fetch,
+  opdracht = "",
+): Promise<{ readonly bewijs: string; readonly besteedUsd: number }> {
   const sleutelRij = await sql.unsafe(ACCEPTATIE_SLEUTEL_SQL).catch(() => [] as Record<string, unknown>[]);
   const sleutel = String(sleutelRij[0]?.["sleutel"] ?? "").trim();
   const urlRij = await sql.unsafe(INSTELLING_SQL, ["ai_core_url"]).catch(() => [] as Record<string, unknown>[]);
@@ -314,7 +357,7 @@ export async function voerSparproefUit(sql: DbClient, fetchFn: typeof fetch = fe
   if (!sleutel || !url) {
     return { bewijs: "live sparproef niet uitgevoerd: de acceptatiedeur ontbreekt (instelling ai_core_url of de acceptatiesleutel).", besteedUsd: 0 };
   }
-  const praktijk = await leesPraktijk(sql);
+  const praktijk = await leesPraktijk(sql, exacteVraagUit(opdracht));
   const uitkomst = await voerSparproef(async (body) => {
     const a = await fetchFn(url, {
       method: "POST",
@@ -324,5 +367,5 @@ export async function voerSparproefUit(sql: DbClient, fetchFn: typeof fetch = fe
     const lading = (await a.json().catch(() => ({}))) as Lading;
     return { status: a.status, lading };
   }, SPARPROEF, () => new Date(), praktijk);
-  return { bewijs: sparproefBewijs(uitkomst, url), besteedUsd: uitkomst.besteedUsd };
+  return { bewijs: sparproefBewijs(uitkomst, url, SPARPROEF, praktijk), besteedUsd: uitkomst.besteedUsd };
 }

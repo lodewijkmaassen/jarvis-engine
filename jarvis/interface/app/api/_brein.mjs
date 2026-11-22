@@ -79,17 +79,22 @@ export function items(rijen) {
 /** De woorden van een projectsleutel ("tovas-flow/offerte-opvolging" → tovas, flow, offert, opvolg). */
 const projectTermen = (project) => termen(String(project ?? "").replace(/[/-]/g, " "));
 
-/** De projecten in het geheugen die de vraag noemt: alle woorden van de projectsleutel staan in de vraag. */
-export function genoemdeProjecten(geheugen, vraag) {
+/**
+ * De projecten die de vraag noemt: alle woorden van de projectsleutel staan in de vraag. De sleutels komen uit het
+ * geheugen én uit de vaste projectenlijst (`bekend`). Dat laatste is het herstel van D-20261121-235241117: met een leeg
+ * of onleesbaar geheugen herkende Jarvis "ToVas Flow" niet als project, haalde hij de doelen van dat project niet op en
+ * antwoordde hij dat hij niets over het project wist — terwijl de doelenadministratie het wel kent.
+ */
+export function genoemdeProjecten(geheugen, vraag, bekend = []) {
   const v = termen(vraag);
-  const uit = new Set();
-  for (const it of geheugen) {
-    if (it.soort !== "inzicht" || !it.project) continue;
-    const hoofd = String(it.project).split("/")[0];
+  const sleutels = new Set(bekend.map((p) => String(p).split("/")[0]));
+  for (const it of geheugen) if (it.soort === "inzicht" && it.project) sleutels.add(String(it.project).split("/")[0]);
+  const uit = [];
+  for (const hoofd of sleutels) {
     const t = projectTermen(hoofd);
-    if (t.size && [...t].every((w) => v.has(w))) uit.add(hoofd);
+    if (t.size && [...t].every((w) => v.has(w))) uit.push(hoofd);
   }
-  return [...uit].sort();
+  return uit.sort();
 }
 
 /**
