@@ -9,6 +9,10 @@ import { describe, expect, it } from "vitest";
 import {
   BEURT_BOVENGRENS_USD,
   MAX_PROEF_USD,
+  PRAKTIJK_GEHEUGEN_SQL,
+  PRAKTIJK_VRAAG_SQL,
+  bronnenRegel,
+  leesPraktijk,
   SPARPROEF,
   sparproefBewijs,
   vraagtSparproef,
@@ -163,5 +167,47 @@ describe("het bewijs", () => {
     expect(gezien.every((g) => g.url === "https://voorbeeld.test/api/chat" && g.kop === "Bearer geheim-sleutel")).toBe(true);
     expect(gezien.every((g) => !g.body.includes("geheim-sleutel"))).toBe(true);
     expect(uit.bewijs).not.toContain("geheim-sleutel");
+  });
+});
+
+describe("praktijkherhaling (D-20261121-235241117): de echte vraag met het echte geheugen", () => {
+  const echtGeheugen = [
+    { id: "i-1", tekst: "Projectinformatie over het product.", op: "2026-11-22T00:00:00Z", context: { kanaal: "brein", soort: "inzicht", inzicht_soort: "projectinfo", project: "product-x", bron: { document: "project/PROJECT.md" } } },
+  ];
+
+  it("stelt de echte vraag eerst, met het echte geheugen, en laat dat geheugen niet doorlopen naar het fictieve scenario", async () => {
+    const deur = nepDeur();
+    await voerSparproef(deur.vraag, SPARPROEF, () => new Date(), { vraag: "Een echte vraag over product X?", geheugen: echtGeheugen });
+    const eerste = deur.verzoeken[0]!;
+    expect(String(eerste["gesprek_id"])).toMatch(/-praktijk$/);
+    expect((eerste["gesprek"] as { tekst: string }[])[0]!.tekst).toBe("Een echte vraag over product X?");
+    expect(eerste["proefgeheugen"]).toEqual(echtGeheugen);
+    expect(deur.verzoeken[1]!["proefgeheugen"]).toEqual([]);
+  });
+
+  it("zet de bronnen in het bewijs en noemt geen volledig endpointadres", async () => {
+    const vraag = async () => ({
+      status: 200,
+      lading: { antwoord: "Gebruikt de projectinformatie.", kosten_usd: 0.02, geheugen_gebruikt: 1, bronnen: { geheugen: [{ id: "i-1", categorie: "projectinformatie", bron: { document: "project/PROJECT.md" } }], doelen: [{ project: "product-x", ids: ["D-9"] }], gereedschap: [{ gereedschap: "raadpleeg_doelen", invoer: { zoek: "product x" } }] }, nieuw_geheugen: [] },
+    });
+    const uit = await voerSparproef(vraag, [], () => new Date(), { vraag: "Echte vraag?", geheugen: echtGeheugen });
+    const bewijs = sparproefBewijs(uit, "https://geheim-host.voorbeeld.test/api/chat", []);
+    expect(bewijs).toContain("=== gesprek 0 (praktijkherhaling)");
+    expect(bewijs).toContain("[eigenaar] Echte vraag?");
+    expect(bewijs).toContain("[geraadpleegde bronnen] geheugen: projectinformatie i-1 (bron: project/PROJECT.md) | doelen: product-x: D-9 | gereedschap: raadpleeg_doelen");
+    expect(bewijs).not.toContain("geheim-host");
+    expect(bronnenRegel(null)).toBeNull();
+  });
+
+  it("leest de vraag en het geheugen uit de database; zonder eerdere vraag geen praktijkherhaling", async () => {
+    const sql = {
+      unsafe: async (q: string) => (q === PRAKTIJK_VRAAG_SQL ? [{ tekst: "Echte vraag?" }] : q === PRAKTIJK_GEHEUGEN_SQL ? [...echtGeheugen, { id: "kapot", tekst: null, context: null }] : []),
+      end: async () => {},
+    } as unknown as DbClient;
+    const p = await leesPraktijk(sql);
+    expect(p).toEqual({ vraag: "Echte vraag?", geheugen: echtGeheugen });
+    expect(PRAKTIJK_VRAAG_SQL).toContain("not like 'sparproef-%'");
+    const leeg = { unsafe: async () => [], end: async () => {} } as unknown as DbClient;
+    expect(await leesPraktijk(leeg)).toBeNull();
   });
 });
