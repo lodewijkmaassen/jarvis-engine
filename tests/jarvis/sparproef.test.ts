@@ -8,6 +8,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   BEURT_BOVENGRENS_USD,
+  CONTROLE_ZONDER_WEB,
+  acceptatieVragenUit,
+  scenarioUitVragen,
   MAX_PROEF_USD,
   PRAKTIJK_GEHEUGEN_SQL,
   PRAKTIJK_VRAAG_SQL,
@@ -232,5 +235,56 @@ describe("praktijkherhaling (D-20261121-235241117): de echte vraag met het echte
     expect(bewijs).toContain("LEESFOUT: persoonlijk geheugen (jarvis.berichten) niet te lezen voor de eindcontrole: permission denied");
     expect(bewijs).toContain("doelen: product-x: D-1");
     expect(sparproefBewijs({ beurten: [], besteedUsd: 0, gestopt: null }, "https://x/api/chat", [], null)).toContain("praktijkherhaling) niet uitgevoerd");
+  });
+});
+
+describe("vragen uit de opdracht (D-20261124-200610788): de proef stelt de acceptatievragen van het doel zelf", () => {
+  const opdracht = [
+    "# Opdracht", "", "## Doel", "1. Dit is geen vraag maar een stap.", "", "## Functionele acceptatietests", "",
+    "Toon aan dat Jarvis antwoord geeft op vragen zoals:", "",
+    "1. Wat wordt het weer morgen in Ede?", "2. Welke films draaien vandaag in de bioscoop in Ede?", "3) Welke aanbieders leveren vergelijkbare diensten?",
+    "", "Test daarnaast iets anders.", "", "## Uitvoering", "4. Wat staat er na de kop?",
+  ].join("\n");
+
+  it("leest alleen de genummerde vragen onder de acceptatiekop", () => {
+    expect(acceptatieVragenUit(opdracht)).toEqual([
+      "Wat wordt het weer morgen in Ede?",
+      "Welke films draaien vandaag in de bioscoop in Ede?",
+      "Welke aanbieders leveren vergelijkbare diensten?",
+    ]);
+    expect(acceptatieVragenUit("Geen kop.\n1. Een vraag zonder acceptatiekop?")).toEqual([]);
+  });
+
+  it("zet een controlevraag zonder zoekbehoefte vooraan en elke vraag in een eigen gesprek", () => {
+    const sc = scenarioUitVragen(["A?", "B?"]);
+    expect(sc[0]).toBe(CONTROLE_ZONDER_WEB);
+    expect(sc.map((g) => g.nummer)).toEqual([1, 2, 3]);
+    expect(sc.slice(1).map((g) => g.beurten)).toEqual([["A?"], ["B?"]]);
+  });
+
+  it("stelt in de eindcontrole die vragen met het echte geheugen, en het bewijs toont zoekopdrachten en webbronnen", async () => {
+    const echt = [{ id: "i-1", tekst: "Projectinformatie.", op: "2026-11-22T00:00:00Z", context: { kanaal: "brein", soort: "inzicht", inzicht_soort: "projectinfo" } }];
+    const sql = {
+      unsafe: async (q: string) => (q.includes("acceptatie_sleutel") ? [{ sleutel: "s" }] : q === PRAKTIJK_GEHEUGEN_SQL ? echt : q === PRAKTIJK_VRAAG_SQL ? [{ tekst: "Oude vraag?" }] : [{ waarde: "https://voorbeeld.test/api/chat" }]),
+      end: async () => {},
+    } as unknown as DbClient;
+    const bodies: Record<string, unknown>[] = [];
+    const uit = await voerSparproefUit(sql, (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      bodies.push(body);
+      const zoekt = !String(JSON.stringify(body["gesprek"])).includes("besluit en een aanname");
+      const web = zoekt
+        ? { beschikbaar: true, zoekopdrachten: ["weer Ede morgen"], opgehaald: [], bronnen: [{ url: "https://www.knmi.nl/", titel: "KNMI", datum: "24 nov" }], kosten_zoeken_usd: 0.01 }
+        : { beschikbaar: true, zoekopdrachten: [], opgehaald: [], bronnen: [], kosten_zoeken_usd: 0 };
+      return new Response(JSON.stringify({ antwoord: "ok", kosten_usd: 0.05, nieuw_geheugen: [], bronnen: { geheugen: [], doelen: [], gereedschap: [], web } }), { status: 200 });
+    }) as unknown as typeof fetch, opdracht);
+    expect(bodies).toHaveLength(4);
+    expect(bodies.map((b) => (b["gesprek"] as { tekst: string }[])[0]!.tekst)).toEqual([CONTROLE_ZONDER_WEB.beurten[0], "Wat wordt het weer morgen in Ede?", "Welke films draaien vandaag in de bioscoop in Ede?", "Welke aanbieders leveren vergelijkbare diensten?"]);
+    expect(bodies[0]!["proefgeheugen"]).toEqual(echt);
+    expect(uit.bewijs).not.toContain("Oude vraag?");
+    expect(uit.bewijs).toContain("vragen uit de opdracht: 3");
+    expect(uit.bewijs).toContain("web: 0 zoekopdrachten");
+    expect(uit.bewijs).toContain("web: 1 zoekopdracht [weer Ede morgen]; bronnen: KNMI <https://www.knmi.nl/> (24 nov)");
+    expect(uit.besteedUsd).toBeCloseTo(0.2, 6);
   });
 });
