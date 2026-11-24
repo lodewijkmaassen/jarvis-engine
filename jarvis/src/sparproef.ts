@@ -56,9 +56,10 @@ export function vraagtSparproef(d: { readonly titel: string; readonly opdracht: 
 
 /**
  * Bovengrens van één sparbeurt in dollars: SPAR_GRENZEN in de AI Core (3 rondes × (25.000 in × $2 + 4.000 uit × $10) / 1e6
- * = $0,27, plus het web: 3 rondes × 2 zoekopdrachten × $0,01 en 15.000 extra invoertokens × $2 / 1e6).
+ * = $0,27, plus het web: 3 rondes × 3 zoekopdrachten × $0,01 en 30.000 extra invoertokens × $2 / 1e6). Een test in
+ * brein.test.ts bewaakt dat dit niet lager is dan de bovengrens die de AI Core zelf reserveert.
  */
-export const BEURT_BOVENGRENS_USD = 0.36;
+export const BEURT_BOVENGRENS_USD = 0.42;
 /** Hoeveel vragen uit de opdracht de proef hoogstens stelt. */
 export const MAX_DOELVRAGEN = 8;
 /** Hoeveel één sparproef hoogstens mag kosten. */
@@ -297,11 +298,14 @@ export function bronnenRegel(b: Lading | null | undefined): string | null {
   if (web) {
     const zoek = lijst(web["zoekopdrachten"]).map(String);
     const pag = lijst(web["opgehaald"]).map(String);
+    // Wat op het web niet lukte (maximum bereikt, pagina onbereikbaar): zo is een "niet gevonden" te herleiden.
+    const fouten = lijst(web["fouten"]).map(String);
     const bronnen = lijst(web["bronnen"]).map((x) => `${String(x["titel"] ?? "")} <${String(x["url"] ?? "")}>${x["datum"] ? ` (${String(x["datum"])})` : ""}`);
     delen.push(
       `web: ${zoek.length} zoekopdracht${zoek.length === 1 ? "" : "en"}${zoek.length ? ` [${zoek.join("; ")}]` : ""}` +
         (pag.length ? `; opgehaald: ${pag.join(", ")}` : "") +
         (bronnen.length ? `; bronnen: ${bronnen.join("; ")}` : "") +
+        (fouten.length ? `; niet gelukt: ${fouten.join(", ")}` : "") +
         (web["beschikbaar"] === false ? "; WEB NIET BESCHIKBAAR (aanbieder weigerde het webgereedschap)" : ""),
     );
   }

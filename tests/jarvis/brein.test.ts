@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — gewone .mjs zonder typen
 import { SPAR_MODEL, SPAR_GRENZEN, MODEL, WEB_GEREEDSCHAP, schoonUrl, verwerk } from "../../jarvis/interface/app/api/_chat-kern.mjs";
+import { BEURT_BOVENGRENS_USD } from "../../jarvis/src/sparproef";
 // @ts-expect-error — gewone .mjs zonder typen
 import { MAAND_LIMIET_USD, ZOEK_USD, bovengrens, genoemdeProjecten, items, kostenVan, selecteer, termen } from "../../jarvis/interface/app/api/_brein.mjs";
 
@@ -365,10 +366,10 @@ describe("Web Intelligence V1 (D-20261124-200610788): actuele informatie in de s
     expect(systeem).toMatch(/overzichtssite die het programma als tekst toont/);
     expect(systeem).toMatch(/altijd een expliciet oordeel \(ja, nee of deels\)/);
     expect(systeem).toMatch(/zoek dan de openbare beschrijving ervan op/);
-    expect(systeem).toMatch(/noem beide met wat ze precies beweren/);
+    expect(systeem).toMatch(/noem beide met naam, link en wat ze precies beweren/);
     expect(systeem).toMatch(/Alleen algemene criteria noemen is geen antwoord/);
-    // Geen extra kosten: de grenzen per beurt blijven gelijk.
-    expect(SPAR_GRENZEN).toEqual({ maxIn: 25000, maxUit: 4000, rondes: 3, zoek: 2, webIn: 15000 });
+    // Plafonds per beurt: ruim genoeg om een live pagina op te halen, en vooraf gereserveerd.
+    expect(SPAR_GRENZEN).toEqual({ maxIn: 25000, maxUit: 4000, rondes: 3, zoek: 3, ophalen: 3, webIn: 30000 });
   });
   it("geeft de zoekopdrachten, de geciteerde bronnen als links en de zoekkosten terug, en plakt het antwoord aaneen", async () => {
     const w = wereld([metZoeken("weer morgen Ede", "https://www.knmi.nl/verwachtingen", "KNMI verwachtingen")]);
@@ -387,7 +388,7 @@ describe("Web Intelligence V1 (D-20261124-200610788): actuele informatie in de s
   it("zoekt niet als het niet hoeft: dan geen zoekopdrachten, geen bronnen en geen zoekkosten", async () => {
     const w = wereld([tekst("Een besluit leg je vast; een aanname toets je.")]);
     const r = await verwerk({ token: "t", body: spar("Wat is het verschil tussen een besluit en een aanname?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
-    expect(r.lading.bronnen.web).toEqual({ beschikbaar: true, zoekopdrachten: [], opgehaald: [], bronnen: [], kosten_zoeken_usd: 0 });
+    expect(r.lading.bronnen.web).toEqual({ beschikbaar: true, zoekopdrachten: [], opgehaald: [], bronnen: [], kosten_zoeken_usd: 0, fouten: [] });
     expect((w.tabel.find((x) => x.context.soort === "beurt")!.context as Record<string, unknown>).web).toBeUndefined();
   });
   it("toont alleen gevonden bronnen als er niets is geciteerd, en nooit een adres dat geen http(s) is", async () => {
@@ -415,6 +416,51 @@ describe("Web Intelligence V1 (D-20261124-200610788): actuele informatie in de s
     expect(r.status).toBe(200);
     expect(r.lading.antwoord).toBe("Zonder web: dit weet ik.");
     expect(r.lading.bronnen.web.beschikbaar).toBe(false);
+  });
+  it("laat voor vandaag en morgen een live pagina ophalen in plaats van op een momentopname te antwoorden", async () => {
+    const w = wereld([tekst("ok")]);
+    await verwerk({ token: "t", body: spar("Vraag"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    const v = w.modelVerzoeken[0] as { system: { text: string }[]; tools: { name: string; max_uses?: number }[] };
+    const systeem = v.system[0].text;
+    expect(systeem).toMatch(/Zoekresultaten zijn een momentopname/);
+    expect(systeem).toMatch(/haal dan de actuele pagina uit de resultaten op met web_fetch/);
+    expect(systeem).toMatch(/temperatuur \(min en max\), de kans op neerslag en de wind/);
+    expect(systeem).toMatch(/Zeg nooit dat je niet kunt zoeken als je in deze beurt gezocht hebt/);
+    expect(systeem).toMatch(/een voorbeeld uit het geheugen telt niet als bron/);
+    expect(systeem).toContain(`hoogstens ${SPAR_GRENZEN.zoek} zoekopdrachten en ${SPAR_GRENZEN.ophalen} op te halen pagina's`);
+    expect(v.tools.find((t) => t.name === "web_fetch")?.max_uses).toBe(SPAR_GRENZEN.ophalen);
+  });
+  it("meldt wat op het web niet lukte (maximum bereikt, pagina onbereikbaar), zonder inhoud", async () => {
+    const antwoord = {
+      content: [
+        { type: "server_tool_use", id: "s1", name: "web_search", input: { query: "bioscoop Ede vandaag" } },
+        { type: "web_search_tool_result", tool_use_id: "s1", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
+        { type: "server_tool_use", id: "f1", name: "web_fetch", input: { url: "https://bioscoop.example/ede" } },
+        { type: "web_fetch_tool_result", tool_use_id: "f1", content: { type: "web_fetch_tool_error", error_code: "url_not_accessible <script>" } },
+        { type: "text", text: "Het programma kon ik niet ophalen." },
+      ],
+      stop_reason: "end_turn",
+      usage: { input_tokens: 3000, output_tokens: 100, server_tool_use: { web_search_requests: 1 } },
+    };
+    const w = wereld([antwoord]);
+    const r = await verwerk({ token: "t", body: spar("Welke films draaien vandaag in Ede?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(r.lading.bronnen.web.fouten).toEqual(["zoeken: max_uses_exceeded", "ophalen: url_not_accessiblescript"]);
+    expect(r.lading.bronnen.web.opgehaald).toEqual(["https://bioscoop.example/ede"]);
+  });
+  it("laat een pauze van de aanbieder geen ronde kosten, begrensd", async () => {
+    const pauze = { content: [{ type: "server_tool_use", id: "s1", name: "web_search", input: { query: "weer Ede" } }], stop_reason: "pause_turn", usage: { input_tokens: 500, output_tokens: 10 } };
+    // Drie rondes plus twee hervattingen: vijf aanroepen, en het antwoord komt nog binnen.
+    const w = wereld([pauze, pauze, pauze, pauze, tekst("Morgen 9 graden.")]);
+    const r = await verwerk({ token: "t", body: spar("Wat wordt het weer morgen in Ede?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(w.modelVerzoeken).toHaveLength(5);
+    expect(r.lading.antwoord).toBe("Morgen 9 graden.");
+    // Meer pauzes dan dat: de beurt stopt, ook zonder antwoord.
+    const w2 = wereld([pauze, pauze, pauze, pauze, pauze, pauze, tekst("te laat")]);
+    await verwerk({ token: "t", body: spar("Wat wordt het weer morgen in Ede?"), cfg, sleutel: "k", fetchFn: w2.fetchFn });
+    expect(w2.modelVerzoeken).toHaveLength(5);
+  });
+  it("de sparproef reserveert per beurt niet minder dan de AI Core zelf", () => {
+    expect(BEURT_BOVENGRENS_USD).toBeGreaterThanOrEqual(bovengrens(SPAR_MODEL, SPAR_GRENZEN) - 1e-9);
   });
   it("reserveert het zoeken mee in de bovengrens van een beurt, die klein blijft", () => {
     const zonderWeb = bovengrens(SPAR_MODEL, { ...SPAR_GRENZEN, zoek: 0, webIn: 0 });
