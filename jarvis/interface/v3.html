@@ -44,6 +44,8 @@
   .bericht.jij { align-self:flex-end; border-color:rgba(76,195,255,.45); background:rgba(76,195,255,.08); }
   .bericht.jarvis { align-self:flex-start; }
   .bericht .voortgang { margin:8px 0 2px; }
+  .bericht .webbronnen { margin:6px 0 0; padding-left:18px; white-space:normal; }
+  .bericht .webbronnen a { overflow-wrap:anywhere; }
   .bericht .reactieknoppen { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; white-space:normal; }
   .bericht .reactieknoppen button { margin:0; padding:4px 10px; min-height:32px; font-size:13px; letter-spacing:0; text-transform:none; }
   .chatvorm { display:flex; gap:8px; align-items:flex-end; }
@@ -954,6 +956,28 @@
   }
   const bewaarChat = () => { try { sessionStorage.setItem("jarvis-chat", JSON.stringify(chat.slice(-40).map(({ beeld, afbeelding, bijlagen, ...b }) => b))); sessionStorage.setItem("jarvis-gesprek", gesprekId); sessionStorage.setItem("jarvis-chat-modus", chatModus); } catch { /* geen opslag: het gesprek blijft in het geheugen */ } };
 
+  // Alleen http(s) wordt een link; de server filtert ook al, dit is de tweede grendel.
+  const WEBLINK = /^https?:[/][/]/i;
+  // Waar Jarvis zijn kennis vandaan had (D-20261121-235241117): geheugenitems per categorie en doelen per project. Met het
+  // web (D-20261124-200610788): hoeveel zoekopdrachten en pagina's, de kosten van de beurt en de bronnen als links.
+  function bronnenHtml(bronnen, kosten) {
+    let uit = "";
+    const g = Array.isArray(bronnen.geheugen) ? bronnen.geheugen : [];
+    const per = {};
+    for (const x of g) per[x.categorie ?? "geheugen"] = (per[x.categorie ?? "geheugen"] ?? 0) + 1;
+    const delen = Object.entries(per).map(([k, n]) => `${n}× ${k}`);
+    for (const d of Array.isArray(bronnen.doelen) ? bronnen.doelen : []) delen.push(`${(d.ids ?? []).length} doelen van ${d.project}`);
+    const web = bronnen.web && typeof bronnen.web === "object" ? bronnen.web : null;
+    const zoek = Array.isArray(web?.zoekopdrachten) ? web.zoekopdrachten.length : 0;
+    const pag = Array.isArray(web?.opgehaald) ? web.opgehaald.length : 0;
+    if (zoek || pag) delen.push(`web: ${zoek} zoekopdracht${zoek === 1 ? "" : "en"}${pag ? `, ${pag} pagina${pag === 1 ? "" : "'s"}` : ""}`);
+    if (web && web.beschikbaar === false) delen.push("web niet beschikbaar");
+    if (typeof kosten === "number") delen.push(`kosten $${kosten.toFixed(4)}`);
+    if (delen.length) uit += `<div class="klein">Geraadpleegd: ${esc(delen.join(" · "))}</div>`;
+    const links = (Array.isArray(web?.bronnen) ? web.bronnen : []).filter((x) => typeof x?.url === "string" && WEBLINK.test(x.url));
+    if (links.length) uit += `<div class="klein">Bronnen:</div><ol class="webbronnen klein">${links.map((x) => `<li><a href="${esc(x.url)}" target="_blank" rel="noopener noreferrer">${esc(x.titel || x.url)}</a>${x.datum ? ` <span>(${esc(x.datum)})</span>` : ""}</li>`).join("")}</ol>`;
+    return uit;
+  }
   function berichtHtml(b) {
     let extra = "";
     if (b.doelId) {
@@ -970,15 +994,7 @@
     const beeld = stukken.length ? `<div class="bijlagen">${stukken.join("")}</div>` : "";
     if (b.spar && b.rol !== "jij") {
       if (b.onthouden?.length) extra += `<div class="klein">Onthouden: ${b.onthouden.map((o) => esc(`${o.soort}: ${o.tekst}`)).join(" · ")}</div>`;
-      // Waar Jarvis zijn kennis vandaan had (D-20261121-235241117): geheugenitems per categorie en doelen per project.
-      if (b.bronnen) {
-        const g = Array.isArray(b.bronnen.geheugen) ? b.bronnen.geheugen : [];
-        const per = {};
-        for (const x of g) per[x.categorie ?? "geheugen"] = (per[x.categorie ?? "geheugen"] ?? 0) + 1;
-        const delen = Object.entries(per).map(([k, n]) => `${n}× ${k}`);
-        for (const d of Array.isArray(b.bronnen.doelen) ? b.bronnen.doelen : []) delen.push(`${(d.ids ?? []).length} doelen van ${d.project}`);
-        if (delen.length) extra += `<div class="klein">Geraadpleegd: ${esc(delen.join(" · "))}</div>`;
-      }
+      if (b.bronnen) extra += bronnenHtml(b.bronnen, b.kosten);
       extra += b.doelId ? "" : `<div><button type="button" class="klein" data-doelvan="${chat.indexOf(b)}">Maak hier een doel van</button></div>`;
     }
     if (b.rol !== "jij" && reactieTekst(b)) extra += reactieKnoppen(chat.indexOf(b), kanDelen(), kanVoorlezen());
@@ -1137,7 +1153,7 @@
       });
       const uit = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(uit.fout ?? `Chat gaf ${r.status}`);
-      chat.push({ rol: "jarvis", tekst: uit.antwoord, doelId: uit.doel?.id ?? null, ...(uit.modus === "sparren" ? { spar: true, onthouden: uit.onthouden ?? [], bronnen: uit.bronnen ?? null } : {}) });
+      chat.push({ rol: "jarvis", tekst: uit.antwoord, doelId: uit.doel?.id ?? null, ...(uit.modus === "sparren" ? { spar: true, onthouden: uit.onthouden ?? [], bronnen: uit.bronnen ?? null, kosten: typeof uit.kosten_usd === "number" ? uit.kosten_usd : null } : {}) });
       if (uit.doel || uit.onthouden?.length) await laad();
     } catch (e) {
       chat.push({ rol: "jarvis", tekst: `Dat lukte niet: ${e instanceof Error ? e.message : String(e)}` });

@@ -35,6 +35,14 @@
 // beurt wordt de bovengrens van die beurt (de reservering die de sparmodus zelf gebruikt) bij het al uitgegeven
 // bedrag opgeteld, en past dat niet, dan stopt de proef. Een beurt zonder gemeten kosten telt voor de bovengrens.
 // Met hoogstens drie acceptatieronden per doel (MAX_ACCEPTATIE_RONDES) blijft een doel zo binnen die $3.
+//
+// VRAGEN UIT DE OPDRACHT (D-20261124-200610788)
+//
+// Schrijft de opdracht zelf acceptatievragen voor (een kop met "acceptatie" en daaronder genummerde vragen), dan stelt
+// de proef díe vragen, elk in een eigen gesprek, met het echte geheugen van de eigenaar — in plaats van het vaste
+// scenario, dat over iets anders gaat. Vooraf één controlevraag die geen actuele informatie nodig heeft: daarop hoort
+// Jarvis niet te zoeken. Het bewijs toont per beurt de zoekopdrachten en de webbronnen. De vragen komen uit de
+// opdracht in de database, niet uit deze code.
 
 import { ACCEPTATIE_SLEUTEL_SQL } from "./db";
 import type { DbClient } from "./opdrachten";
@@ -46,12 +54,17 @@ export function vraagtSparproef(d: { readonly titel: string; readonly opdracht: 
   return SPAR_VRAAG.test(`${d.titel}\n${d.opdracht}`);
 }
 
-/** Bovengrens van één sparbeurt in dollars: SPAR_GRENZEN in de AI Core (3 rondes × (25.000 in × $2 + 4.000 uit × $10) / 1e6). */
-export const BEURT_BOVENGRENS_USD = 0.27;
+/**
+ * Bovengrens van één sparbeurt in dollars: SPAR_GRENZEN in de AI Core (3 rondes × (25.000 in × $2 + 4.000 uit × $10) / 1e6
+ * = $0,27, plus het web: 3 rondes × 2 zoekopdrachten × $0,01 en 15.000 extra invoertokens × $2 / 1e6).
+ */
+export const BEURT_BOVENGRENS_USD = 0.36;
+/** Hoeveel vragen uit de opdracht de proef hoogstens stelt. */
+export const MAX_DOELVRAGEN = 8;
 /** Hoeveel één sparproef hoogstens mag kosten. */
 export const MAX_PROEF_USD = 1;
 /** Hoeveel tekens van één antwoord in het bewijs gaan. */
-const MAX_ANTWOORD_TEKENS = 1600;
+const MAX_ANTWOORD_TEKENS = 2400;
 
 export type SparGesprek = {
   readonly nummer: number;
@@ -103,6 +116,46 @@ export const SPARPROEF: readonly SparGesprek[] = [
   },
 ];
 
+/**
+ * De acceptatievragen die de opdracht zelf voorschrijft: genummerde regels die op een vraagteken eindigen, onder een
+ * markdownkop met "acceptatie" erin, tot de volgende kop. Geen kop of geen vragen: een lege lijst.
+ */
+export function acceptatieVragenUit(opdracht: string): string[] {
+  const uit: string[] = [];
+  let binnen = false;
+  for (const regel of opdracht.split(/\r?\n/)) {
+    if (/^\s*#{1,6}\s/.test(regel)) {
+      binnen = /acceptatie/i.test(regel);
+      continue;
+    }
+    if (!binnen) continue;
+    const m = /^\s*\d{1,2}[.)]\s+(.{8,500}\?)\s*$/.exec(regel);
+    if (m) uit.push(m[1]!.trim());
+  }
+  return uit.slice(0, MAX_DOELVRAGEN);
+}
+
+/** Vooraf in een proef met vragen uit de opdracht: een vraag waarvoor geen actuele informatie nodig is. */
+export const CONTROLE_ZONDER_WEB: SparGesprek = {
+  nummer: 1,
+  onderwerp: "controle: bestaande kennis volstaat",
+  toetst: "dat Jarvis geen externe zoekopdracht doet als zijn eigen kennis volstaat (verwacht: web 0 zoekopdrachten)",
+  beurten: ["Ik leg een besluit vast: klantgegevens slaan we uitsluitend binnen de EU op. Wat is het verschil tussen een besluit en een aanname, en welke van de twee is dit?"],
+};
+
+/** Het scenario voor een opdracht met eigen acceptatievragen: eerst de controle, dan elke vraag in een eigen gesprek. */
+export function scenarioUitVragen(vragen: readonly string[]): SparGesprek[] {
+  return [
+    CONTROLE_ZONDER_WEB,
+    ...vragen.map((vraag, i) => ({
+      nummer: i + 2,
+      onderwerp: `vraag ${i + 1} uit de opdracht`,
+      toetst: "zelf zoeken waar dat nodig is; actualiteit, juistheid, bronvermelding met aanklikbare webbronnen, en zeggen wat onzeker, verouderd of niet te vinden is; interne kennis erbij waar de vraag daarom vraagt",
+      beurten: [vraag],
+    })),
+  ];
+}
+
 /** Wat de deur op één beurt teruggaf, voor zover het voor het bewijs telt. */
 export type SparBeurt = {
   readonly gesprek: number;
@@ -153,10 +206,12 @@ export async function voerSparproef(
   scenario: readonly SparGesprek[] = SPARPROEF,
   nu: () => Date = () => new Date(),
   praktijk: Praktijk | null = null,
+  startGeheugen: readonly Lading[] = [],
 ): Promise<{ readonly beurten: readonly SparBeurt[]; readonly besteedUsd: number; readonly gestopt: string | null }> {
   const beurten: SparBeurt[] = [];
-  // Het geheugen tussen gesprekken: inzichten die de deur teruggaf en de beurten van eerdere gesprekken.
-  const geheugen: Lading[] = [];
+  // Het geheugen tussen gesprekken: inzichten die de deur teruggaf en de beurten van eerdere gesprekken. Bij vragen
+  // uit de opdracht begint het met het echte geheugen van de eigenaar.
+  const geheugen: Lading[] = [...startGeheugen];
   let besteed = 0;
   const stempel = nu().getTime();
   // Eerst de praktijkherhaling, met het echte geheugen. Dat geheugen loopt niet door naar het fictieve scenario.
@@ -238,6 +293,18 @@ export function bronnenRegel(b: Lading | null | undefined): string | null {
   if (d.length) delen.push(`doelen: ${d.join("; ")}`);
   const t = lijst(b["gereedschap"]).map((x) => `${String(x["gereedschap"] ?? "?")}(${JSON.stringify(x["invoer"] ?? {})})`);
   if (t.length) delen.push(`gereedschap: ${t.join("; ")}`);
+  const web = b["web"] && typeof b["web"] === "object" ? (b["web"] as Lading) : null;
+  if (web) {
+    const zoek = lijst(web["zoekopdrachten"]).map(String);
+    const pag = lijst(web["opgehaald"]).map(String);
+    const bronnen = lijst(web["bronnen"]).map((x) => `${String(x["titel"] ?? "")} <${String(x["url"] ?? "")}>${x["datum"] ? ` (${String(x["datum"])})` : ""}`);
+    delen.push(
+      `web: ${zoek.length} zoekopdracht${zoek.length === 1 ? "" : "en"}${zoek.length ? ` [${zoek.join("; ")}]` : ""}` +
+        (pag.length ? `; opgehaald: ${pag.join(", ")}` : "") +
+        (bronnen.length ? `; bronnen: ${bronnen.join("; ")}` : "") +
+        (web["beschikbaar"] === false ? "; WEB NIET BESCHIKBAAR (aanbieder weigerde het webgereedschap)" : ""),
+    );
+  }
   return delen.length ? delen.join(" | ") : "geen";
 }
 
@@ -358,7 +425,9 @@ export async function voerSparproefUit(
     return { bewijs: "live sparproef niet uitgevoerd: de acceptatiedeur ontbreekt (instelling ai_core_url of de acceptatiesleutel).", besteedUsd: 0 };
   }
   const praktijk = await leesPraktijk(sql, exacteVraagUit(opdracht));
-  const uitkomst = await voerSparproef(async (body) => {
+  const vragen = acceptatieVragenUit(opdracht);
+  const doelScenario = vragen.length ? scenarioUitVragen(vragen) : null;
+  const vraag = async (body: Lading) => {
     const a = await fetchFn(url, {
       method: "POST",
       headers: { Authorization: `Bearer ${sleutel}`, "Content-Type": "application/json", "User-Agent": "jarvis-acceptatie" },
@@ -366,6 +435,19 @@ export async function voerSparproefUit(
     });
     const lading = (await a.json().catch(() => ({}))) as Lading;
     return { status: a.status, lading };
-  }, SPARPROEF, () => new Date(), praktijk);
+  };
+  if (doelScenario) {
+    // De vragen van de opdracht zelf, met het echte geheugen van de eigenaar (voor zover leesbaar); geen herhaling
+    // van een oude sparvraag en geen fictief scenario: die toetsen iets anders en kosten budget.
+    const echt = praktijk?.geheugen ?? [];
+    const uitkomst = await voerSparproef(vraag, doelScenario, () => new Date(), null, echt);
+    const kop =
+      `vragen uit de opdracht: ${vragen.length}, elk in een eigen gesprek, na één controlevraag zonder zoekbehoefte. ` +
+      `Meegegeven: het echte geheugen van de eigenaar (${echt.length} inzichten, alleen gelezen)` +
+      (praktijk?.leesfout ? `; LEESFOUT: ${praktijk.leesfout}` : "") +
+      `. Per beurt staat onder [geraadpleegde bronnen] wat Jarvis op het web zocht en welke bronnen hij gebruikte.`;
+    return { bewijs: `${kop}\n${sparproefBewijs(uitkomst, url, doelScenario)}`, besteedUsd: uitkomst.besteedUsd };
+  }
+  const uitkomst = await voerSparproef(vraag, SPARPROEF, () => new Date(), praktijk);
   return { bewijs: sparproefBewijs(uitkomst, url, SPARPROEF, praktijk), besteedUsd: uitkomst.besteedUsd };
 }

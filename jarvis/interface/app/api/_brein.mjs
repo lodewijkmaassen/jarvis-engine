@@ -37,6 +37,13 @@ export const TARIEVEN = {
   "claude-haiku-5-5": { in: 0.1, uit: 0.5, cacheLees: 0.01, cacheSchrijf: 0.125 },
 };
 
+/**
+ * Web Intelligence V1 (D-20261124-200610788): een zoekopdracht op het web kost $10 per 1.000 (gecontroleerd op
+ * 2026-11-24); een opgehaalde pagina kost alleen de tokens van de inhoud. Beide tellen mee in de beurt en dus in de
+ * maandgrens hieronder: er komt geen apart budget en geen nieuwe dienst bij.
+ */
+export const ZOEK_USD = 0.01;
+
 /** Harde maandgrens van de sparmodus in dollars; bij bereiken geen nieuwe betaalde aanroep (besluit van de eigenaar). */
 export const MAAND_LIMIET_USD = 35;
 
@@ -155,9 +162,11 @@ function inzichtRegel(it, nu) {
 }
 
 /** Wat een sparbeurt hoogstens kan kosten, gegeven de grenzen per aanroep. Wordt vooraf gereserveerd. */
-export function bovengrens(model, { maxIn, maxUit, rondes }) {
+export function bovengrens(model, { maxIn, maxUit, rondes, zoek = 0, webIn = 0 }) {
   const t = TARIEVEN[model];
-  return t ? (rondes * (maxIn * t.in + maxUit * t.uit)) / 1e6 : Number.POSITIVE_INFINITY;
+  // Met web: per aanroep hoogstens `zoek` zoekopdrachten, en per beurt hoogstens `webIn` extra invoertokens aan
+  // zoekresultaten en opgehaalde pagina's.
+  return t ? (rondes * (maxIn * t.in + maxUit * t.uit) + webIn * t.in) / 1e6 + rondes * zoek * ZOEK_USD : Number.POSITIVE_INFINITY;
 }
 
 /** Kosten van één modelantwoord uit het veld usage. */
@@ -166,7 +175,8 @@ export function kostenVan(model, usage) {
   const u = usage ?? {};
   if (!t) return 0;
   const n = (x) => (Number.isFinite(x) ? x : 0);
-  return (n(u.input_tokens) * t.in + n(u.output_tokens) * t.uit + n(u.cache_read_input_tokens) * t.cacheLees + n(u.cache_creation_input_tokens) * t.cacheSchrijf) / 1e6;
+  const zoek = n(u.server_tool_use?.web_search_requests) * ZOEK_USD;
+  return (n(u.input_tokens) * t.in + n(u.output_tokens) * t.uit + n(u.cache_read_input_tokens) * t.cacheLees + n(u.cache_creation_input_tokens) * t.cacheSchrijf) / 1e6 + zoek;
 }
 
 const begin = (nu) => new Date(Date.UTC(nu.getUTCFullYear(), nu.getUTCMonth(), 1)).toISOString();
@@ -211,8 +221,10 @@ export function berichtenGeheugen(cfg, token, fetchFn, nu = () => new Date()) {
       const r = await schrijf(rij(kort(tekst, MAX_TEKST), { soort: "beurt", gesprek, model, kosten_usd: bedrag, gereserveerd: true }));
       return String(r.id);
     },
-    async sluitBeurt(id, { gesprek, model, antwoord, kosten, onthouden }) {
-      await wijzig(id, { context: { kanaal: KANAAL, soort: "beurt", gesprek, model, antwoord: kort(antwoord, MAX_TEKST), kosten_usd: Math.round(kosten * 1e6) / 1e6, onthouden } });
+    async sluitBeurt(id, { gesprek, model, antwoord, kosten, onthouden, web = null }) {
+      // Met web: de zoekopdrachten en bronnen bij de beurt, zodat later te zien is waar een antwoord op rustte.
+      const metWeb = web && (web.zoekopdrachten.length || web.opgehaald.length) ? { web: { zoekopdrachten: web.zoekopdrachten, opgehaald: web.opgehaald, bronnen: web.bronnen.map((b) => b.url), kosten_zoeken_usd: web.kosten_zoeken_usd } } : {};
+      await wijzig(id, { context: { kanaal: KANAAL, soort: "beurt", gesprek, model, antwoord: kort(antwoord, MAX_TEKST), kosten_usd: Math.round(kosten * 1e6) / 1e6, onthouden, ...metWeb } });
     },
     async onthoud(inzicht, bron) {
       const ctx = { soort: "inzicht", inzicht_soort: inzicht.soort, bron, ...(inzicht.project ? { project: inzicht.project } : {}), ...(inzicht.vervangt ? { vervangt: inzicht.vervangt } : {}) };
