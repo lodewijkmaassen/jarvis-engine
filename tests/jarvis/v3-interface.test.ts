@@ -156,6 +156,11 @@ describe("de V3-weergave", () => {
     // Geen nieuwe modules uit het voorbeeld.
     for (const verboden of ["Agents", "Kalender", "Memory", "Voice", "System Monitor", "Knowledge Base"]) expect(HTML, verboden).not.toContain(verboden);
   });
+  it("geeft het blok Recente activiteit een vaste hoogte met een verticale scrollbalk, zonder de inhoud te wijzigen (D-20261124-195022485)", () => {
+    expect(HTML).toMatch(/\.activiteit\.scrolbaar \{[^}]*max-height:\s*\d+px;[^}]*overflow-y:\s*auto;/);
+    // Alleen de lijst van Recente activiteit scrolt; de inhoud (de negen nieuwste regels) blijft gelijk.
+    expect(HTML).toContain('<ul class="activiteit scrolbaar" tabindex="0" aria-label="Recente activiteit">${activiteit.slice(0, 9).map(');
+  });
   it("raakt geen V2-document, -tabel of -afleiding, behalve de approvalroute (berichten, autorisaties; D-20261020-210018901)", () => {
     for (const verboden of ["documenten", "overzicht/huidig", "regie", "antwoorden"]) {
       expect(HTML, verboden).not.toContain(verboden);
