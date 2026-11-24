@@ -161,6 +161,48 @@ describe("de V3-weergave", () => {
     // Alleen de lijst van Recente activiteit scrolt; de inhoud (de negen nieuwste regels) blijft gelijk.
     expect(HTML).toContain('<ul class="activiteit scrolbaar" tabindex="0" aria-label="Recente activiteit">${activiteit.slice(0, 9).map(');
   });
+  it("houdt het blok Recente activiteit als geheel compact: alleen de lijst scrolt, binnen een vaste grens (D-20261124-195022485)", () => {
+    // De grens van de lijst: hoogstens 340px, daarboven een verticale scrollbalk.
+    const regel = /\.activiteit\.scrolbaar \{([^}]*)\}/.exec(HTML)?.[1] ?? "";
+    const hoogte = Number(/max-height:\s*(\d+)px/.exec(regel)?.[1]);
+    expect(hoogte).toBeGreaterThan(0);
+    expect(hoogte).toBeLessThanOrEqual(340);
+    expect(regel).toMatch(/overflow-y:\s*auto/);
+    // Het paneel zelf krijgt geen eigen hoogte en geen tweede scrollbalk: het is kop + subtekst + begrensde lijst.
+    expect(HTML).toMatch(/\.paneel \{[^}]*\}/);
+    expect(/\.paneel \{([^}]*)\}/.exec(HTML)?.[1]).not.toMatch(/height|overflow/);
+    // De klasse hoort bij precies één blok: Huidige activiteit en de rest van het dashboard veranderen niet.
+    expect(HTML.match(/class="activiteit scrolbaar"/g)).toHaveLength(1);
+    expect(HTML).toMatch(/<h2>Recente activiteit<\/h2><div class="subtekst">Laatste activiteit van Jarvis<\/div>\$\{\s*activiteit\.length\s*\? `<ul class="activiteit scrolbaar"/);
+  });
+  it("laat de inhoud en de werking van Recente activiteit ongewijzigd: dezelfde negen regels, dezelfde opmaak, dezelfde lege stand (D-20261124-195022485)", () => {
+    const bron = /<div class="paneel"><h2>Recente activiteit<\/h2>[\s\S]*?"Nog geen activiteit\."\)\}<\/div>`\}<\/div>/.exec(HTML)?.[0];
+    expect(bron).toBeDefined();
+    const esc = (s: unknown) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
+    const tijd = (op: string) => `t(${op})`;
+    const render = new Function("activiteit", "activiteitFout", "esc", "tijd", `return \`${bron}\`;`) as (
+      a: readonly { tekst: string; op: string; taak: string | null; verwijzing: string | null }[],
+      f: string | null,
+      e: typeof esc,
+      t: typeof tijd,
+    ) => string;
+    // Zo zag een regel er vóór de scrollbalk uit (de opmaak van D-20261019-220029150); die blijft precies gelijk.
+    const regelVroeger = (a: { tekst: string; op: string; taak: string | null; verwijzing: string | null }) =>
+      `<li>${esc(a.tekst)}<div class="klein">${esc(tijd(a.op))}${a.taak ? " · " + esc(a.taak) : ""}${a.verwijzing ? " · " + esc(a.verwijzing) : ""}</div></li>`;
+    const veel = Array.from({ length: 20 }, (_, i) => ({ tekst: `stap ${i} <b>`, op: `2026-11-24T19:${String(i).padStart(2, "0")}:00Z`, taak: i % 2 ? "D-1" : null, verwijzing: i % 3 ? "#164" : null }));
+    const uit = render(veel, null, esc, tijd);
+    expect(uit).toBe(
+      `<div class="paneel"><h2>Recente activiteit</h2><div class="subtekst">Laatste activiteit van Jarvis</div>` +
+        `<ul class="activiteit scrolbaar" tabindex="0" aria-label="Recente activiteit">${veel.slice(0, 9).map(regelVroeger).join("")}</ul></div>`,
+    );
+    // Nog steeds de negen nieuwste, niet meer en niet minder: de scrollbalk voegt geen regels toe.
+    expect(uit.match(/<li>/g)).toHaveLength(9);
+    // De lege stand en de foutmelding zijn ongewijzigd en krijgen geen scrollbalk.
+    expect(render([], null, esc, tijd)).toBe('<div class="paneel"><h2>Recente activiteit</h2><div class="subtekst">Laatste activiteit van Jarvis</div><div class="leeg">Nog geen activiteit.</div></div>');
+    expect(render([], "Activiteit niet te lezen (x).", esc, tijd)).toContain('<div class="leeg">Activiteit niet te lezen (x).</div>');
+    // De bron van de regels is dezelfde leesactie als voorheen.
+    expect(HTML).toContain('client.from("activiteit").select("op, uitvoerder, rol, taak, project, soort, tekst, verwijzing").order("op", { ascending: false }).limit(60)');
+  });
   it("raakt geen V2-document, -tabel of -afleiding, behalve de approvalroute (berichten, autorisaties; D-20261020-210018901)", () => {
     for (const verboden of ["documenten", "overzicht/huidig", "regie", "antwoorden"]) {
       expect(HTML, verboden).not.toContain(verboden);
