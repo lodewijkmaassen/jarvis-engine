@@ -83,7 +83,8 @@ export function leesAcceptatieTests(opdracht: string): readonly AcceptatieTest[]
       continue;
     }
     if (blokken.length === 0) continue;
-    if (EINDE.test(regel)) break;
+    // Een nieuwe markdownkop sluit de sectie: wat eronder staat ("## Uitvoering") hoort niet bij de laatste test.
+    if (EINDE.test(regel) || /^\s*#{1,6}\s/.test(regel)) break;
     blokken[blokken.length - 1]!.regels.push(regel);
   }
   const tests: AcceptatieTest[] = [];
@@ -300,8 +301,129 @@ export function testsVoorDoel(d: {
   readonly acceptatie_url: string | null;
   readonly pr: { readonly nummer?: number } | null;
 }): readonly AcceptatieTest[] {
-  const expliciet = leesAcceptatieTests(d.opdracht);
+  const expliciet = pasSplitsingenToe(leesAcceptatieTests(d.opdracht), splitsingenUit(eigenaarsReactie(d.opdracht)));
   return expliciet.length > 0 ? expliciet : [afgeleideAcceptatieTest(d)];
+}
+
+/**
+ * EEN REACTIE VAN DE EIGENAAR DIE DE TESTS BIJSTELT (D-20261124-200610788)
+ *
+ * Heropent de eigenaar een doel met een reactie, dan staat die onder de opdracht ("Reactie van de eigenaar (…):").
+ * Twee dingen daarin veranderen wat de eindcontrole meet, en tot nu toe las de keten ze niet:
+ *
+ *   - "Splits acceptatietest 6 in twee onafhankelijke controles: 1. … 2. …" — test 6 wordt test 6.1 en 6.2, elk
+ *     met een eigen oordeel. Zonder dit bleef één test twee eisen dragen die elkaar in de weg zaten (zelf zoeken
+ *     om bronnen te verifiëren én niet zoeken als eigen kennis volstaat), en zakte hij op de combinatie.
+ *   - "Vijf van de zes zijn geslaagd. Behoud deze resultaten en herhaal deze tests niet onnodig." — een test die in
+ *     de laatste ronde slaagde, houdt dat oordeel en wordt niet opnieuw gemeten (geen nieuwe kosten, geen nieuw
+ *     toeval op iets wat al bewezen is).
+ */
+
+/** De laatste reactie van de eigenaar onder de opdracht, zonder de vorige uitkomst die erachter staat; of "". */
+export function eigenaarsReactie(opdracht: string): string {
+  const tekst = opdracht.replace(/\r\n/g, "\n");
+  const begin = tekst.toLowerCase().lastIndexOf("reactie van de eigenaar");
+  if (begin < 0) return "";
+  const rest = tekst.slice(begin);
+  const eind = rest.search(/\n\s*\(vorige uitkomst:/i);
+  return (eind < 0 ? rest : rest.slice(0, eind)).trim();
+}
+
+export type Splitsing = { readonly id: string; readonly delen: readonly string[] };
+
+/** "Splits (acceptatie)test N in …" met daaronder genummerde controles. */
+export function splitsingenUit(reactie: string): readonly Splitsing[] {
+  const uit: Splitsing[] = [];
+  const regels = reactie.split("\n");
+  for (let i = 0; i < regels.length; i++) {
+    const m = /\bsplits\s+(?:acceptatie)?test\s+([A-Z]|\d{1,2})\b/i.exec(regels[i]!);
+    if (m === null) continue;
+    const delen: string[] = [];
+    let j = i + 1;
+    for (; j < regels.length; j++) {
+      const r = regels[j]!;
+      const item = /^\s*(?:\d{1,2}|[a-z])[.)]\s+(.*)$/.exec(r);
+      if (item !== null) {
+        delen.push(item[1]!.trim());
+        continue;
+      }
+      if (r.trim() === "") continue;
+      // Een vervolgregel van het laatste deel (ingesprongen) hoort erbij; een gewone alinea sluit de lijst.
+      if (delen.length > 0 && /^\s+\S/.test(r)) {
+        delen[delen.length - 1] = `${delen[delen.length - 1]} ${r.trim()}`;
+        continue;
+      }
+      if (delen.length > 0) break;
+    }
+    if (delen.length >= 2) uit.push({ id: m[1]!.toUpperCase(), delen });
+    i = j - 1;
+  }
+  return uit;
+}
+
+/** Vervangt elke gesplitste test door zijn delen (id "6.1", "6.2"); de oorspronkelijke vraag gaat als context mee. */
+export function pasSplitsingenToe(tests: readonly AcceptatieTest[], splitsingen: readonly Splitsing[]): readonly AcceptatieTest[] {
+  if (splitsingen.length === 0) return tests;
+  return tests.flatMap((t) => {
+    const s = splitsingen.find((x) => x.id === t.id.toUpperCase());
+    if (!s) return [t];
+    const oorspronkelijk = t.tekst.split("\n")[0]!.trim();
+    return s.delen.map((deel, k) => ({
+      id: `${t.id}.${k + 1}`,
+      soort: "bewijs" as const,
+      tekst: `${deel}\n\n(Deel ${k + 1} van ${s.delen.length} van acceptatietest ${t.id}, op verzoek van de eigenaar gesplitst in onafhankelijke controles; de oorspronkelijke test: ${oorspronkelijk})`,
+      vraag: null,
+      url: null,
+      onderwerp: t.onderwerp,
+      volatiel: false,
+    }));
+  });
+}
+
+/** Vraagt de reactie om geslaagde tests te behouden en niet opnieuw te meten? */
+export function behoudtGeslaagde(reactie: string): boolean {
+  return /\b(?:behoud|bewaar)\w*\s+(?:deze|die|de|alle)\s+(?:\w+\s+)?(?:resultaten|uitkomsten|oordelen)\b|\bherhaal\s+(?:deze|die|de)\s+(?:\w+\s+)?tests?\s+niet\b/i.test(reactie);
+}
+
+/** Het laatste oordeel per test uit de activiteit van een doel (nieuwste eerst), alleen de geslaagde. */
+export function laatstGeslaagd(activiteit: readonly { readonly soort: string; readonly tekst: string }[]): ReadonlyMap<string, string> {
+  const gezien = new Set<string>();
+  const uit = new Map<string, string>();
+  for (const a of activiteit) {
+    if (a.soort !== "acceptatie") continue;
+    const m = /^test (\S+): (geslaagd|niet-geslaagd|niet-meetbaar) — ([\s\S]*)$/.exec(a.tekst);
+    if (m === null || gezien.has(m[1]!)) continue;
+    gezien.add(m[1]!);
+    if (m[2] === "geslaagd") uit.set(m[1]!, m[3]!.trim());
+  }
+  return uit;
+}
+
+/** Het voorvoegsel van een behouden oordeel; zo blijft het in een volgende ronde opnieuw te behouden. */
+export const BEHOUDEN = "behouden uit een eerdere ronde op verzoek van de eigenaar, niet opnieuw gemeten:";
+
+/**
+ * Welke tests deze ronde gemeten worden en welke hun geslaagde oordeel houden. Alleen als de reactie van de
+ * eigenaar daarom vraagt; anders wordt alles gemeten, zoals altijd.
+ */
+export function verdeelTests(
+  tests: readonly AcceptatieTest[],
+  opdracht: string,
+  activiteit: readonly { readonly soort: string; readonly tekst: string }[],
+): { readonly behouden: readonly AcceptatieUitkomst[]; readonly teMeten: readonly AcceptatieTest[] } {
+  if (!behoudtGeslaagde(eigenaarsReactie(opdracht))) return { behouden: [], teMeten: tests };
+  const geslaagd = laatstGeslaagd(activiteit);
+  const behouden: AcceptatieUitkomst[] = [];
+  const teMeten: AcceptatieTest[] = [];
+  for (const t of tests) {
+    const reden = geslaagd.get(t.id);
+    if (reden === undefined) {
+      teMeten.push(t);
+      continue;
+    }
+    behouden.push({ id: t.id, staat: "geslaagd", bewijs: "", reden: reden.startsWith(BEHOUDEN) ? reden : `${BEHOUDEN} ${reden}` });
+  }
+  return { behouden, teMeten };
 }
 
 /**

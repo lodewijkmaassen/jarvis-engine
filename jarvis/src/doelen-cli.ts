@@ -17,7 +17,7 @@ import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
 import { ACTIVITEIT_SQL, DOEL_ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
-import { bouwPrBewijs, eindoordeel, isCommitVanDoel, leesEngineWerkMee, metHerkomst, testsVoorDoel, werkVanDoel, type DoelCommit } from "./acceptatie";
+import { bouwPrBewijs, eindoordeel, isCommitVanDoel, leesEngineWerkMee, metHerkomst, testsVoorDoel, verdeelTests, werkVanDoel, type DoelCommit } from "./acceptatie";
 import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
@@ -424,7 +424,10 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       // 3. De acceptatietests die de eigenaar in de opdracht zette — en staat er geen, dan de test die de
       //    keten zelf uit de opdracht afleidt. Een samenvoeging of een bouwmerk is nooit genoeg om klaar te
       //    heten; er is altijd een meting van het eindresultaat (D-20261115-095941788).
-      const tests = testsVoorDoel(d);
+      const alleTests = testsVoorDoel(d);
+      // Vraagt de eigenaar in zijn reactie om geslaagde tests te behouden, dan meet deze ronde alleen de rest.
+      const doelActiviteit = (await sql.unsafe(DOEL_ACTIVITEIT_SQL, [d.id]).catch(() => [])) as unknown as { soort: string; tekst: string }[];
+      const { behouden, teMeten: tests } = verdeelTests(alleTests, d.opdracht, doelActiviteit);
       const prBewijs = await leesPrBewijs(token, d, engineRepo, enginePin);
       // Niet de klok maar de versie. Een uitrol kreeg een vast halfuur voordat er werd gemeten, omdat
       // een test anders de oude pagina meet. Meet een doel geen pagina maar de keten zelf, dan is er
@@ -459,13 +462,17 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       // spargesprekken (sparproef.ts); dat verloop gaat vóór het overige bewijs. Pas hier, na het wachten
       // op de uitrol: een ronde die nog wacht, maakt geen kosten.
       let bewijsVooraf = prBewijs;
-      if (vraagtSparproef(d)) {
-        const spar = await voerSparproefUit(sql, fetch, d.opdracht);
+      for (const b of behouden) await schrijfAcceptatie(sql, d.id, `test ${b.id}: geslaagd — ${b.reden}`);
+      if (vraagtSparproef(d) && tests.length > 0) {
+        // Alleen de vragen van de tests die nog gemeten worden ("6.1" hoort bij vraag 6); zonder behouden tests alle.
+        const nummers = behouden.length > 0 ? new Set(tests.map((t) => t.id.split(".")[0]!)) : null;
+        const overgeslagen = behouden.length > 0 ? `tests ${behouden.map((b) => b.id).join(", ")} behouden uit de vorige ronde op verzoek van de eigenaar en niet opnieuw gesteld` : "";
+        const spar = await voerSparproefUit(sql, fetch, d.opdracht, nummers, overgeslagen);
         await schrijfAcceptatie(sql, d.id, `sparproef uitgevoerd: $${spar.besteedUsd.toFixed(4)}`);
         console.log(`jarvis eindcontrole: ${d.id} sparproef uitgevoerd ($${spar.besteedUsd.toFixed(4)})`);
         bewijsVooraf = prBewijs === null ? spar.bewijs : `${spar.bewijs}\n\n${prBewijs}`;
       }
-      const uitkomsten = await voerAcceptatieUit(sql, d, tests, bewijsVooraf);
+      const uitkomsten = [...behouden, ...(await voerAcceptatieUit(sql, d, tests, bewijsVooraf))];
       const eind = eindoordeel(uitkomsten);
       if (eind.klaar) {
         await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, begrens(`acceptatietests geslaagd — ${eind.samenvatting}`)]);
