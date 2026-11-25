@@ -122,7 +122,12 @@ export const SPARPROEF: readonly SparGesprek[] = [
  * markdownkop met "acceptatie" erin, tot de volgende kop. Geen kop of geen vragen: een lege lijst.
  */
 export function acceptatieVragenUit(opdracht: string): string[] {
-  const uit: string[] = [];
+  return acceptatieVragenMetNummerUit(opdracht).map((v) => v.vraag);
+}
+
+/** Als `acceptatieVragenUit`, met het nummer dat de eigenaar de vraag gaf (= de id van de acceptatietest). */
+export function acceptatieVragenMetNummerUit(opdracht: string): { readonly nummer: string; readonly vraag: string }[] {
+  const uit: { nummer: string; vraag: string }[] = [];
   let binnen = false;
   for (const regel of opdracht.split(/\r?\n/)) {
     if (/^\s*#{1,6}\s/.test(regel)) {
@@ -130,27 +135,32 @@ export function acceptatieVragenUit(opdracht: string): string[] {
       continue;
     }
     if (!binnen) continue;
-    const m = /^\s*\d{1,2}[.)]\s+(.{8,500}\?)\s*$/.exec(regel);
-    if (m) uit.push(m[1]!.trim());
+    const m = /^\s*(\d{1,2})[.)]\s+(.{8,500}\?)\s*$/.exec(regel);
+    if (m) uit.push({ nummer: m[1]!, vraag: m[2]!.trim() });
   }
   return uit.slice(0, MAX_DOELVRAGEN);
 }
 
-/** Vooraf in een proef met vragen uit de opdracht: een vraag waarvoor geen actuele informatie nodig is. */
+/**
+ * Vooraf in een proef met vragen uit de opdracht: een afzonderlijke, tijdsonafhankelijke kennisvraag die het model
+ * zelf kan beantwoorden. Stond hier een vraag die ook een besluit vastlegde; dat mengde geheugen en kennis, terwijl
+ * de eigenaar (2026-11-25) precies vroeg om een losse kennisvraag waarop zoeken onnodig is.
+ */
 export const CONTROLE_ZONDER_WEB: SparGesprek = {
   nummer: 1,
-  onderwerp: "controle: bestaande kennis volstaat",
-  toetst: "dat Jarvis geen externe zoekopdracht doet als zijn eigen kennis volstaat (verwacht: web 0 zoekopdrachten)",
-  beurten: ["Ik leg een besluit vast: klantgegevens slaan we uitsluitend binnen de EU op. Wat is het verschil tussen een besluit en een aanname, en welke van de twee is dit?"],
+  onderwerp: "controle: tijdsonafhankelijke kennisvraag, eigen kennis volstaat",
+  toetst:
+    "dat Jarvis bij een afzonderlijke, tijdsonafhankelijke kennisvraag waarvoor het model voldoende kennis heeft geen externe zoekopdracht doet en toch juist antwoordt (verwacht: web 0 zoekopdrachten)",
+  beurten: ["Wat zegt de stelling van Pythagoras, en kun je die met een rekenvoorbeeld uitleggen?"],
 };
 
 /** Het scenario voor een opdracht met eigen acceptatievragen: eerst de controle, dan elke vraag in een eigen gesprek. */
-export function scenarioUitVragen(vragen: readonly string[]): SparGesprek[] {
+export function scenarioUitVragen(vragen: readonly string[], nummers: readonly string[] = vragen.map((_, i) => String(i + 1))): SparGesprek[] {
   return [
     CONTROLE_ZONDER_WEB,
     ...vragen.map((vraag, i) => ({
       nummer: i + 2,
-      onderwerp: `vraag ${i + 1} uit de opdracht`,
+      onderwerp: `vraag ${nummers[i] ?? i + 1} uit de opdracht`,
       toetst: "zelf zoeken waar dat nodig is; actualiteit, juistheid, bronvermelding met aanklikbare webbronnen, en zeggen wat onzeker, verouderd of niet te vinden is; interne kennis erbij waar de vraag daarom vraagt",
       beurten: [vraag],
     })),
@@ -420,6 +430,10 @@ export async function voerSparproefUit(
   sql: DbClient,
   fetchFn: typeof fetch = fetch,
   opdracht = "",
+  /** Alleen deze vragen (op het nummer uit de opdracht) stellen; null: alle. De controlevraag gaat altijd mee. */
+  alleenVragen: ReadonlySet<string> | null = null,
+  /** Wat het bewijs over overgeslagen vragen zegt (bijvoorbeeld: behouden uit een eerdere ronde). */
+  overgeslagen = "",
 ): Promise<{ readonly bewijs: string; readonly besteedUsd: number }> {
   const sleutelRij = await sql.unsafe(ACCEPTATIE_SLEUTEL_SQL).catch(() => [] as Record<string, unknown>[]);
   const sleutel = String(sleutelRij[0]?.["sleutel"] ?? "").trim();
@@ -429,8 +443,10 @@ export async function voerSparproefUit(
     return { bewijs: "live sparproef niet uitgevoerd: de acceptatiedeur ontbreekt (instelling ai_core_url of de acceptatiesleutel).", besteedUsd: 0 };
   }
   const praktijk = await leesPraktijk(sql, exacteVraagUit(opdracht));
-  const vragen = acceptatieVragenUit(opdracht);
-  const doelScenario = vragen.length ? scenarioUitVragen(vragen) : null;
+  const alleVragen = acceptatieVragenMetNummerUit(opdracht);
+  const gekozen = alleenVragen === null ? alleVragen : alleVragen.filter((v) => alleenVragen.has(v.nummer));
+  const vragen = gekozen.map((v) => v.vraag);
+  const doelScenario = alleVragen.length ? scenarioUitVragen(vragen, gekozen.map((v) => v.nummer)) : null;
   const vraag = async (body: Lading) => {
     const a = await fetchFn(url, {
       method: "POST",
@@ -446,7 +462,7 @@ export async function voerSparproefUit(
     const echt = praktijk?.geheugen ?? [];
     const uitkomst = await voerSparproef(vraag, doelScenario, () => new Date(), null, echt);
     const kop =
-      `vragen uit de opdracht: ${vragen.length}, elk in een eigen gesprek, na één controlevraag zonder zoekbehoefte. ` +
+      `vragen uit de opdracht: ${vragen.length}${gekozen.length < alleVragen.length ? ` (nummer ${gekozen.map((v) => v.nummer).join(", ") || "geen"} van ${alleVragen.length}${overgeslagen ? `; ${overgeslagen}` : ""})` : ""}, elk in een eigen gesprek, na één controlevraag zonder zoekbehoefte. ` +
       `Meegegeven: het echte geheugen van de eigenaar (${echt.length} inzichten, alleen gelezen)` +
       (praktijk?.leesfout ? `; LEESFOUT: ${praktijk.leesfout}` : "") +
       `. Per beurt staat onder [geraadpleegde bronnen] wat Jarvis op het web zocht en welke bronnen hij gebruikte.`;

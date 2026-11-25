@@ -10,6 +10,7 @@ import {
   BEURT_BOVENGRENS_USD,
   CONTROLE_ZONDER_WEB,
   acceptatieVragenUit,
+  acceptatieVragenMetNummerUit,
   scenarioUitVragen,
   MAX_PROEF_USD,
   PRAKTIJK_GEHEUGEN_SQL,
@@ -272,7 +273,7 @@ describe("vragen uit de opdracht (D-20261124-200610788): de proef stelt de accep
     const uit = await voerSparproefUit(sql, (async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body)) as Record<string, unknown>;
       bodies.push(body);
-      const zoekt = !String(JSON.stringify(body["gesprek"])).includes("besluit en een aanname");
+      const zoekt = !String(JSON.stringify(body["gesprek"])).includes("Pythagoras");
       const web = zoekt
         ? { beschikbaar: true, zoekopdrachten: ["weer Ede morgen"], opgehaald: [], bronnen: [{ url: "https://www.knmi.nl/", titel: "KNMI", datum: "24 nov" }], kosten_zoeken_usd: 0.01 }
         : { beschikbaar: true, zoekopdrachten: [], opgehaald: [], bronnen: [], kosten_zoeken_usd: 0 };
@@ -288,3 +289,36 @@ describe("vragen uit de opdracht (D-20261124-200610788): de proef stelt de accep
     expect(uit.besteedUsd).toBeCloseTo(0.2, 6);
   });
 });
+
+describe("alleen de resterende vragen (D-20261124-200610788, reactie van de eigenaar 2026-11-25)", () => {
+  const opdracht = [
+    "## Functionele acceptatietests", "", "1. Wat wordt het weer morgen in Ede?", "2. Welke films draaien vandaag in de bioscoop in Ede?",
+    "6. Welke informatie uit twee tegenstrijdige openbare bronnen is het meest betrouwbaar?",
+  ].join("\n");
+  const sql = {
+    unsafe: async (q: string) => (q.includes("acceptatie_sleutel") ? [{ sleutel: "s" }] : q === PRAKTIJK_GEHEUGEN_SQL ? [] : q === PRAKTIJK_VRAAG_SQL ? [] : [{ waarde: "https://voorbeeld.test/api/chat" }]),
+    end: async () => {},
+  } as unknown as DbClient;
+
+  it("leest het nummer van elke vraag mee", () => {
+    expect(acceptatieVragenMetNummerUit(opdracht).map((v) => v.nummer)).toEqual(["1", "2", "6"]);
+  });
+
+  it("de controlevraag is een losse, tijdsonafhankelijke kennisvraag zonder besluit erin", () => {
+    expect(CONTROLE_ZONDER_WEB.beurten[0]).toContain("Pythagoras");
+    expect(CONTROLE_ZONDER_WEB.beurten[0]).not.toMatch(/besluit/i);
+  });
+
+  it("stelt alleen de gekozen vragen, na de controlevraag, en het bewijs zegt welke zijn overgeslagen", async () => {
+    const vragen: string[] = [];
+    const uit = await voerSparproefUit(sql, (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as { gesprek: { tekst: string }[] };
+      vragen.push(body.gesprek[0]!.tekst);
+      return new Response(JSON.stringify({ antwoord: "ok", kosten_usd: 0.05, nieuw_geheugen: [] }), { status: 200 });
+    }) as unknown as typeof fetch, opdracht, new Set(["6"]), "tests 1, 2 behouden");
+    expect(vragen).toEqual([CONTROLE_ZONDER_WEB.beurten[0], "Welke informatie uit twee tegenstrijdige openbare bronnen is het meest betrouwbaar?"]);
+    expect(uit.bewijs).toContain("vragen uit de opdracht: 1 (nummer 6 van 3; tests 1, 2 behouden)");
+    expect(uit.bewijs).toContain("gesprek 2 (vraag 6 uit de opdracht)");
+  });
+});
+
