@@ -271,6 +271,19 @@ export async function voerSparproef(
   return { beurten, besteedUsd: besteed, gestopt: null };
 }
 
+/**
+ * De nummers van de vragen uit de opdracht waarvan het gesprek niet plaatsvond (de proef stopte op haar
+ * kostengrens). Vraag i staat in gesprek i + 2: gesprek 1 is de controlevraag (scenarioUitVragen). Een test op
+ * zo'n vraag is niet gemeten, niet gezakt (D-20261127-191905240).
+ */
+export function nietGesteldeVragen(
+  beurten: readonly Pick<SparBeurt, "gesprek">[],
+  gekozen: readonly { readonly nummer: string }[],
+): ReadonlySet<string> {
+  const gehad = new Set(beurten.map((b) => b.gesprek));
+  return new Set(gekozen.flatMap((v, i) => (gehad.has(i + 2) ? [] : [v.nummer])));
+}
+
 /** Eén beurt voor het bewijs, uit wat de deur teruggaf. */
 function beurtUit(gesprek: number, vraag: string, http: number, lading: Lading, meegegeven: number, kosten: number | null): SparBeurt {
   const onthouden = Array.isArray(lading["onthouden"]) ? (lading["onthouden"] as Lading[]) : [];
@@ -434,7 +447,7 @@ export async function voerSparproefUit(
   alleenVragen: ReadonlySet<string> | null = null,
   /** Wat het bewijs over overgeslagen vragen zegt (bijvoorbeeld: behouden uit een eerdere ronde). */
   overgeslagen = "",
-): Promise<{ readonly bewijs: string; readonly besteedUsd: number }> {
+): Promise<{ readonly bewijs: string; readonly besteedUsd: number; readonly nietGesteld?: ReadonlySet<string> }> {
   const sleutelRij = await sql.unsafe(ACCEPTATIE_SLEUTEL_SQL).catch(() => [] as Record<string, unknown>[]);
   const sleutel = String(sleutelRij[0]?.["sleutel"] ?? "").trim();
   const urlRij = await sql.unsafe(INSTELLING_SQL, ["ai_core_url"]).catch(() => [] as Record<string, unknown>[]);
@@ -466,7 +479,7 @@ export async function voerSparproefUit(
       `Meegegeven: het echte geheugen van de eigenaar (${echt.length} inzichten, alleen gelezen)` +
       (praktijk?.leesfout ? `; LEESFOUT: ${praktijk.leesfout}` : "") +
       `. Per beurt staat onder [geraadpleegde bronnen] wat Jarvis op het web zocht en welke bronnen hij gebruikte.`;
-    return { bewijs: `${kop}\n${sparproefBewijs(uitkomst, url, doelScenario)}`, besteedUsd: uitkomst.besteedUsd };
+    return { bewijs: `${kop}\n${sparproefBewijs(uitkomst, url, doelScenario)}`, besteedUsd: uitkomst.besteedUsd, nietGesteld: nietGesteldeVragen(uitkomst.beurten, gekozen) };
   }
   const uitkomst = await voerSparproef(vraag, SPARPROEF, () => new Date(), praktijk);
   return { bewijs: sparproefBewijs(uitkomst, url, SPARPROEF, praktijk), besteedUsd: uitkomst.besteedUsd };
