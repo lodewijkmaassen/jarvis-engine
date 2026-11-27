@@ -36,8 +36,10 @@ const regel = (tekst: string) => ({ soort: "acceptatie", tekst });
 
 describe("de rondegrens wordt echt afgedwongen, per opdracht van de eigenaar", () => {
   it("telt alleen de ronden sinds het heropenen, zoals de NO-GO-teller", () => {
-    expect(ACCEPTATIE_MISLUKT_SQL).toContain("heropend_op");
-    expect(ACCEPTATIE_MISLUKT_SQL).toMatch(/op > coalesce\(\(select heropend_op from jarvis\.doelen where id = \$1\), '-infinity'::timestamptz\)/);
+    expect(ACCEPTATIE_MISLUKT_SQL).toContain("h.soort = 'status' and h.tekst like '%[heropend]%'");
+    expect(ACCEPTATIE_MISLUKT_SQL).toContain("op > coalesce((select max(h.op) from jarvis.activiteit h where h.taak = $1");
+    // Niet de kolom heropend_op: die is leeg bij doelen die wel heropend zijn.
+    expect(ACCEPTATIE_MISLUKT_SQL).not.toContain("heropend_op");
     // De bestaande eis blijft: ronden, geen losse tests.
     expect(ACCEPTATIE_MISLUKT_SQL).toContain("eindoordeel:%acceptatietest niet geslaagd%");
     expect(MAX_ACCEPTATIE_RONDES).toBe(3);

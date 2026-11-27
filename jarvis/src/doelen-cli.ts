@@ -20,7 +20,7 @@ import { ACTIVITEIT_SQL, DOEL_ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DO
 import { bouwPrBewijs, eindoordeel, isCommitVanDoel, naOnvolledigeMeting, stelOnvolledigUit, leesEngineWerkMee, metHerkomst, testsVoorDoel, verdeelTests, werkVanDoel, type DoelCommit } from "./acceptatie";
 import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
-import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
+import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, rondeBesluit, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
 import { vraagtSparproef, voerSparproefUit } from "./sparproef";
 import { begrens, MAX_LOGREGEL_TEKENS, herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, dispatchRust, doelUitPrTekst, hermeetbaar, hervatbareDoelen, HERVAT_SIGNAAL, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
@@ -497,13 +497,13 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       //     hij kan er niets aan herstellen. Het doel staat vast met de reden erbij.
       //   - gezakt: de bestaande herstelketen. Pas als herstel een paar keer niet lukt, staat het vast.
       const eerder = (await sql.unsafe(ACCEPTATIE_MISLUKT_SQL, [d.id])) as unknown as { aantal: string | number }[];
-      const rondes = Number(eerder[0]?.aantal ?? 0);
+      const ronde = rondeBesluit(Number(eerder[0]?.aantal ?? 0));
       const tekst = eind.onmeetbaar
         ? `acceptatietest niet te meten — ${eind.samenvatting}`
-        : `acceptatietest niet geslaagd (ronde ${rondes + 1} van ${MAX_ACCEPTATIE_RONDES}) — ${eind.samenvatting}`;
+        : `acceptatietest niet geslaagd (ronde ${ronde.nummer} van ${MAX_ACCEPTATIE_RONDES}) — ${eind.samenvatting}`;
       const blok = classificeerBlokkade(eind.onmeetbaar ? `${tekst} (ontbrekende bevoegdheid)` : tekst);
       const h = await herhalingVan(sql, d.id);
-      const naar = vanDeEigenaar(blok) || rondes >= MAX_ACCEPTATIE_RONDES || h.besluit === "vast" ? "vast" : "bezig";
+      const naar = vanDeEigenaar(blok) || (!eind.onmeetbaar && ronde.laatste) || h.besluit === "vast" ? "vast" : "bezig";
       await sql.unsafe("select jarvis.doel_ci($1, $2, null, $3)", [d.id, naar, metKetenVersie(`${begrens(rendereerBlokkade(tekst, blok))}${herhalingsZin(h)}`, versie)]);
       await schrijfAcceptatie(sql, d.id, `eindoordeel: ${naar} — ${tekst}`);
       console.log(`jarvis eindcontrole: ${d.id} → ${naar} [${blok.soort}] (${tekst.slice(0, 200)})`);
