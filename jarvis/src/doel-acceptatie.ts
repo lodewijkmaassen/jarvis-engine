@@ -48,11 +48,29 @@ const LAATST_VAST_SQL =
 export const ACCEPTATIE_MISLUKT_SQL =
   "select count(*) as aantal from jarvis.activiteit where taak = $1 and soort = 'acceptatie' " +
   "and tekst like 'eindoordeel:%acceptatietest niet geslaagd%' " +
-  // Alleen de ronden sinds de eigenaar het doel heropende, zoals de NO-GO-teller van de review. Telde de teller de
-  // hele geschiedenis, dan stond een heropend doel na één ronde alweer vast met "ronde 6 van 3" (D-20261124-200610788):
-  // de grens leek overschreden en de nieuwe opdracht van de eigenaar kreeg geen enkele herstelronde.
-  "and op > coalesce((select heropend_op from jarvis.doelen where id = $1), '-infinity'::timestamptz)";
+  // Alleen de ronden sinds de eigenaar het doel heropende. Telde de teller de hele geschiedenis, dan stond een
+  // heropend doel na één ronde alweer vast met "ronde 6 van 3" (D-20261124-200610788): de grens leek overschreden en
+  // de nieuwe opdracht van de eigenaar kreeg geen enkele herstelronde.
+  //
+  // Het moment van heropenen komt uit de statusregel "… → open [heropend]" in de activiteit, niet uit de kolom
+  // jarvis.doelen.heropend_op: die bleek bij alle vier de regressiedoelen leeg, terwijl elk van hen aantoonbaar
+  // heropend was (gemeten op 2026-11-27). De statusregel schrijft de database bij elke heropening zelf.
+  "and op > coalesce((select max(h.op) from jarvis.activiteit h where h.taak = $1 and h.soort = 'status' " +
+  "and h.tekst like '%[heropend]%'), '-infinity'::timestamptz)";
 export const MAX_ACCEPTATIE_RONDES = 3;
+
+/**
+ * Welke ronde dit is en of het de laatste is, gegeven het aantal ronden dat sinds de laatste heropening al zakte.
+ *
+ * Stond hier `rondes >= MAX` als grens, met `ronde ${rondes + 1}` als tekst, dan ging een doel pas bij de VIERDE
+ * gezakte ronde vast, met de tekst "ronde 4 van 3" (D-20261121-235241117, D-20261127-142321503, gemeten op
+ * 2026-11-27): één ronde meer dan de grens, en een tekst die zei dat de grens overschreden was. Nu is de derde
+ * gezakte ronde de laatste, en geen tekst noemt een nummer boven de grens.
+ */
+export function rondeBesluit(eerderGezakt: number): { readonly nummer: number; readonly laatste: boolean } {
+  const nummer = Math.min(Math.max(0, Math.floor(eerderGezakt)) + 1, MAX_ACCEPTATIE_RONDES);
+  return { nummer, laatste: eerderGezakt + 1 >= MAX_ACCEPTATIE_RONDES };
+}
 
 /** Eén regel in de bestaande activiteitenlog; dat is waar de AI Core en de eigenaar kijken. */
 export async function schrijfAcceptatie(
