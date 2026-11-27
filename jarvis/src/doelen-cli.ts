@@ -17,7 +17,7 @@ import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
 import { ACTIVITEIT_SQL, DOEL_ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
-import { bouwPrBewijs, eindoordeel, isCommitVanDoel, naOnvolledigeMeting, stelOnvolledigUit, leesEngineWerkMee, metHerkomst, testsVoorDoel, verdeelTests, werkVanDoel, type DoelCommit } from "./acceptatie";
+import { bouwDoelBewijs, bouwPrBewijs, eindoordeel, isCommitVanDoel, naOnvolledigeMeting, stelOnvolledigUit, leesEngineWerkMee, metHerkomst, testsVoorDoel, verdeelTests, werkVanDoel, type DoelCommit } from "./acceptatie";
 import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, rondeBesluit, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
@@ -608,9 +608,11 @@ async function leesPrBewijs(token: string, d: Doel, engineRepo: string | null = 
         }
       }
       if (werk !== null && werk.aantal > 0 && werk.bestanden.length > 0) {
-        return bouwPrBewijs(
+        return bouwDoelBewijs(
           { repo, nummer: typeof nummer === "number" ? nummer : 0, titel: regels[0] ?? "", tekst: regels.slice(1).join("\n").trim() },
+          bestanden,
           [...engineBestanden, ...werk.bestanden],
+          `inhoud van de laatste samenvoeging van dit doel, het werk van deze ronde (${repo}, merge-commit ${merge.slice(0, 7)}, zojuist gelezen via de GitHub-API):`,
           `inhoud van al het werk van dit doel (${repo}: de ${werk.aantal} commit(s) met de trailer Jarvis-Task: ${d.id} tot en met merge-commit ${merge.slice(0, 7)}${ook}, oudste eerst en per bestand samengevoegd, zojuist gelezen via de GitHub-API):`,
         );
       }

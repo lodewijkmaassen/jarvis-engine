@@ -615,6 +615,8 @@ export function bouwPrBewijs(
   bestanden: readonly { readonly naam: string; readonly status: string; readonly erbij: number; readonly eraf: number; readonly patch: string | null }[],
   /** Waar dit blok vandaan komt; standaard de pull request zelf. */
   herkomst: string | null = null,
+  /** Hoeveel tekens dit blok hoogstens krijgt. */
+  budget: number = PR_BEWIJS_TEKENS,
 ): string {
   const kop = [
     herkomst ?? `inhoud van pull request ${pr.repo}#${pr.nummer} (zojuist gelezen via de GitHub-API):`,
@@ -626,7 +628,7 @@ export function bouwPrBewijs(
   const metDiff = bestanden.filter((b) => b.patch !== null && b.patch !== "");
   // Het budget voor de diffs is wat er na de kop en de koppen per bestand over is; eerlijk verdeeld.
   const vast = kop.length + 40 + metDiff.reduce((n, b) => n + b.naam.length + 100, 0);
-  const ruimte = verdeelDiffBudget(metDiff.map((b) => (b.patch ?? "").length), PR_BEWIJS_TEKENS - vast);
+  const ruimte = verdeelDiffBudget(metDiff.map((b) => (b.patch ?? "").length), budget - vast);
   const diffs = metDiff
     .map((b, i) => {
       const patch = b.patch ?? "";
@@ -635,5 +637,48 @@ export function bouwPrBewijs(
     })
     .join("\n");
   const geheel = diffs === "" ? kop : `${kop}\n\ndiff per bestand:\n${diffs}`;
-  return geheel.length > PR_BEWIJS_TEKENS ? `${geheel.slice(0, PR_BEWIJS_TEKENS)}\n… [afgekapt]` : geheel;
+  // Afgekapt op het budget van dit blok, met het merkteken binnen dat budget.
+  const merk = "\n… [afgekapt]";
+  return geheel.length > budget ? `${geheel.slice(0, Math.max(0, budget - merk.length))}${merk}` : geheel;
+}
+
+/**
+ * Zoveel tekens krijgt het blok met de laatste samenvoeging, als die niet al het werk van het doel is. Het gaat
+ * af van PR_BEWIJS_TEKENS, niet erbij: het bewijs als geheel wordt niet groter.
+ */
+export const LAATSTE_SAMENVOEGING_TEKENS = 8_000;
+
+type BewijsBestand = { readonly naam: string; readonly status: string; readonly erbij: number; readonly eraf: number; readonly patch: string | null };
+
+/** Is de laatste samenvoeging al het werk van het doel? Dan is één blok genoeg. */
+export function isAlHetWerk(laatste: readonly BewijsBestand[], heel: readonly BewijsBestand[]): boolean {
+  if (laatste.length !== heel.length) return false;
+  return heel.every((b) => laatste.some((l) => l.naam === b.naam && (l.patch ?? "").length === (b.patch ?? "").length));
+}
+
+/**
+ * HET HERSTEL VAN DEZE RONDE STAAT VOORAAN (D-20261127-191905240)
+ *
+ * Gemeten aan D-20261127-142321503 (project-PR #352, ronde 5): het herstel zette een nameting met een vóór/na-
+ * vergelijking in docs/JARVIS_DOORLOOPTIJD.md, en de beoordelaar zakte de test op "alleen een nulmeting". Het werk
+ * van het hele doel (vier pull requests, tien bestanden) werd per bestand samengevoegd, oudste eerst, en daarna
+ * eerlijk afgekapt; van dat ene document bleef zo alleen de nulmeting uit de eerste pull request over. Het nieuwe
+ * bewijs waar de ronde om draaide, zag de beoordelaar nooit — en elke volgende ronde zakte op hetzelfde.
+ *
+ * Daarom komt, als het doel meer werk heeft dan de laatste samenvoeging, eerst die samenvoeging zelf (met een eigen
+ * deel van het budget), en daarna het werk van het hele doel met wat overblijft.
+ */
+export function bouwDoelBewijs(
+  pr: { readonly repo: string; readonly nummer: number; readonly titel: string; readonly tekst: string },
+  laatste: readonly BewijsBestand[],
+  heel: readonly BewijsBestand[],
+  herkomstLaatste: string,
+  herkomstHeel: string,
+): string {
+  if (laatste.length === 0 || isAlHetWerk(laatste, heel)) return bouwPrBewijs(pr, heel, herkomstHeel);
+  const voor = bouwPrBewijs(pr, laatste, herkomstLaatste, LAATSTE_SAMENVOEGING_TEKENS);
+  // Het eerste blok gebruikt wat het nodig heeft (hoogstens LAATSTE_SAMENVOEGING_TEKENS); precies de rest van het
+  // budget gaat naar het hele doel, zodat het geheel nooit boven PR_BEWIJS_TEKENS uitkomt.
+  const rest = Math.max(0, PR_BEWIJS_TEKENS - voor.length - 2);
+  return `${voor}\n\n${bouwPrBewijs({ ...pr, tekst: "" }, heel, herkomstHeel, rest)}`;
 }
