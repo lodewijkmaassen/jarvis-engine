@@ -637,7 +637,9 @@ export function bouwPrBewijs(
     })
     .join("\n");
   const geheel = diffs === "" ? kop : `${kop}\n\ndiff per bestand:\n${diffs}`;
-  return geheel.length > PR_BEWIJS_TEKENS ? `${geheel.slice(0, PR_BEWIJS_TEKENS)}\n… [afgekapt]` : geheel;
+  // Afgekapt op het budget van dit blok, met het merkteken binnen dat budget.
+  const merk = "\n… [afgekapt]";
+  return geheel.length > budget ? `${geheel.slice(0, Math.max(0, budget - merk.length))}${merk}` : geheel;
 }
 
 /**
@@ -675,7 +677,8 @@ export function bouwDoelBewijs(
 ): string {
   if (laatste.length === 0 || isAlHetWerk(laatste, heel)) return bouwPrBewijs(pr, heel, herkomstHeel);
   const voor = bouwPrBewijs(pr, laatste, herkomstLaatste, LAATSTE_SAMENVOEGING_TEKENS);
-  // Het eerste blok gebruikt wat het nodig heeft; de rest van het budget gaat naar het hele doel.
-  const rest = Math.max(PR_BEWIJS_TEKENS - voor.length - 2, LAATSTE_SAMENVOEGING_TEKENS);
+  // Het eerste blok gebruikt wat het nodig heeft (hoogstens LAATSTE_SAMENVOEGING_TEKENS); precies de rest van het
+  // budget gaat naar het hele doel, zodat het geheel nooit boven PR_BEWIJS_TEKENS uitkomt.
+  const rest = Math.max(0, PR_BEWIJS_TEKENS - voor.length - 2);
   return `${voor}\n\n${bouwPrBewijs({ ...pr, tekst: "" }, heel, herkomstHeel, rest)}`;
 }

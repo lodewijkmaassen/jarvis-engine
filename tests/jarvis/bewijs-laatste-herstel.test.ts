@@ -48,12 +48,18 @@ describe("het herstel van deze ronde staat vooraan in het bewijs", () => {
   });
 
   it("maakt het bewijs als geheel niet groter", () => {
+    expect(LAATSTE_SAMENVOEGING_TEKENS).toBeLessThan(PR_BEWIJS_TEKENS / 2);
     const uit = bouwDoelBewijs(pr, laatste, heel, "laatste:", "heel:");
-    expect(uit.length).toBeLessThanOrEqual(PR_BEWIJS_TEKENS + 40);
+    expect(uit.length).toBeLessThanOrEqual(PR_BEWIJS_TEKENS);
     const enorm = [{ naam: "x.md", status: "added", erbij: 1, eraf: 0, patch: "+".repeat(50_000) }];
     const twee = bouwDoelBewijs(pr, enorm, [...heel, ...enorm], "laatste:", "heel:");
-    expect(twee.length).toBeLessThanOrEqual(PR_BEWIJS_TEKENS + LAATSTE_SAMENVOEGING_TEKENS + 80);
+    expect(twee.length).toBeLessThanOrEqual(PR_BEWIJS_TEKENS);
+    expect(twee.indexOf("heel:")).toBeGreaterThan(LAATSTE_SAMENVOEGING_TEKENS - 200);
     expect(twee).toContain("afgekapt");
+    // Een blok met een eigen budget blijft binnen dat budget, ook als de kop alleen al te groot is.
+    const veel = Array.from({ length: 300 }, (_, i) => ({ naam: `f${i}.ts`, status: "added", erbij: 1, eraf: 0, patch: "+".repeat(900) }));
+    expect(bouwPrBewijs(pr, veel, "blok:", 5_000).length).toBeLessThanOrEqual(5_000);
+    expect(bouwDoelBewijs(pr, veel, [...heel, ...veel], "laatste:", "heel:").length).toBeLessThanOrEqual(PR_BEWIJS_TEKENS);
   });
 
   it("is de laatste samenvoeging al het werk, dan blijft het één blok zoals voorheen", () => {
