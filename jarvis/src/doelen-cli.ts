@@ -17,13 +17,13 @@ import { REVIEWER_DOOR } from "./attestatie";
 import { leesArgumenten } from "./args";
 import { laadConfig, vindWortel } from "./config";
 import { ACTIVITEIT_SQL, DOEL_ACTIVITEIT_SQL, DOEL_WERK_SQL, KETEN_SPOOR_SQL, DOELEN_SQL, LEES_REVIEW_SQL, TOETSING_SQL, VRAAG_REVIEW_SQL } from "./db";
-import { bouwPrBewijs, eindoordeel, isCommitVanDoel, leesEngineWerkMee, metHerkomst, testsVoorDoel, verdeelTests, werkVanDoel, type DoelCommit } from "./acceptatie";
+import { bouwPrBewijs, eindoordeel, isCommitVanDoel, naOnvolledigeMeting, stelOnvolledigUit, leesEngineWerkMee, metHerkomst, testsVoorDoel, verdeelTests, werkVanDoel, type DoelCommit } from "./acceptatie";
 import { leesEngineStand } from "./engine";
 import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokkade";
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
 import { vraagtSparproef, voerSparproefUit } from "./sparproef";
-import { begrens, MAX_LOGREGEL_TEKENS, herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, dispatchRust, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { begrens, MAX_LOGREGEL_TEKENS, herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, dispatchRust, doelUitPrTekst, hermeetbaar, hervatbareDoelen, HERVAT_SIGNAAL, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, combineerReviews, leverancierFout, parseerReview, rendereerReview, verdeelDiff, type Review } from "./review";
@@ -427,7 +427,9 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       const alleTests = testsVoorDoel(d);
       // Vraagt de eigenaar in zijn reactie om geslaagde tests te behouden, dan meet deze ronde alleen de rest.
       const doelActiviteit = (await sql.unsafe(DOEL_ACTIVITEIT_SQL, [d.id]).catch(() => [])) as unknown as { soort: string; tekst: string }[];
-      const { behouden, teMeten: tests } = verdeelTests(alleTests, d.opdracht, doelActiviteit);
+      // Behouden: wat de eigenaar vroeg te behouden, en wat op precies deze samenvoeging al slaagde (een eerdere,
+      // onvolledige ronde op hetzelfde werk; D-20261127-191905240).
+      const { behouden, teMeten: tests } = verdeelTests(alleTests, d.opdracht, doelActiviteit, d.pr?.merge_sha ?? null);
       const prBewijs = await leesPrBewijs(token, d, engineRepo, enginePin);
       // Niet de klok maar de versie. Een uitrol kreeg een vast halfuur voordat er werd gemeten, omdat
       // een test anders de oude pagina meet. Meet een doel geen pagina maar de keten zelf, dan is er
@@ -462,6 +464,7 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
       // spargesprekken (sparproef.ts); dat verloop gaat vóór het overige bewijs. Pas hier, na het wachten
       // op de uitrol: een ronde die nog wacht, maakt geen kosten.
       let bewijsVooraf = prBewijs;
+      let nietGesteld: ReadonlySet<string> = new Set();
       for (const b of behouden) await schrijfAcceptatie(sql, d.id, `test ${b.id}: geslaagd — ${b.reden}`);
       if (vraagtSparproef(d) && tests.length > 0) {
         // Alleen de vragen van de tests die nog gemeten worden ("6.1" hoort bij vraag 6); zonder behouden tests alle.
@@ -471,9 +474,19 @@ async function eindcontroleDoelen(sql: DbClient, token: string): Promise<number>
         await schrijfAcceptatie(sql, d.id, `sparproef uitgevoerd: $${spar.besteedUsd.toFixed(4)}`);
         console.log(`jarvis eindcontrole: ${d.id} sparproef uitgevoerd ($${spar.besteedUsd.toFixed(4)})`);
         bewijsVooraf = prBewijs === null ? spar.bewijs : `${spar.bewijs}\n\n${prBewijs}`;
+        nietGesteld = spar.nietGesteld ?? new Set();
       }
-      const uitkomsten = [...behouden, ...(await voerAcceptatieUit(sql, d, tests, bewijsVooraf))];
-      const eind = eindoordeel(uitkomsten);
+      // Een test waarvan de vraag niet gesteld kon worden, is niet gemeten: geen oordeel, geen modelaanroep.
+      const { beoordelen, uitgesteld } = stelOnvolledigUit(tests, nietGesteld);
+      const uitkomsten = [...behouden, ...(await voerAcceptatieUit(sql, d, beoordelen, bewijsVooraf))];
+      const onvolledig = naOnvolledigeMeting(uitkomsten, uitgesteld);
+      if (onvolledig.soort === "volgende-ronde") {
+        await schrijfAcceptatie(sql, d.id, `meting onvolledig, geen ronde geteld — ${onvolledig.tekst}`);
+        console.log(`jarvis eindcontrole: ${d.id} blijft samengevoegd — ${onvolledig.tekst}`);
+        continue;
+      }
+      const eindKaal = eindoordeel(uitkomsten);
+      const eind = onvolledig.tekst === "" ? eindKaal : { ...eindKaal, klaar: false, onmeetbaar: eindKaal.onmeetbaar || onvolledig.nietsGemeten, samenvatting: `${eindKaal.samenvatting} | ${onvolledig.tekst}` };
       if (eind.klaar) {
         await sql.unsafe("select jarvis.doel_ci($1, 'klaar', null, $2)", [d.id, begrens(`acceptatietests geslaagd — ${eind.samenvatting}`)]);
         console.log(`jarvis eindcontrole: ${d.id} → klaar (${uitkomsten.length} acceptatietest(s) geslaagd)`);
@@ -638,7 +651,21 @@ async function dispatchDoelen(sql: DbClient, droog: boolean): Promise<number> {
     const h = await herhalingVan(sql, d.id);
     if (h.besluit !== "door") herhaald.set(d.id, h);
   }
-  const besluit = dispatchNodig(doelen, new Date(), herhaald);
+  const gewoon = dispatchNodig(doelen, new Date(), herhaald);
+  // Een vastgezet doel dat op gegevens wachtte en die nu heeft: één start, daarna niet opnieuw tot er iets met het
+  // doel gebeurt (de laatste regel van het doel is dan niet meer het signaal). Geen modelaanroep om dat te weten.
+  const hervat: { id: string; reden: string }[] = [];
+  for (const h of hervatbareDoelen(doelen)) {
+    const laatste = ((await sql.unsafe(DOEL_ACTIVITEIT_SQL, [h.id]).catch(() => [])) as unknown as { tekst: string }[])[0];
+    if (!(laatste?.tekst ?? "").startsWith(HERVAT_SIGNAAL)) hervat.push(h);
+  }
+  const besluit =
+    hervat.length === 0
+      ? gewoon
+      : {
+          start: true,
+          reden: `${gewoon.start ? `${gewoon.reden}; ` : ""}wachtvoorwaarde vervuld, heropen en maak af: ${hervat.map((h) => `${h.id} (${h.reden})`).join("; ")}`,
+        };
   console.log(`jarvis dispatch: ${besluit.reden}`);
   if (!besluit.start) return 0;
   // Rust: STIL_MINUTEN, of korter als er een nieuw open doel staat (zie dispatchRust).
@@ -660,6 +687,11 @@ async function dispatchDoelen(sql: DbClient, droog: boolean): Promise<number> {
     body: JSON.stringify({ text: `Doelen: ${besluit.reden}` }),
   });
   console.log(`jarvis dispatch: routine gestart? HTTP ${antwoord.status}`);
+  if (antwoord.ok) {
+    for (const h of hervat) {
+      await sql.unsafe(ACTIVITEIT_SQL, ["ci", "systeem", h.id, null, "regie", `${HERVAT_SIGNAAL} ${h.reden}`.slice(0, 500), null]).catch(() => undefined);
+    }
+  }
   return antwoord.ok ? 0 : 1;
 }
 

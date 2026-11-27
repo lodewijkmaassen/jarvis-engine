@@ -15,6 +15,7 @@
 import {
   BEOORDELAAR_SYSTEEM,
   bouwBeoordelingsVraag,
+  gemetenOpLabel,
   parseerBeoordeling,
   volatielBezwaar,
   type AcceptatieTest,
@@ -46,7 +47,11 @@ const LAATST_VAST_SQL =
  */
 export const ACCEPTATIE_MISLUKT_SQL =
   "select count(*) as aantal from jarvis.activiteit where taak = $1 and soort = 'acceptatie' " +
-  "and tekst like 'eindoordeel:%acceptatietest niet geslaagd%'";
+  "and tekst like 'eindoordeel:%acceptatietest niet geslaagd%' " +
+  // Alleen de ronden sinds de eigenaar het doel heropende, zoals de NO-GO-teller van de review. Telde de teller de
+  // hele geschiedenis, dan stond een heropend doel na één ronde alweer vast met "ronde 6 van 3" (D-20261124-200610788):
+  // de grens leek overschreden en de nieuwe opdracht van de eigenaar kreeg geen enkele herstelronde.
+  "and op > coalesce((select heropend_op from jarvis.doelen where id = $1), '-infinity'::timestamptz)";
 export const MAX_ACCEPTATIE_RONDES = 3;
 
 /** Eén regel in de bestaande activiteitenlog; dat is waar de AI Core en de eigenaar kijken. */
@@ -198,7 +203,10 @@ export async function voerAcceptatieUit(
     const oordeel = parseerBeoordeling(antwoord);
     const staat = oordeel.geslaagd ? "geslaagd" : "niet-geslaagd";
     uit.push({ id: test.id, staat, bewijs, reden: oordeel.reden });
-    await schrijfAcceptatie(sql, d.id, `test ${test.id}: ${staat} — ${oordeel.reden}`);
+    // Op welke samenvoeging dit oordeel viel: zo hoeft een volgende ronde op hetzelfde werk het niet over te doen.
+    // Het label staat aan het eind, na het begrenzen, zodat het er altijd in staat.
+    const label = gemetenOpLabel(d.pr?.merge_sha);
+    await schrijfAcceptatie(sql, d.id, `${begrens(`test ${test.id}: ${staat} — ${oordeel.reden}`, MAX_LOGREGEL_TEKENS - label.length)}${label}`);
     console.log(`jarvis acceptatie: ${d.id}: test ${test.id} → ${staat} (${oordeel.reden.slice(0, 120)})`);
   }
   return uit;

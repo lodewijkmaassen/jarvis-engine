@@ -481,3 +481,61 @@ export function herhaling(overgangen: readonly { readonly tekst: string }[]): He
   const besluit = aantal >= HERHALING_MAX ? "vast" : aantal >= HERHALING_DREMPEL ? "andere-aanpak" : "door";
   return { aantal, tekst, besluit };
 }
+
+/**
+ * WACHTEN OP GEGEVENS DIE VANZELF ONTSTAAN (D-20261127-191905240)
+ *
+ * Gemeten aan D-20261127-142321503: de acceptatie vroeg een nameting op vergelijkbare doelen van ná de
+ * wijziging, en die bestonden nog niet. De uitvoerder zette het doel vast en vroeg de eigenaar om nieuwe doelen
+ * aan te maken; de eigenaar heropende het met "voer alleen de metingen uit" terwijl er nog steeds niets te meten
+ * was. Gegevens die vanzelf ontstaan, zijn geen vraag voor de eigenaar maar een kwestie van wachten.
+ *
+ * Daarom: de uitvoerder zet zo'n doel vast met een machineleesbare voorwaarde in de uitkomst,
+ * `[wacht op: <n> afgeronde doelen na <ISO-tijd>]`. De dispatcher (deterministisch, geen modelaanroep) kijkt bij
+ * elke ronde of de voorwaarde vervuld is en start de uitvoerder dan één keer, die het doel heropent en afmaakt.
+ * Zolang de voorwaarde niet vervuld is, kost het wachten niets.
+ */
+export const WACHT_OP = /\[wacht op: (\d{1,3}) afgeronde doel(?:en)? na (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?Z)\]/i;
+
+export type WachtVoorwaarde = { readonly aantal: number; readonly na: Date };
+
+/** De wachtvoorwaarde in een uitkomst, of null. */
+export function wachtVoorwaarde(uitkomst: string | null): WachtVoorwaarde | null {
+  const m = WACHT_OP.exec(uitkomst ?? "");
+  if (m === null) return null;
+  const na = new Date(m[2]!);
+  const aantal = Number(m[1]);
+  return Number.isNaN(na.getTime()) || aantal < 1 ? null : { aantal, na };
+}
+
+/** Wanneer een doel werd aangemaakt, uit zijn id (D-JJJJMMDD-UUMMSS[mmm], UTC); null als het id die vorm niet heeft. */
+export function aangemaaktUitId(id: string): Date | null {
+  const m = /^D-(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})(\d{3})?$/.exec(id);
+  if (m === null) return null;
+  const t = Date.UTC(+m[1]!, +m[2]! - 1, +m[3]!, +m[4]!, +m[5]!, +m[6]!, m[7] ? +m[7] : 0);
+  return Number.isNaN(t) ? null : new Date(t);
+}
+
+/** De vastgezette doelen waarvan de wachtvoorwaarde nu vervuld is, met wat haar vervulde. */
+export function hervatbareDoelen(
+  doelen: readonly Pick<Doel, "id" | "status" | "uitkomst">[],
+): readonly { readonly id: string; readonly reden: string }[] {
+  const uit: { id: string; reden: string }[] = [];
+  for (const d of doelen) {
+    if (d.status !== "vast") continue;
+    const w = wachtVoorwaarde(d.uitkomst);
+    if (w === null) continue;
+    const afgerond = doelen.filter((x) => {
+      if (x.id === d.id || x.status !== "klaar") return false;
+      const op = aangemaaktUitId(x.id);
+      return op !== null && op.getTime() > w.na.getTime();
+    });
+    if (afgerond.length >= w.aantal) {
+      uit.push({ id: d.id, reden: `${afgerond.length} afgeronde doel(en) na ${w.na.toISOString()} (${afgerond.map((x) => x.id).join(", ")}); er waren er ${w.aantal} nodig` });
+    }
+  }
+  return uit;
+}
+
+/** Het begin van de activiteitsregel waarmee de dispatcher een hervatting meldt; één keer per vervulde voorwaarde. */
+export const HERVAT_SIGNAAL = "hervatsignaal:";

@@ -382,8 +382,36 @@ export function pasSplitsingenToe(tests: readonly AcceptatieTest[], splitsingen:
 
 /** Vraagt de reactie om geslaagde tests te behouden en niet opnieuw te meten? */
 export function behoudtGeslaagde(reactie: string): boolean {
-  return /\b(?:behoud|bewaar)\w*\s+(?:deze|die|de|alle)\s+(?:\w+\s+)?(?:resultaten|uitkomsten|oordelen)\b|\bherhaal\s+(?:deze|die|de)\s+(?:\w+\s+)?tests?\s+niet\b/i.test(reactie);
+  return (
+    /\b(?:behoud|bewaar)\w*\s+(?:deze|die|de|alle)\s+(?:\w+\s+)?(?:resultaten|uitkomsten|oordelen)\b|\bherhaal\s+(?:deze|die|de)\s+(?:\w+\s+)?tests?\s+niet\b/i.test(reactie) ||
+    // "voorkom onnodige herhaling van acceptatietests" en "herhaal geen reeds geslaagde tests" (D-20261124-200610788,
+    // D-20261127-142321503): dezelfde vraag in andere woorden. Werd die niet herkend, dan mat de ronde alles opnieuw
+    // en raakte het budget van de proef op vóór de test die er werkelijk toe deed.
+    /\bvoorkom\s+(?:\w+\s+)?herhal\w*\s+van\s+(?:\w+\s+){0,2}(?:acceptatie)?tests?\b|\bherhaal\s+geen\s+(?:\w+\s+){0,2}(?:acceptatie)?tests?\b/i.test(reactie)
+  );
 }
+
+/**
+ * GEMETEN OP WELK WERK (D-20261127-191905240)
+ *
+ * Elk oordeel over een test krijgt de samenvoeging mee waarop het werd geveld: `… [gemeten op <sha>]`. Een test
+ * die op precies díe samenvoeging slaagde, wordt in een volgende ronde op dezelfde samenvoeging niet opnieuw
+ * gemeten: er is sindsdien niets veranderd wat hem kan beïnvloeden. Een nieuwe samenvoeging meet weer alles
+ * (tenzij de eigenaar om behoud vroeg); daarmee blijft "niet ten onrechte geslaagd" gelden.
+ */
+export function gemetenOpLabel(merge: string | null | undefined): string {
+  const m = (merge ?? "").trim().toLowerCase();
+  return /^[0-9a-f]{7,40}$/.test(m) ? ` [gemeten op ${m.slice(0, 12)}]` : "";
+}
+
+/** De samenvoeging (eerste 12 tekens) waarop een oordeel werd geveld, of null. */
+export function gemetenOp(reden: string): string | null {
+  const m = /\[gemeten op ([0-9a-f]{7,40})\]\s*$/i.exec(reden);
+  return m === null ? null : m[1]!.toLowerCase().slice(0, 12);
+}
+
+/** Het voorvoegsel van een oordeel dat behouden blijft omdat het op dezelfde samenvoeging werd geveld. */
+export const BEHOUDEN_ZELFDE_WERK = "behouden: geslaagd op deze zelfde samenvoeging, niet opnieuw gemeten:";
 
 /** Het laatste oordeel per test uit de activiteit van een doel (nieuwste eerst), alleen de geslaagde. */
 export function laatstGeslaagd(activiteit: readonly { readonly soort: string; readonly tekst: string }[]): ReadonlyMap<string, string> {
@@ -410,20 +438,68 @@ export function verdeelTests(
   tests: readonly AcceptatieTest[],
   opdracht: string,
   activiteit: readonly { readonly soort: string; readonly tekst: string }[],
+  /** De samenvoeging die nu gemeten wordt; een test die daarop al slaagde, blijft geslaagd. */
+  merge: string | null = null,
 ): { readonly behouden: readonly AcceptatieUitkomst[]; readonly teMeten: readonly AcceptatieTest[] } {
-  if (!behoudtGeslaagde(eigenaarsReactie(opdracht))) return { behouden: [], teMeten: tests };
+  const opVerzoek = behoudtGeslaagde(eigenaarsReactie(opdracht));
+  const nu = gemetenOpLabel(merge) === "" ? null : merge!.trim().toLowerCase().slice(0, 12);
+  if (!opVerzoek && nu === null) return { behouden: [], teMeten: tests };
   const geslaagd = laatstGeslaagd(activiteit);
   const behouden: AcceptatieUitkomst[] = [];
   const teMeten: AcceptatieTest[] = [];
   for (const t of tests) {
     const reden = geslaagd.get(t.id);
-    if (reden === undefined) {
+    const zelfdeWerk = reden !== undefined && nu !== null && gemetenOp(reden) === nu;
+    if (reden === undefined || (!opVerzoek && !zelfdeWerk)) {
       teMeten.push(t);
       continue;
     }
-    behouden.push({ id: t.id, staat: "geslaagd", bewijs: "", reden: reden.startsWith(BEHOUDEN) ? reden : `${BEHOUDEN} ${reden}` });
+    const al = reden.startsWith(BEHOUDEN) || reden.startsWith(BEHOUDEN_ZELFDE_WERK);
+    const voor = zelfdeWerk ? BEHOUDEN_ZELFDE_WERK : BEHOUDEN;
+    behouden.push({ id: t.id, staat: "geslaagd", bewijs: "", reden: al ? reden : `${voor} ${reden}` });
   }
   return { behouden, teMeten };
+}
+
+/**
+ * EEN ONVOLLEDIGE METING IS GEEN GEZAKTE RONDE (D-20261127-191905240)
+ *
+ * Gemeten aan D-20261124-200610788 (ronde 6): de sparproef stopte op haar kostengrens vóór gesprek 7, de
+ * beoordelaar zag "(niet uitgevoerd)" en oordeelde "niet-geslaagd", en dat telde als mislukt herstel. Er was niets
+ * aan het werk mis; er was alleen niet gemeten. De tests waarvan de vraag niet gesteld kon worden, worden daarom
+ * niet beoordeeld (geen modelaanroep) maar uitgesteld. Slaagt de rest, dan blijft het doel samengevoegd en meet
+ * de volgende ronde alleen de uitgestelde tests (de geslaagde blijven behouden op dezelfde samenvoeging). Elke
+ * zulke ronde beoordeelt minstens één test, dus dit eindigt.
+ */
+export function stelOnvolledigUit(
+  tests: readonly AcceptatieTest[],
+  nietGesteld: ReadonlySet<string>,
+): { readonly beoordelen: readonly AcceptatieTest[]; readonly uitgesteld: readonly AcceptatieTest[] } {
+  if (nietGesteld.size === 0) return { beoordelen: tests, uitgesteld: [] };
+  const beoordelen: AcceptatieTest[] = [];
+  const uitgesteld: AcceptatieTest[] = [];
+  for (const t of tests) (nietGesteld.has(t.id.split(".")[0]!) ? uitgesteld : beoordelen).push(t);
+  return { beoordelen, uitgesteld };
+}
+
+/**
+ * Wat er na een onvolledige meting gebeurt.
+ *   - "volgende-ronde": alles wat gemeten is slaagde; het doel blijft samengevoegd, geen ronde geteld.
+ *   - "oordeel": er is iets werkelijk gezakt (of niets gemeten): het gewone eindoordeel, met de uitgestelde
+ *     tests als "niet gemeten" erbij genoemd in plaats van als gezakt.
+ */
+export function naOnvolledigeMeting(
+  gemeten: readonly AcceptatieUitkomst[],
+  uitgesteld: readonly AcceptatieTest[],
+): { readonly soort: "volgende-ronde" | "oordeel"; readonly tekst: string; readonly nietsGemeten: boolean } {
+  const ids = uitgesteld.map((t) => t.id).join(", ");
+  const tekst = `nog niet gemeten (de vraag kon binnen de kostengrens van de proef niet gesteld worden; volgende ronde): ${ids}`;
+  if (uitgesteld.length === 0) return { soort: "oordeel", tekst: "", nietsGemeten: false };
+  const zelfGemeten = gemeten.filter((u) => !u.reden.startsWith(BEHOUDEN) && !u.reden.startsWith(BEHOUDEN_ZELFDE_WERK));
+  // Niets nieuws gemeten: een volgende ronde zou precies hetzelfde doen. Dat is niet meten, geen gezakt herstel.
+  if (zelfGemeten.length === 0) return { soort: "oordeel", tekst, nietsGemeten: true };
+  if (gemeten.every((u) => u.staat === "geslaagd")) return { soort: "volgende-ronde", tekst, nietsGemeten: false };
+  return { soort: "oordeel", tekst, nietsGemeten: false };
 }
 
 /**
