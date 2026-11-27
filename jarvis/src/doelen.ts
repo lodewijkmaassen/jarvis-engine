@@ -405,6 +405,31 @@ export function dispatchNodig(
   };
 }
 
+/**
+ * De rusttijd (minuten) die de dispatcher aan `jarvis.v3_dispatch_claim` meegeeft.
+ *
+ * WAAROM DIT BESTAAT
+ *
+ * De claim weigerde elke start binnen twintig minuten na de vorige. Gemeten op 2026-11-27
+ * (D-20261127-142321503, doorlooptijd per fase uit de statusovergangen): het bouwen van een
+ * klein doel kostte twee à drie minuten, het wachten in `open` 25 tot 73 minuten, omdat een
+ * nieuw doel dat kort na een start binnenkwam de volle rusttijd moest uitzitten.
+ *
+ * De rust beschermt tegen dubbele starts voor hetzelfde werk, niet tegen nieuw werk. Daarom:
+ * staat er een `open` doel, dan is de rust precies de leeftijd van het nieuwste open doel
+ * (naar boven afgerond, minstens één minuut). De claim lukt dan alleen als er sinds dat doel
+ * binnenkwam nog geen start is geweest: hoogstens één extra start per nieuw doel, nooit een
+ * reeks. Voor herstel en review (geen open doel) blijft de rust `STIL_MINUTEN`.
+ */
+export function dispatchRust(doelen: readonly Pick<Doel, "status" | "bijgewerkt">[], nu: Date): number {
+  const leeftijden = doelen
+    .filter((d) => d.status === "open")
+    .map((d) => (nu.getTime() - Date.parse(d.bijgewerkt)) / 60_000)
+    .filter((m) => Number.isFinite(m));
+  if (leeftijden.length === 0) return STIL_MINUTEN;
+  return Math.min(STIL_MINUTEN, Math.max(1, Math.ceil(Math.min(...leeftijden))));
+}
+
 /** Zo vaak dezelfde overgang met dezelfde reden, en het heet herhaling: de aanpak moet anders. */
 export const HERHALING_DREMPEL = 3;
 /** Zo vaak, en verder herhalen kost alleen nog geld: het doel staat vast met de herhaling als reden. */
