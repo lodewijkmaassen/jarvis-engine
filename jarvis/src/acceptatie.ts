@@ -51,8 +51,12 @@ export type AcceptatieTest = {
   readonly volatiel: boolean;
 };
 
-const KOP = /^\s*(?:##+\s*)?(?:functionele\s+)?acceptatietests?\b[^\n]*$/im;
-const EINDE = /^\s*(?:markeer|reactie van de eigenaar|\(waar het eerder vastliep|voorkom |bouw hiervoor|gebruik de bestaande)/i;
+// Een eigenaar schrijft "Acceptatietests:" maar ook "## 6. Acceptatiecriteria". Beide zijn een expliciete
+// sectie; de tweede werd niet herkend, waardoor D-20261107-225515647 met zes criteria op klaar ging
+// zonder dat er één was gemeten ("het doel noemt geen ... expliciete acceptatietest").
+const KOP = /^\s*(?:#+\s*)?(?:\d{1,2}[.)]\s*)?(?:functionele\s+)?acceptatie(?:tests?|criteri(?:a|um))\b[^\n]*$/im;
+// Een volgende markdownkop sluit de sectie ook af: anders lopen de genummerde punten van een latere sectie mee.
+const EINDE = /^\s*(?:#{1,6}\s|markeer|reactie van de eigenaar|\(waar het eerder vastliep|voorkom |bouw hiervoor|gebruik de bestaande)/i;
 const ITEM = /^\s*(?:\*\*)?([A-Z]|\d{1,2})(?:\*\*)?[.)]\s+(.*)$/;
 const VOLATIEL = /\b(meest recent\w*|recentste|als laatste|het laatst|laatst\s+vastgelopen|zojuist|toevallig|op dit moment|vandaag|gisteren|nu loopt)\b/i;
 // Zonder woordgrens aan het begin: `#` is geen woordteken, dus `#106` matcht nooit.
