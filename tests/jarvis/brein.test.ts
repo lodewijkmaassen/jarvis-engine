@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 // @ts-expect-error — gewone .mjs zonder typen
-import { SPAR_MODEL, SPAR_GRENZEN, MODEL, WEB_GEREEDSCHAP, schoonUrl, verwerk } from "../../jarvis/interface/app/api/_chat-kern.mjs";
+import { AANVULLEN, PAGINA_TOKENS, SPAR_MODEL, SPAR_GRENZEN, MODEL, WEB_GEREEDSCHAP, onvolledig, schoonUrl, verwerk, zonderMarkering } from "../../jarvis/interface/app/api/_chat-kern.mjs";
 import { BEURT_BOVENGRENS_USD } from "../../jarvis/src/sparproef";
 // @ts-expect-error — gewone .mjs zonder typen
 import { MAAND_LIMIET_USD, ZOEK_USD, bovengrens, genoemdeProjecten, items, kostenVan, selecteer, termen } from "../../jarvis/interface/app/api/_brein.mjs";
@@ -369,7 +369,7 @@ describe("Web Intelligence V1 (D-20261124-200610788): actuele informatie in de s
     expect(systeem).toMatch(/noem beide met naam, link en wat ze precies beweren/);
     expect(systeem).toMatch(/Alleen algemene criteria noemen is geen antwoord/);
     // Plafonds per beurt: ruim genoeg om een live pagina op te halen, en vooraf gereserveerd.
-    expect(SPAR_GRENZEN).toEqual({ maxIn: 25000, maxUit: 4000, rondes: 3, zoek: 3, ophalen: 3, webIn: 30000 });
+    expect(SPAR_GRENZEN).toEqual({ maxIn: 25000, maxUit: 4000, rondes: 3, zoek: 4, ophalen: 4, webIn: 40000 });
   });
   it("geeft de zoekopdrachten, de geciteerde bronnen als links en de zoekkosten terug, en plakt het antwoord aaneen", async () => {
     const w = wereld([metZoeken("weer morgen Ede", "https://www.knmi.nl/verwachtingen", "KNMI verwachtingen")]);
@@ -466,5 +466,88 @@ describe("Web Intelligence V1 (D-20261124-200610788): actuele informatie in de s
     const zonderWeb = bovengrens(SPAR_MODEL, { ...SPAR_GRENZEN, zoek: 0, webIn: 0 });
     expect(bovengrens(SPAR_MODEL, SPAR_GRENZEN)).toBeCloseTo(zonderWeb + SPAR_GRENZEN.rondes * SPAR_GRENZEN.zoek * ZOEK_USD + (SPAR_GRENZEN.webIn * 2) / 1e6, 6);
     expect(kostenVan(SPAR_MODEL, { input_tokens: 0, output_tokens: 0, server_tool_use: { web_search_requests: 3 } })).toBeCloseTo(0.03, 6);
+  });
+});
+
+describe("Web Intelligence V1 (D-20261124-200610788): volledigheidscontrole bij afgekapte bronnen en een bereikt maximum", () => {
+  const maximumBereikt = (t: string) => ({
+    content: [
+      { type: "server_tool_use", id: "s1", name: "web_search", input: { query: "bioscoop Ede vandaag" } },
+      { type: "web_search_tool_result", tool_use_id: "s1", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
+      { type: "text", text: t },
+    ],
+    stop_reason: "end_turn",
+    usage: { input_tokens: 6000, output_tokens: 300, server_tool_use: { web_search_requests: 4 } },
+  });
+  type Verzoek = { messages: { role: string; content: { type: string; text?: string }[] | string }[]; tools: { name: string }[] };
+
+  it("vult aan na een bereikt maximum: een tweede aanroep met zoekruimte, en het herziene antwoord vervangt het eerste", async () => {
+    const w = wereld([maximumBereikt("Pathé Ede draait vandaag drie films."), tekst("Pathé Ede draait vandaag zeven films: …")]);
+    const r = await verwerk({ token: "t", body: spar("Welke films draaien vandaag in de bioscoop in Ede?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(w.modelVerzoeken).toHaveLength(2);
+    const tweede = w.modelVerzoeken[1] as Verzoek;
+    expect(tweede.tools.map((t) => t.name)).toContain("web_search");
+    const verzoek = tweede.messages.at(-1)!;
+    expect(verzoek.role).toBe("user");
+    const tekstVerzoek = (verzoek.content as { text: string }[])[0].text;
+    expect(tekstVerzoek).toContain("zoeken: max_uses_exceeded");
+    expect(tekstVerzoek).toMatch(/andere zoekterm, een andere bron/);
+    expect(tekstVerzoek).toMatch(/volledige, herziene antwoord op de oorspronkelijke vraag/);
+    expect(r.lading.antwoord).toBe("Pathé Ede draait vandaag zeven films: …");
+    expect(r.lading.bronnen.web.aangevuld).toEqual(["zoeken: max_uses_exceeded"]);
+  });
+  it("vult aan als het model zelf meldt wat ontbreekt; de ONTBREEKT-regel komt nooit bij de eigenaar", async () => {
+    const w = wereld([tekst("Deel van het antwoord.\nONTBREEKT: de tijden van vandaag (pagina afgekapt)"), tekst("Volledig antwoord met tijden.")]);
+    const r = await verwerk({ token: "t", body: spar("Welke films draaien vandaag in Ede?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(w.modelVerzoeken).toHaveLength(2);
+    expect(((w.modelVerzoeken[1] as Verzoek).messages.at(-1)!.content as { text: string }[])[0].text).toContain("zelf gemeld: de tijden van vandaag (pagina afgekapt)");
+    expect(r.lading.antwoord).toBe("Volledig antwoord met tijden.");
+    expect(r.lading.antwoord).not.toContain(AANVULLEN.markering);
+  });
+  it("houdt het eerste antwoord als het model het al volledig vond", async () => {
+    const w = wereld([maximumBereikt("Volledig eerste antwoord."), tekst("VOLLEDIG")]);
+    const r = await verwerk({ token: "t", body: spar("Welke films draaien vandaag in Ede?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(r.lading.antwoord).toBe("Volledig eerste antwoord.");
+  });
+  it("vult hoogstens één keer aan, en de ONTBREEKT-regel van de laatste ronde verdwijnt ook", async () => {
+    const w = wereld([maximumBereikt("Eerste.\nONTBREEKT: x"), maximumBereikt("Tweede, zo goed als het gaat.\nONTBREEKT: y"), tekst("mag niet")]);
+    const r = await verwerk({ token: "t", body: spar("Welke evenementen zijn er dit weekend in Ede?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(w.modelVerzoeken).toHaveLength(2);
+    expect(r.lading.antwoord).toBe("Tweede, zo goed als het gaat.");
+  });
+  it("vult niet aan als er niets ontbreekt, of als er niet gezocht is (geen extra aanroep of kosten)", async () => {
+    const w = wereld([metZoeken("weer morgen Ede", "https://www.knmi.nl/verwachtingen", "KNMI verwachtingen")]);
+    await verwerk({ token: "t", body: spar("Wat wordt het weer morgen in Ede?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(w.modelVerzoeken).toHaveLength(1);
+    const w2 = wereld([tekst("Pythagoras: a² + b² = c².")]);
+    const r2 = await verwerk({ token: "t", body: spar("Wat zegt de stelling van Pythagoras?"), cfg, sleutel: "k", fetchFn: w2.fetchFn });
+    expect(w2.modelVerzoeken).toHaveLength(1);
+    expect(r2.lading.bronnen.web.aangevuld).toBeUndefined();
+  });
+  it("zonder ruimte in de reservering blijft het eerste antwoord staan, zonder de ONTBREEKT-regel", async () => {
+    const groot = { ...maximumBereikt("Wat ik vond.\nONTBREEKT: rest"), usage: { input_tokens: 150000, output_tokens: 3000, server_tool_use: { web_search_requests: 4 } } };
+    const w = wereld([groot, tekst("mag niet")]);
+    const r = await verwerk({ token: "t", body: spar("Welke films draaien vandaag in Ede?"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    expect(w.modelVerzoeken).toHaveLength(1);
+    expect(r.lading.antwoord).toBe("Wat ik vond.");
+  });
+  it("de prompt vraagt om volledigheid, primaire bronnen, geen ingeperkte vraag en geen zoekwerk voor de eigenaar", async () => {
+    const w = wereld([tekst("ok")]);
+    await verwerk({ token: "t", body: spar("Vraag"), cfg, sleutel: "k", fetchFn: w.fetchFn });
+    const v = w.modelVerzoeken[0] as { system: { text: string }[]; tools: { name: string; max_content_tokens?: number }[] };
+    const systeem = v.system[0].text;
+    expect(systeem).toMatch(/Beoordeel vóór je antwoordt zelf of wat je gevonden hebt de oorspronkelijke vraag volledig beantwoordt/);
+    expect(systeem).toMatch(/primaire en officiële bronnen voorrang/);
+    expect(systeem).toMatch(/Beperk de vraag niet ongevraagd/);
+    expect(systeem).toMatch(/schuif geen zoekwerk door naar de eigenaar/);
+    expect(systeem).not.toMatch(/werk dan met wat je al gevonden hebt/);
+    expect(v.tools.find((t) => t.name === "web_fetch")?.max_content_tokens).toBe(PAGINA_TOKENS);
+    expect(PAGINA_TOKENS * SPAR_GRENZEN.ophalen).toBe(SPAR_GRENZEN.webIn);
+  });
+  it("herkent wat ontbreekt en haalt de regel weg, ook opgemaakt", () => {
+    expect(onvolledig([], "Antwoord zonder tekort.")).toBeNull();
+    expect(onvolledig([], "Antwoord.\n**ONTBREEKT:** tijden")).toEqual(["zelf gemeld: tijden"]);
+    expect(zonderMarkering("Antwoord.\n- ONTBREEKT: tijden\n")).toBe("Antwoord.");
+    expect(zonderMarkering("Over wat ONTBREEKT: niets mis midden in een zin.\nSlot.")).toBe("Over wat ONTBREEKT: niets mis midden in een zin.\nSlot.");
   });
 });

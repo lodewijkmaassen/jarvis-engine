@@ -56,10 +56,10 @@ export function vraagtSparproef(d: { readonly titel: string; readonly opdracht: 
 
 /**
  * Bovengrens van één sparbeurt in dollars: SPAR_GRENZEN in de AI Core (3 rondes × (25.000 in × $2 + 4.000 uit × $10) / 1e6
- * = $0,27, plus het web: 3 rondes × 3 zoekopdrachten × $0,01 en 30.000 extra invoertokens × $2 / 1e6). Een test in
+ * = $0,27, plus het web: 3 rondes × 4 zoekopdrachten × $0,01 en 40.000 extra invoertokens × $2 / 1e6). Een test in
  * brein.test.ts bewaakt dat dit niet lager is dan de bovengrens die de AI Core zelf reserveert.
  */
-export const BEURT_BOVENGRENS_USD = 0.42;
+export const BEURT_BOVENGRENS_USD = 0.47;
 /** Hoeveel vragen uit de opdracht de proef hoogstens stelt. */
 export const MAX_DOELVRAGEN = 8;
 /** Hoeveel één sparproef hoogstens mag kosten. */
