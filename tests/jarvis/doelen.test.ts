@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REVIEWER_DOOR } from "@/jarvis/src/attestatie";
-import { checksGroen, dispatchNodig, doelUitPrTekst, MAX_NO_GO, reviewBesluit, STIL_MINUTEN } from "@/jarvis/src/doelen";
+import { checksGroen, dispatchNodig, dispatchRust, doelUitPrTekst, MAX_NO_GO, reviewBesluit, STIL_MINUTEN } from "@/jarvis/src/doelen";
 import { poortUitkomst } from "@/jarvis/src/opdrachten";
 
 const KOP = "a".repeat(40);
@@ -79,6 +79,24 @@ describe("dispatchNodig", () => {
       expect(dispatchNodig([{ id: "D-1", status, bijgewerkt: geleden(500) }], nu).start, status).toBe(false);
     }
     expect(dispatchNodig([], nu).start).toBe(false);
+  });
+});
+
+describe("dispatchRust", () => {
+  const nu = new Date("2026-11-27T14:00:00Z");
+  const geleden = (min: number) => new Date(nu.getTime() - min * 60_000).toISOString();
+  it("houdt de volle rust zonder open doel (herstel, review)", () => {
+    expect(dispatchRust([{ status: "bezig", bijgewerkt: geleden(30) }, { status: "review", bijgewerkt: geleden(25) }], nu)).toBe(STIL_MINUTEN);
+    expect(dispatchRust([], nu)).toBe(STIL_MINUTEN);
+  });
+  it("laat een nieuw open doel starten zodra er sinds zijn komst geen start was", () => {
+    // Rust = leeftijd van het nieuwste open doel: een start van ná het doel blokkeert, een van ervóór niet.
+    expect(dispatchRust([{ status: "open", bijgewerkt: geleden(3.2) }], nu)).toBe(4);
+    expect(dispatchRust([{ status: "open", bijgewerkt: geleden(0) }], nu)).toBe(1);
+  });
+  it("kijkt naar het nieuwste open doel en gaat nooit boven STIL_MINUTEN", () => {
+    expect(dispatchRust([{ status: "open", bijgewerkt: geleden(60) }, { status: "open", bijgewerkt: geleden(6) }], nu)).toBe(6);
+    expect(dispatchRust([{ status: "open", bijgewerkt: geleden(90) }], nu)).toBe(STIL_MINUTEN);
   });
 });
 

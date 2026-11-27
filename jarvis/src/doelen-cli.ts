@@ -23,7 +23,7 @@ import { classificeerBlokkade, rendereerBlokkade, vanDeEigenaar } from "./blokka
 import { ACCEPTATIE_MISLUKT_SQL, MAX_ACCEPTATIE_RONDES, schrijfAcceptatie, voerAcceptatieUit } from "./doel-acceptatie";
 import { pasDoelMigratiesToe } from "./doel-migratie";
 import { vraagtSparproef, voerSparproefUit } from "./sparproef";
-import { begrens, MAX_LOGREGEL_TEKENS, herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
+import { begrens, MAX_LOGREGEL_TEKENS, herhaling, type Herhaling, ketenSpoor, maaktDezeKetenAf, magVastleggen, uitrolProef, WACHTENDE_TOESTANDEN, checksGroen, dispatchNodig, dispatchRust, doelUitPrTekst, hermeetbaar, metKetenVersie, REVIEW_MODEL, REVIEW_WACHT_MS, reviewBesluit, type Doel, type ReviewOordeel } from "./doelen";
 import { foutTekst, github, leesAllePaginas, leesPullRequest, verbindDb, type DbClient } from "./opdrachten";
 import { laatstePerNaam, VERPLICHTE_CHECK } from "./pr";
 import { antwoordTekst, bouwAanroep, bouwReviewVraag, combineerReviews, leverancierFout, parseerReview, rendereerReview, verdeelDiff, type Review } from "./review";
@@ -641,7 +641,8 @@ async function dispatchDoelen(sql: DbClient, droog: boolean): Promise<number> {
   const besluit = dispatchNodig(doelen, new Date(), herhaald);
   console.log(`jarvis dispatch: ${besluit.reden}`);
   if (!besluit.start) return 0;
-  const claim = await sql.unsafe("select jarvis.v3_dispatch_claim($1) as ok", [20]);
+  // Rust: STIL_MINUTEN, of korter als er een nieuw open doel staat (zie dispatchRust).
+  const claim = await sql.unsafe("select jarvis.v3_dispatch_claim($1) as ok", [dispatchRust(doelen, new Date())]);
   if (claim[0]?.["ok"] !== true) {
     console.log("jarvis dispatch: er is net een start gedaan; geen tweede.");
     return 0;
